@@ -10,12 +10,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install automake libtool
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.32.0'
           channel: 'stable'
-      - name: Install dependencies
-        run: brew install automake libtool
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
       - run: pod install --project-directory=macos
@@ -50,3 +50,38 @@ jobs:
         with:
           name: TUNAI-Pro-Windows
           path: TUNAI_Pro_windows.zip
+
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TUNAI-Pro-macOS
+          path: ./artifacts
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TUNAI-Pro-Windows
+          path: ./artifacts
+      - name: Get version
+        id: version
+        run: echo "tag=v$(date +'%Y.%m.%d')-$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: TUNAI Pro ${{ steps.version.outputs.tag }}
+          body: |
+            ## TUNAI Pro
+            - macOS (.app)
+            - Windows (.exe)
+          files: |
+            ./artifacts/TUNAI_Pro_mac.zip
+            ./artifacts/TUNAI_Pro_windows.zip
+          draft: false
+          prerelease: false
