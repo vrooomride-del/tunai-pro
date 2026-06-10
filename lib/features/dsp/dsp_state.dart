@@ -245,13 +245,13 @@ class DspState {
 
   static DspState initial() => DspState(
     inputs: [
-      InputChannel(name: 'INPUT L', bands: InputChannel.defaultBands()),
-      InputChannel(name: 'INPUT R', bands: InputChannel.defaultBands()),
+      InputChannel(name: 'IN L', bands: InputChannel.defaultBands()),
+      InputChannel(name: 'IN R', bands: InputChannel.defaultBands()),
     ],
     outputs: [
-      OutputChannel(name: 'TWEETER L', bands: OutputChannel.defaultBands(),
+      OutputChannel(name: 'TWE L', bands: OutputChannel.defaultBands(),
         hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
-      OutputChannel(name: 'TWEETER R', bands: OutputChannel.defaultBands(),
+      OutputChannel(name: 'TWE R', bands: OutputChannel.defaultBands(),
         hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
       OutputChannel(name: 'MID L', bands: OutputChannel.defaultBands(),
         hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200),
@@ -259,9 +259,9 @@ class DspState {
       OutputChannel(name: 'MID R', bands: OutputChannel.defaultBands(),
         hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200),
         lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
-      OutputChannel(name: 'WOOFER L', bands: OutputChannel.defaultBands(),
+      OutputChannel(name: 'WOO L', bands: OutputChannel.defaultBands(),
         lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200)),
-      OutputChannel(name: 'WOOFER R', bands: OutputChannel.defaultBands(),
+      OutputChannel(name: 'WOO R', bands: OutputChannel.defaultBands(),
         lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200)),
     ],
   );

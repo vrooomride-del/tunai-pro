@@ -88,6 +88,7 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
           if (_expanded) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -291,6 +292,7 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                     ],
                   ],
                 ],
+              ),
               ),
             ),
           ],

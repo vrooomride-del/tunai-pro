@@ -64,6 +64,7 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.all(12),
+        clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
           border: Border.all(color: sel ? Colors.white38 : Colors.white12),
           borderRadius: BorderRadius.circular(6),
@@ -132,10 +133,10 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
             const SizedBox(height: 8),
 
             // 크로스오버 요약
-            Row(
+            Wrap(
+              spacing: 4, runSpacing: 4,
               children: [
                 _XoChip('HP', ch.hpFilter),
-                const SizedBox(width: 4),
                 _XoChip('LP', ch.lpFilter),
               ],
             ),

@@ -6,7 +6,7 @@ class AiTuningService {
   static const _apiKey = 'AQ.Ab8RN6Je2ple9H4TTYY30b5qKIx7N-xyaLV-7zr5wzWOT_7pJQ'; // 환경변수로 교체 예정
   
   static final _model = GenerativeModel(
-    model: 'gemini-1.5-pro',
+    model: 'gemini-2.5-flash-lite',
     apiKey: _apiKey,
     generationConfig: GenerationConfig(
       temperature: 0.2, // 낮을수록 일관된 수치 출력
