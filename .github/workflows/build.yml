@@ -14,6 +14,8 @@ jobs:
         with:
           flutter-version: '3.32.0'
           channel: 'stable'
+      - name: Install dependencies
+        run: brew install automake libtool
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
       - run: pod install --project-directory=macos
@@ -31,11 +33,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Visual Studio Build Tools
+        uses: microsoft/setup-msbuild@v2
+      - name: Setup Visual C++
+        uses: ilammy/msvc-dev-cmd@v1
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.32.0'
           channel: 'stable'
-      - uses: microsoft/setup-msbuild@v2
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
       - run: flutter build windows --release
