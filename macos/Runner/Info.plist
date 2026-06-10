@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>TUNAI Pro requires microphone access for acoustic measurement.</string>
 </dict>
 </plist>

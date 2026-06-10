@@ -31,6 +31,8 @@ dependencies:
 
   # 로컬 저장
   shared_preferences: ^2.5.1
+  record: ^6.2.1
+  just_audio: ^0.10.5
 
 dev_dependencies:
   flutter_test:

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'features/peq/peq_screen.dart';
+import 'features/dsp/dsp_screen.dart';
 import 'features/connect/connect_screen.dart';
 import 'features/mic/measurement_mic_screen.dart';
 
@@ -30,7 +30,7 @@ class _TunaiProShellState extends State<TunaiProShell> {
   int _index = 0;
   final _screens = const [
     ConnectScreen(),
-    PeqScreen(),
+    const DspScreen(),
     MeasurementMicScreen(),
   ];
 
