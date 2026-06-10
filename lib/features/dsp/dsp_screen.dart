@@ -7,6 +7,7 @@ import 'widgets/peq_band.dart';
 import 'widgets/crossover.dart';
 import 'widgets/channel_strip.dart';
 import '../connect/connect_controller.dart';
+import 'widgets/ai_panel.dart';
 
 class DspScreen extends ConsumerWidget {
   const DspScreen({super.key});
