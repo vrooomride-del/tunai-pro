@@ -30,16 +30,20 @@ jobs:
           path: ~/TUNAI_Pro_mac.zip
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.32.0'
           channel: 'stable'
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
-      - run: flutter build windows --release -v
+      - run: flutter build windows --release
       - name: Zip exe
         run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath TUNAI_Pro_windows.zip
       - uses: actions/upload-artifact@v4
