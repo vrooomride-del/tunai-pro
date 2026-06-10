@@ -16,15 +16,16 @@ jobs:
           channel: 'stable'
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
+      - run: pod install --project-directory=macos
       - run: flutter build macos --release
       - name: Zip .app
         run: |
           cd build/macos/Build/Products/Release
-          zip -r TUNAI_Pro_mac.zip tunai_pro.app
+          zip -r ~/TUNAI_Pro_mac.zip tunai_pro.app
       - uses: actions/upload-artifact@v4
         with:
           name: TUNAI-Pro-macOS
-          path: build/macos/Build/Products/Release/TUNAI_Pro_mac.zip
+          path: ~/TUNAI_Pro_mac.zip
 
   build-windows:
     runs-on: windows-latest
@@ -34,12 +35,12 @@ jobs:
         with:
           flutter-version: '3.32.0'
           channel: 'stable'
+      - uses: microsoft/setup-msbuild@v2
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
       - run: flutter build windows --release
       - name: Zip exe
-        run: |
-          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath TUNAI_Pro_windows.zip
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath TUNAI_Pro_windows.zip
       - uses: actions/upload-artifact@v4
         with:
           name: TUNAI-Pro-Windows
