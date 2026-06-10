@@ -1,0 +1,22 @@
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.g.dart
+*.freezed.dart
+
+# macOS
+macos/Pods/
+macos/Flutter/ephemeral/
+*.xcworkspace
+*.xcodeproj/xcuserdata/
+
+# Windows
+windows/flutter/ephemeral/
+
+# IDE
+.idea/
+.vscode/
+*.iml
