@@ -18,6 +18,7 @@ jobs:
           channel: 'stable'
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
+      - run: sed -i '' 's/MACOSX_DEPLOYMENT_TARGET = 10.14/MACOSX_DEPLOYMENT_TARGET = 10.15/g' macos/Runner.xcodeproj/project.pbxproj || true
       - run: pod install --project-directory=macos
       - run: flutter build macos --release
       - name: Zip .app
