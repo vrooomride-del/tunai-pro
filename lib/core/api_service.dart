@@ -10,7 +10,6 @@ class ApiService {
     headers: {'Content-Type': 'application/json'},
   ));
 
-  // 토큰 저장/조회
   static Future<void> saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('auth_token', token);
@@ -52,34 +51,22 @@ class ApiService {
     return Options(headers: {'Authorization': 'Bearer $token'});
   }
 
-  // 회원가입
   static Future<Map<String, dynamic>> register(String email, String password, String nickname) async {
     try {
-      final res = await _dio.post('/auth/register', data: {
-        'email': email,
-        'password': password,
-        'nickname': nickname,
-      });
+      final res = await _dio.post('/auth/register',
+          data: {'email': email, 'password': password, 'nickname': nickname});
       return res.data;
-    } on DioException catch (e) {
-      return {'status': 'error', 'message': e.message};
-    }
+    } on DioException catch (e) { return {'status': 'error', 'message': e.message}; }
   }
 
-  // 로그인
   static Future<Map<String, dynamic>> login(String email, String password) async {
     try {
-      final res = await _dio.post('/auth/login', data: {
-        'email': email,
-        'password': password,
-      });
+      final res = await _dio.post('/auth/login',
+          data: {'email': email, 'password': password});
       return res.data;
-    } on DioException catch (e) {
-      return {'status': 'error', 'message': e.message};
-    }
+    } on DioException catch (e) { return {'status': 'error', 'message': e.message}; }
   }
 
-  // 측정 저장
   static Future<Map<String, dynamic>> saveMeasurement({
     required List<Map<String, dynamic>> peaks,
     required List<Map<String, dynamic>> fps,
@@ -87,29 +74,21 @@ class ApiService {
   }) async {
     try {
       final opts = await _authOptions();
-      final res = await _dio.post('/measurements', data: {
-        'peaks_json': peaks,
-        'fps_json': fps,
-        'scms_json': scms,
-      }, options: opts);
+      final res = await _dio.post('/measurements',
+          data: {'peaks_json': peaks, 'fps_json': fps, 'scms_json': scms},
+          options: opts);
       return res.data;
-    } on DioException catch (e) {
-      return {'status': 'error', 'message': e.message};
-    }
+    } on DioException catch (e) { return {'status': 'error', 'message': e.message}; }
   }
 
-  // 프리셋 목록
   static Future<Map<String, dynamic>> getPresets({String? hash}) async {
     try {
       final res = await _dio.get('/presets',
           queryParameters: hash != null ? {'hash': hash} : null);
       return res.data;
-    } on DioException catch (e) {
-      return {'status': 'error', 'message': e.message};
-    }
+    } on DioException catch (e) { return {'status': 'error', 'message': e.message}; }
   }
 
-  // 프리셋 업로드
   static Future<Map<String, dynamic>> uploadPreset({
     required String title,
     required String? description,
@@ -121,17 +100,124 @@ class ApiService {
     try {
       final opts = await _authOptions();
       final res = await _dio.post('/presets', data: {
-        'title': title,
-        'description': description,
-        'fps_json': fps,
-        'room_tag': roomTag,
-        'enclosure_hash': enclosureHash,
-        'price': price,
-        'is_public': 1,
+        'title': title, 'description': description, 'fps_json': fps,
+        'room_tag': roomTag, 'enclosure_hash': enclosureHash,
+        'price': price, 'is_public': 1,
       }, options: opts);
       return res.data;
-    } on DioException catch (e) {
-      return {'status': 'error', 'message': e.message};
-    }
+    } on DioException catch (e) { return {'status': 'error', 'message': e.message}; }
   }
+
+  static Future<Map<String, dynamic>> getMeasurements() async {
+    try {
+      final opts = await _authOptions();
+      final res = await _dio.get('/measurements', options: opts);
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> likePreset(int id) async {
+    try {
+      final opts = await _authOptions();
+      final res = await _dio.post('/community/like/$id', options: opts);
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> getComments(int id) async {
+    try {
+      final res = await _dio.get('/community/comments/$id');
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> addComment(int id, String content) async {
+    try {
+      final opts = await _authOptions();
+      final res = await _dio.post('/community/comment/$id',
+          data: {'content': content}, options: opts);
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> getTrending() async {
+    try {
+      final res = await _dio.get('/community/trending');
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> getPosts({String category = 'all', int page = 1}) async {
+    try {
+      final res = await _dio.get('/posts',
+          queryParameters: {'category': category, 'page': page});
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> getPost(int id) async {
+    try {
+      final res = await _dio.get('/posts/$id');
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> createPost({
+    required String title, required String content, required String category,
+  }) async {
+    try {
+      final opts = await _authOptions();
+      final res = await _dio.post('/posts',
+          data: {'title': title, 'content': content, 'category': category},
+          options: opts);
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> addPostComment(int id, String content) async {
+    try {
+      final opts = await _authOptions();
+      final res = await _dio.post('/posts/$id/comment',
+          data: {'content': content}, options: opts);
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> likePost(int id) async {
+    try {
+      final opts = await _authOptions();
+      final res = await _dio.post('/posts/$id/like', options: opts);
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+  static Future<Map<String, dynamic>> kakaoCallback({
+    required String code,
+    required String redirectUri,
+  }) async {
+    try {
+      final res = await _dio.post('/auth/kakao-callback', data: {
+        'code': code,
+        'redirect_uri': redirectUri,
+      });
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
+  static Future<Map<String, dynamic>> loginWithSocial({
+    required String provider,
+    required String providerId,
+    required String email,
+    required String nickname,
+  }) async {
+    try {
+      final res = await _dio.post('/auth/social', data: {
+        'provider': provider,
+        'provider_id': providerId,
+        'email': email,
+        'nickname': nickname,
+      });
+      return res.data;
+    } catch (e) { return {'status': 'error', 'message': e.toString()}; }
+  }
+
 }
