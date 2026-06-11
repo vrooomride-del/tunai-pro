@@ -5,6 +5,8 @@ import 'dart:io';
 import 'dart:math';
 import 'package:fl_chart/fl_chart.dart';
 import 'mic_measurement_controller.dart';
+import 'speaker_profile_selector.dart';
+import '../../core/speaker_profile.dart';
 
 class MicModel {
   final String id;
@@ -109,11 +111,18 @@ class MicController extends StateNotifier<MicState> {
   }
 }
 
-class MeasurementMicScreen extends ConsumerWidget {
+class MeasurementMicScreen extends ConsumerStatefulWidget {
   const MeasurementMicScreen({super.key});
+  @override
+  ConsumerState<MeasurementMicScreen> createState() => _MeasurementMicScreenState();
+}
+
+class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
+  SpeakerProfileState _speakerProfile = const SpeakerProfileState();
+  bool _profileSelected = false;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final micState = ref.watch(micProvider);
     final micCtrl = ref.read(micProvider.notifier);
     final measState = ref.watch(micMeasurementProvider);
@@ -123,6 +132,17 @@ class MeasurementMicScreen extends ConsumerWidget {
         measState.status == MeasurementStatus.recording ||
         measState.status == MeasurementStatus.analyzing;
 
+    if (!_profileSelected) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0A0A0A),
+        body: SpeakerProfileSelector(
+          onSelected: (profile) => setState(() {
+            _speakerProfile = profile;
+            _profileSelected = true;
+          }),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
       body: SingleChildScrollView(
@@ -331,6 +351,7 @@ class MeasurementMicScreen extends ConsumerWidget {
                   child: GestureDetector(
                     onTap: isMeasuring ? null : () => measCtrl.startMeasurement(
                       scfCorrection: micState.scfCorrection,
+                      speakerProfile: _speakerProfile.activeProfile,
                     ),
                     child: Container(
                       height: 52,

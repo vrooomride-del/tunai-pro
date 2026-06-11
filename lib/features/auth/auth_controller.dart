@@ -106,7 +106,7 @@ class AuthController extends StateNotifier<AuthState> {
 
   Future<bool> loginWithGoogle() async {
     try {
-      await GoogleSignIn.instance.initialize();
+      await GoogleSignIn.instance.initialize(clientId: '120030145932-lva9001h9i2pc1a7hkorj0lti9roisap.apps.googleusercontent.com');
       final response = await GoogleSignIn.instance.authenticate();
       if (response == null) return false;
       final email = response.email;
@@ -177,12 +177,12 @@ class AuthController extends StateNotifier<AuthState> {
   Future<bool> loginWithKakao() async {
     try {
       const kakaoKey = 'b9ecf65d6b446e6f1e5b3b40f86425e6';
-      const redirectUri = 'tunai://kakao/oauth';
+      const redirectUri = 'https://api.tunai.kr/kakao/redirect';
       final authUrl = Uri.https('kauth.kakao.com', '/oauth/authorize', {
         'client_id': kakaoKey,
         'redirect_uri': redirectUri,
         'response_type': 'code',
-        'scope': 'profile_nickname,account_email',
+        'scope': 'profile_nickname',
       });
       final result = await FlutterWebAuth2.authenticate(
         url: authUrl.toString(),

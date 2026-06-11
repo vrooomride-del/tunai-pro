@@ -80,7 +80,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
   Future<void> _shareCurrentDsp() async {
     final auth = ref.read(authProvider);
     if (!auth.isLoggedIn) {
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AuthScreen()));
+      showDialog(context: context, builder: (_) => const Dialog(child: AuthScreen()));
       return;
     }
     final dspState = ref.read(dspProvider);
@@ -161,8 +161,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                 GestureDetector(
                   onTap: () {
                     if (!auth.isLoggedIn) {
-                      Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const AuthScreen()));
+                      showDialog(context: context, builder: (_) => const Dialog(child: AuthScreen()));
                     }
                   },
                   child: Container(
@@ -367,7 +366,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
   void _showWriteDialog() {
     final auth = ref.read(authProvider);
     if (!auth.isLoggedIn) {
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AuthScreen()));
+      showDialog(context: context, builder: (_) => const Dialog(child: AuthScreen()));
       return;
     }
     final titleCtrl = TextEditingController();
@@ -483,8 +482,7 @@ class ProProfileScreen extends ConsumerWidget {
                         style: TextStyle(color: Colors.white38, fontSize: 13, letterSpacing: 4)),
                     const SizedBox(height: 32),
                     GestureDetector(
-                      onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const AuthScreen())),
+                      onTap: () => showDialog(context: context, builder: (_) => const Dialog(child: AuthScreen())),
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
                         decoration: BoxDecoration(

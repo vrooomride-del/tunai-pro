@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import '../features/dsp/dsp_state.dart';
+import 'speaker_profile.dart';
 
 class AiTuningService {
   static const _apiKey = 'AQ.Ab8RN6Je2ple9H4TTYY30b5qKIx7N-xyaLV-7zr5wzWOT_7pJQ'; // 환경변수로 교체 예정
@@ -18,9 +19,10 @@ class AiTuningService {
   static Future<AiTuningResult> suggest({
     required DspState dspState,
     required String userRequest,
-    List<Map<String, double>>? frequencyResponse, // 측정 데이터 (있으면)
+    List<Map<String, double>>? frequencyResponse,
+    SpeakerProfile? speakerProfile,
   }) async {
-    final prompt = _buildPrompt(dspState, userRequest, frequencyResponse);
+    final prompt = _buildPrompt(dspState, userRequest, frequencyResponse, speakerProfile);
     
     try {
       final response = await _model.generateContent([Content.text(prompt)]);
@@ -36,6 +38,7 @@ class AiTuningService {
     DspState state,
     String userRequest,
     List<Map<String, double>>? freqResponse,
+    SpeakerProfile? speakerProfile,
   ) {
     final outIdx = state.selectedOutput;
     final out = state.outputs[outIdx];
@@ -68,6 +71,20 @@ class AiTuningService {
         return '${f.toStringAsFixed(0)}Hz: ${db.toStringAsFixed(1)}dB';
       }).take(31).join(', ');
       freqSection = '\n\nMEASURED FREQUENCY RESPONSE:\n$points';
+    }
+    String tsSection = '';
+    if (speakerProfile != null) {
+      final p = speakerProfile;
+      tsSection = '''
+
+SPEAKER T/S PARAMETERS (PHYSICAL CONSTRAINTS - MUST RESPECT):
+  Name: \${p.name}
+  Fs: \${p.fs.toStringAsFixed(1)} Hz  → Do NOT boost below \${p.recommendedHpfFreq.toStringAsFixed(0)} Hz
+  Qts: \${p.qts.toStringAsFixed(3)}
+  Vas: \${p.vas.toStringAsFixed(1)} L
+  Xmax: \${p.xmax.toStringAsFixed(1)} mm  → Max bass boost: \${p.maxBassBoostDb.toStringAsFixed(1)} dB
+  Sensitivity: \${p.sensitivity.toStringAsFixed(1)} dB  → Gain offset ref: \${p.gainReferenceOffset >= 0 ? '+' : ''}\${p.gainReferenceOffset.toStringAsFixed(1)} dB
+CONSTRAINTS: Never recommend HPF below \${p.recommendedHpfFreq.toStringAsFixed(0)} Hz. Bass boost must not exceed \${p.maxBassBoostDb.toStringAsFixed(1)} dB.''';
     }
 
     return '''
