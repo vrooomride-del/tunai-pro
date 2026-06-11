@@ -7,6 +7,7 @@ import 'widgets/peq_band.dart';
 import 'widgets/crossover.dart';
 import 'widgets/channel_strip.dart';
 import '../connect/connect_controller.dart';
+import 'widgets/ai_panel.dart';
 
 class DspScreen extends ConsumerWidget {
   const DspScreen({super.key});
@@ -20,6 +21,7 @@ class DspScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
+      bottomSheet: const AiTuningPanel(),
       body: Column(
         children: [
           // ── 상단 툴바 ────────────────────────────────
@@ -305,7 +307,8 @@ class _OutputView extends StatelessWidget {
       children: [
         // 좌측: 채널 스트립 목록
         SizedBox(
-          width: 200,
+          width: 170,
+          child: ClipRect(
           child: ListView(
             padding: const EdgeInsets.all(12),
             children: state.outputs.asMap().entries.map((e) => Padding(
@@ -320,6 +323,7 @@ class _OutputView extends StatelessWidget {
                 onPolarityToggle: () => ctrl.togglePolarity(e.key),
               ),
             )).toList(),
+          ),
           ),
         ),
 
@@ -413,7 +417,8 @@ class _InputView extends StatelessWidget {
       children: [
         // 좌측: 입력 채널 스트립
         SizedBox(
-          width: 200,
+          width: 170,
+          child: ClipRect(
           child: ListView(
             padding: const EdgeInsets.all(12),
             children: state.inputs.asMap().entries.map((e) => Padding(
@@ -425,6 +430,7 @@ class _InputView extends StatelessWidget {
                 onGainChanged: (v) => ctrl.updateInputGain(e.key, v),
               ),
             )).toList(),
+          ),
           ),
         ),
 

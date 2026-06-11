@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'features/dsp/dsp_screen.dart';
+import 'features/community/community_screen.dart';
+import 'features/auth/auth_screen.dart';
+import 'features/auth/auth_controller.dart';
 import 'features/connect/connect_screen.dart';
 import 'features/mic/measurement_mic_screen.dart';
 
@@ -32,6 +35,8 @@ class _TunaiProShellState extends State<TunaiProShell> {
     ConnectScreen(),
     const DspScreen(),
     MeasurementMicScreen(),
+    ProCommunityScreen(),
+    ProProfileScreen(),
   ];
 
   @override
@@ -66,6 +71,8 @@ class _TunaiProShellState extends State<TunaiProShell> {
               BottomNavigationBarItem(icon: Icon(Icons.usb, size: 18), label: 'CONNECT'),
               BottomNavigationBarItem(icon: Icon(Icons.equalizer, size: 18), label: 'PEQ'),
               BottomNavigationBarItem(icon: Icon(Icons.mic_none, size: 18), label: 'MIC'),
+              BottomNavigationBarItem(icon: Icon(Icons.people_outline, size: 18), label: 'COMMUNITY'),
+              BottomNavigationBarItem(icon: Icon(Icons.person_outline, size: 18), label: 'PROFILE'),
             ],
           ),
         ),

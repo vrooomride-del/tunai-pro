@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/speaker_profile.dart';
 import 'package:record/record.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -49,7 +50,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   static const int fftSize = 65536;
   static const int durationSec = 10;
 
-  Future<void> startMeasurement({List<double>? scfCorrection}) async {
+  Future<void> startMeasurement({List<double>? scfCorrection, SpeakerProfile? speakerProfile}) async {
     try {
       // 권한 확인
       final hasPermission = await _recorder.hasPermission();
@@ -93,7 +94,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       final pcmBytes = await File(recPath).readAsBytes();
       final rawPcm = Uint8List.sublistView(pcmBytes, 44);
       final samples = _pcmToFloat(rawPcm);
-      final response = _analyzeFFT(samples, scfCorrection: scfCorrection);
+      final response = _analyzeFFT(samples, scfCorrection: scfCorrection, speakerProfile: speakerProfile);
 
       state = state.copyWith(
         status: MeasurementStatus.done,
@@ -120,7 +121,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   }
 
   List<Map<String, double>> _analyzeFFT(Float64List samples,
-      {List<double>? scfCorrection}) {
+      {List<double>? scfCorrection, SpeakerProfile? speakerProfile}) {
     final input = Float64List(fftSize);
     final copyLen = min(samples.length, fftSize);
     for (int i = 0; i < copyLen; i++) {

@@ -2,7 +2,7 @@ name: Build TUNAI Pro
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, ai-agent ]
   workflow_dispatch:
 
 jobs:
