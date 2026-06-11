@@ -160,3 +160,35 @@ class DspEngine {
     return frame;
   }
 }
+
+// ── T/S 기반 안전범위 ─────────────────────────────────────
+
+class SafetyProfile {
+  final double hpfFreq;
+  final double maxBassBoost;
+  final double gainOffset;
+
+  const SafetyProfile({
+    required this.hpfFreq,
+    required this.maxBassBoost,
+    required this.gainOffset,
+  });
+
+  static SafetyProfile fromTs({
+    required double fs,
+    required double xmax,
+    required double sensitivity,
+  }) {
+    return SafetyProfile(
+      hpfFreq: fs * 0.85,
+      maxBassBoost: xmax >= 10 ? 6.0 : xmax >= 6 ? 4.0 : xmax >= 3 ? 2.0 : 0.0,
+      gainOffset: sensitivity - 85.0,
+    );
+  }
+
+  /// PEQ gainDb를 Xmax 기반으로 클램핑
+  double clampBassBoost(double gainDb, double freq) {
+    if (freq < 200 && gainDb > maxBassBoost) return maxBassBoost;
+    return gainDb;
+  }
+}
