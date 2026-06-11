@@ -35,6 +35,8 @@ class _TunaiProShellState extends State<TunaiProShell> {
     ConnectScreen(),
     const DspScreen(),
     MeasurementMicScreen(),
+    ProCommunityScreen(),
+    ProProfileScreen(),
   ];
 
   @override
