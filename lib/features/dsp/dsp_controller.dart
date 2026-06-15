@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dsp_state.dart';
 import '../../core/dsp_engine.dart' as engine;
+import '../../core/dsp/dsp_adapter.dart';
+import '../../core/dsp/adau1701_adapter.dart';
 import '../connect/connect_controller.dart';
 
 final dspProvider = StateNotifierProvider<DspController, DspState>(
@@ -123,12 +125,15 @@ class DspController extends StateNotifier<DspState> {
     final conn = _ref.read(connectProvider);
     if (conn.connection != UartConnectionState.connected) return false;
 
-    int pramAddr = 0x0010;
-    final allBytes = <int>[];
+    final notifier = _ref.read(connectProvider.notifier);
+    Future<bool> rawWrite(List<int> bytes) => notifier.sendBytes(bytes);
+    final adapter = Adau1701Adapter(send: rawWrite);
 
-    for (final out in state.outputs) {
+    for (var chIdx = 0; chIdx < state.outputs.length; chIdx++) {
+      final out = state.outputs[chIdx];
       if (out.muted) continue;
-      for (final band in out.bands) {
+      for (var bandIdx = 0; bandIdx < out.bands.length; bandIdx++) {
+        final band = out.bands[bandIdx];
         if (!band.enabled) continue;
         final filter = engine.BiquadFilter(
           frequency: band.frequency,
@@ -137,13 +142,11 @@ class DspController extends StateNotifier<DspState> {
           type: _mapFilterType(band.type),
         );
         final coeff = engine.DspEngine.calculate(filter);
-        final frame = engine.DspEngine.buildBleFrame(coeff, pramAddr);
-        allBytes.addAll(frame);
-        pramAddr += 5;
+        await adapter.writeBiquad(chIdx, bandIdx, BiquadCoeffs.fromEngine(coeff));
       }
     }
 
-    return await _ref.read(connectProvider.notifier).sendBytes(allBytes);
+    return true;
   }
 
   engine.FilterType _mapFilterType(FilterType t) {
