@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import '../features/dsp/dsp_state.dart';
 import 'speaker_profile.dart';
+import 'profiles/system_profile.dart';
 
 class AiTuningService {
   static const _apiKey = 'AQ.Ab8RN6Je2ple9H4TTYY30b5qKIx7N-xyaLV-7zr5wzWOT_7pJQ'; // 환경변수로 교체 예정
@@ -21,8 +22,10 @@ class AiTuningService {
     required String userRequest,
     List<Map<String, double>>? frequencyResponse,
     SpeakerProfile? speakerProfile,
+    SystemProfile? systemProfile,
   }) async {
-    final prompt = _buildPrompt(dspState, userRequest, frequencyResponse, speakerProfile);
+    final prompt = _buildPrompt(
+        dspState, userRequest, frequencyResponse, speakerProfile, systemProfile);
     
     try {
       final response = await _model.generateContent([Content.text(prompt)]);
@@ -39,6 +42,7 @@ class AiTuningService {
     String userRequest,
     List<Map<String, double>>? freqResponse,
     SpeakerProfile? speakerProfile,
+    SystemProfile? systemProfile,
   ) {
     final outIdx = state.selectedOutput;
     final out = state.outputs[outIdx];
@@ -86,9 +90,27 @@ SPEAKER T/S PARAMETERS (PHYSICAL CONSTRAINTS - MUST RESPECT):
 CONSTRAINTS: Never recommend HPF below ${speakerProfile.recommendedHpfFreq.toStringAsFixed(0)} Hz. Bass boost must not exceed ${speakerProfile.maxBassBoostDb.toStringAsFixed(1)} dB.''';
     }
 
+    // 시스템 프로파일 채널 구성
+    String systemSection = '';
+    if (systemProfile != null) {
+      final chInfo = systemProfile.channels.asMap().entries.map((e) {
+        final ch = e.value;
+        final range = ch.freqRange;
+        return '  Ch${e.key} ${ch.name}: ${range.$1.toStringAsFixed(0)}-${range.$2.toStringAsFixed(0)} Hz';
+      }).join('\n');
+      systemSection = '''
+
+SPEAKER SYSTEM: ${systemProfile.displayName} (${systemProfile.chipLabel})
+${systemProfile.description}
+CHANNEL LAYOUT:
+$chInfo
+EDITING CHANNEL INDEX: $outIdx (${outIdx < systemProfile.channels.length ? systemProfile.channels[outIdx].name : out.name})''';
+    }
+
     return '''
 You are an expert audio DSP engineer specializing in active speaker systems.
 Analyze the current DSP settings and provide PEQ adjustment recommendations.
+$systemSection
 
 CHANNEL: ${out.name}
 CROSSOVER: $hp | $lp

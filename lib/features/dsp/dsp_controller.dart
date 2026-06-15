@@ -140,7 +140,40 @@ class DspController extends StateNotifier<DspState> {
 
     for (var chIdx = 0; chIdx < state.outputs.length; chIdx++) {
       final out = state.outputs[chIdx];
+
       if (out.muted) continue;
+
+      // Gain
+      await adapter.writeGain(chIdx, out.gainDb);
+
+      // Delay
+      await adapter.writeDelay(chIdx, out.delayMs);
+
+      // HP 크로스오버
+      if (out.hpFilter.type != CrossoverType.bypass) {
+        await adapter.writeCrossover(
+          chIdx,
+          CrossoverConfig(
+            side: FilterSide.hpf,
+            freqHz: out.hpFilter.frequency,
+            slope: _mapCrossoverSlope(out.hpFilter.type),
+          ),
+        );
+      }
+
+      // LP 크로스오버
+      if (out.lpFilter.type != CrossoverType.bypass) {
+        await adapter.writeCrossover(
+          chIdx,
+          CrossoverConfig(
+            side: FilterSide.lpf,
+            freqHz: out.lpFilter.frequency,
+            slope: _mapCrossoverSlope(out.lpFilter.type),
+          ),
+        );
+      }
+
+      // PEQ 밴드
       for (var bandIdx = 0; bandIdx < out.bands.length; bandIdx++) {
         final band = out.bands[bandIdx];
         if (!band.enabled) continue;
@@ -167,6 +200,17 @@ class DspController extends StateNotifier<DspState> {
       case FilterType.highPass:  return engine.FilterType.highPass;
       case FilterType.notch:     return engine.FilterType.notch;
       case FilterType.allPass:   return engine.FilterType.peaking;
+    }
+  }
+
+  CrossoverSlope _mapCrossoverSlope(CrossoverType t) {
+    switch (t) {
+      case CrossoverType.bypass:        return CrossoverSlope.bypass;
+      case CrossoverType.butterworth12: return CrossoverSlope.bw2;
+      case CrossoverType.butterworth24: return CrossoverSlope.bw4;
+      case CrossoverType.lr12:          return CrossoverSlope.lr2;
+      case CrossoverType.lr24:          return CrossoverSlope.lr4;
+      case CrossoverType.lr48:          return CrossoverSlope.lr8;
     }
   }
 }

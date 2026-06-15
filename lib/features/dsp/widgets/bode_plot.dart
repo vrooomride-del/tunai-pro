@@ -151,21 +151,21 @@ class DspBodePlot extends StatelessWidget {
   }
 
   double _crossoverResponse(CrossoverFilter xo, double freq, {required bool isHP}) {
-    final fc = xo.frequency;
-    final ratio = isHP ? freq / fc : fc / freq;
-    int order;
-    bool isLR;
-    switch (xo.type) {
-      case CrossoverType.butterworth12: order = 1; isLR = false; break;
-      case CrossoverType.butterworth24: order = 2; isLR = false; break;
-      case CrossoverType.lr12: order = 1; isLR = true; break;
-      case CrossoverType.lr24: order = 2; isLR = true; break;
-      case CrossoverType.lr48: order = 4; isLR = true; break;
-      default: return 0;
+    final xoType = _mapXoType(xo.type);
+    if (xoType == null) return 0;
+    final biquads = engine.DspEngine.calculateCrossoverBiquads(xo.frequency, isHP, xoType);
+    return biquads.fold(0.0, (sum, c) => sum + _biquadResponse(c, freq));
+  }
+
+  engine.XoType? _mapXoType(CrossoverType t) {
+    switch (t) {
+      case CrossoverType.bypass:        return null;
+      case CrossoverType.butterworth12: return engine.XoType.bw2;
+      case CrossoverType.butterworth24: return engine.XoType.bw4;
+      case CrossoverType.lr12:          return engine.XoType.lr2;
+      case CrossoverType.lr24:          return engine.XoType.lr4;
+      case CrossoverType.lr48:          return engine.XoType.lr8;
     }
-    final n = isLR ? order * 2 : order;
-    final mag = 1 / sqrt(1 + pow(1 / ratio, 2 * n));
-    return 20 * log(mag) / ln10;
   }
 
   engine.FilterType _mapType(FilterType t) {

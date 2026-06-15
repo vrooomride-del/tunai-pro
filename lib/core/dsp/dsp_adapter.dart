@@ -14,14 +14,25 @@ class BiquadCoeffs {
       BiquadCoeffs(b0: c.b0, b1: c.b1, b2: c.b2, a1: c.a1, a2: c.a2);
 }
 
-enum CrossoverType { lpf, hpf }
-enum CrossoverSlope { lr2, lr4, bw2, bw4 }
+/// HP(고역통과) / LP(저역통과) 방향
+enum FilterSide { lpf, hpf }
+
+/// 크로스오버 필터 특성 (기울기)
+/// bypass : 비활성
+/// bw2/bw4: 2차/4차 Butterworth  (12/24 dB/oct)
+/// lr2/lr4 : 2차/4차 Linkwitz-Riley (12/24 dB/oct)
+/// lr8     : 8차 Linkwitz-Riley  (48 dB/oct)
+enum CrossoverSlope { bypass, bw2, bw4, lr2, lr4, lr8 }
 
 class CrossoverConfig {
-  final CrossoverType type;
+  final FilterSide side;
   final double freqHz;
   final CrossoverSlope slope;
-  const CrossoverConfig({required this.type, required this.freqHz, this.slope = CrossoverSlope.lr4});
+  const CrossoverConfig({
+    required this.side,
+    required this.freqHz,
+    this.slope = CrossoverSlope.lr4,
+  });
 }
 
 /// DSP 칩별 통신 추상화 — 채널/밴드 단위 고수준 API
