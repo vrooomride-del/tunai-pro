@@ -23,13 +23,14 @@ class _SpeakerProfileSelectorState extends State<SpeakerProfileSelector> {
 
   @override
   void dispose() {
-    for (final c in [_fsCtrl,_qtsCtrl,_vasCtrl,_xmaxCtrl,_sensCtrl,_volCtrl,_portLCtrl,_portDCtrl]) c.dispose();
+    for (final c in [_fsCtrl,_qtsCtrl,_vasCtrl,_xmaxCtrl,_sensCtrl,_volCtrl,_portLCtrl,_portDCtrl]) { c.dispose(); }
     super.dispose();
   }
 
   SpeakerProfileState _buildState() {
-    if (_mode == SpeakerProfileMode.builtin)
+    if (_mode == SpeakerProfileMode.builtin) {
       return SpeakerProfileState(mode: _mode, selectedProfile: _selectedBuiltin);
+    }
     if (_mode == SpeakerProfileMode.custom) {
       final custom = SpeakerProfile(
         id: 'custom', name: '직접 입력', description: '사용자 정의 스피커',
@@ -127,7 +128,7 @@ class _ModeCard extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border.all(color: selected ? Colors.white : Colors.white12),
         borderRadius: BorderRadius.circular(6),
-        color: selected ? Colors.white.withOpacity(0.05) : Colors.transparent,
+        color: selected ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
       ),
       child: Row(children: [
         Icon(icon, color: selected ? Colors.white : Colors.white30, size: 18),
@@ -176,7 +177,7 @@ class _ProfileInfo extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(border: Border.all(color: Colors.white12), borderRadius: BorderRadius.circular(6), color: Colors.white.withOpacity(0.03)),
+    decoration: BoxDecoration(border: Border.all(color: Colors.white12), borderRadius: BorderRadius.circular(6), color: Colors.white.withValues(alpha: 0.03)),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('DSP 안전 범위 (자동 적용)', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
       const SizedBox(height: 8),

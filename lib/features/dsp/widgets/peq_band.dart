@@ -39,12 +39,15 @@ class _PeqBandEditorState extends State<PeqBandEditor> {
   @override
   void didUpdateWidget(PeqBandEditor old) {
     super.didUpdateWidget(old);
-    if (old.band.frequency != widget.band.frequency)
+    if (old.band.frequency != widget.band.frequency) {
       _freqCtrl.text = _freqText(widget.band.frequency);
-    if (old.band.gainDb != widget.band.gainDb)
+    }
+    if (old.band.gainDb != widget.band.gainDb) {
       _gainCtrl.text = widget.band.gainDb.toStringAsFixed(1);
-    if (old.band.q != widget.band.q)
+    }
+    if (old.band.q != widget.band.q) {
       _qCtrl.text = widget.band.q.toStringAsFixed(2);
+    }
   }
 
   @override
@@ -68,7 +71,7 @@ class _PeqBandEditorState extends State<PeqBandEditor> {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: sel ? Colors.white.withOpacity(0.05) : Colors.transparent,
+          color: sel ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
           border: Border.all(color: sel ? Colors.white24 : Colors.white12),
           borderRadius: BorderRadius.circular(4),
         ),

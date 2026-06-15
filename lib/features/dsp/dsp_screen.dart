@@ -37,8 +37,9 @@ class DspScreen extends ConsumerWidget {
                     const SnackBar(content: Text('CONNECT 탭에서 DSP 연결 먼저')));
                 return;
               }
+              final messenger = ScaffoldMessenger.of(context);
               final ok = await ctrl.sendToDsp();
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              messenger.showSnackBar(SnackBar(
                 content: Text(ok ? '✓ DSP 적용 완료' : '전송 실패'),
               ));
             },
@@ -83,9 +84,11 @@ class DspScreen extends ConsumerWidget {
               child: const Text('취소', style: TextStyle(color: Colors.white38))),
           TextButton(
             onPressed: () async {
+              final nav = Navigator.of(context);
+              final messenger = ScaffoldMessenger.of(context);
               await ctrl.savePreset(nameCtrl.text.trim());
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
+              nav.pop();
+              messenger.showSnackBar(
                   SnackBar(content: Text('${nameCtrl.text} 저장됐습니다.')));
             },
             child: const Text('저장', style: TextStyle(color: Colors.white)),
@@ -96,12 +99,14 @@ class DspScreen extends ConsumerWidget {
   }
 
   void _showLoadDialog(BuildContext context, DspController ctrl) async {
+    final messenger = ScaffoldMessenger.of(context);
     final presets = await ctrl.getPresets();
     if (presets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
           const SnackBar(content: Text('저장된 프리셋이 없습니다.')));
       return;
     }
+    if (!context.mounted) return;
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -119,14 +124,17 @@ class DspScreen extends ConsumerWidget {
                 icon: const Icon(Icons.delete_outline,
                     color: Colors.white24, size: 16),
                 onPressed: () async {
+                  final nav = Navigator.of(context);
                   await ctrl.deletePreset(name);
-                  Navigator.pop(context);
+                  nav.pop();
                 },
               ),
               onTap: () async {
+                final nav = Navigator.of(context);
+                final snackbar = ScaffoldMessenger.of(context);
                 await ctrl.loadPreset(name);
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
+                nav.pop();
+                snackbar.showSnackBar(
                     SnackBar(content: Text('$name 불러왔습니다.')));
               },
             )).toList(),
@@ -216,7 +224,7 @@ class _Btn extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border.all(color: dim ? Colors.white24 : Colors.white, width: 0.5),
         borderRadius: BorderRadius.circular(4),
-        color: dim ? Colors.transparent : Colors.white.withOpacity(0.05),
+        color: dim ? Colors.transparent : Colors.white.withValues(alpha: 0.05),
       ),
       child: Text(label,
           style: TextStyle(
@@ -283,7 +291,7 @@ class _Tab extends StatelessWidget {
       ),
       child: Text(label,
           style: TextStyle(
-            color: muted ? Colors.red.withOpacity(0.5)
+            color: muted ? Colors.red.withValues(alpha: 0.5)
                 : selected ? Colors.white : Colors.white38,
             fontSize: 9, letterSpacing: 1.5,
           )),
@@ -359,8 +367,8 @@ class _OutputView extends StatelessWidget {
                   const Text('PEQ',
                       style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
                   const SizedBox(width: 12),
-                  Text('20 BANDS',
-                      style: const TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 1)),
+                  const Text('20 BANDS',
+                      style: TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 1)),
                   const Spacer(),
                   GestureDetector(
                     onTap: () => ctrl.resetOutputBands(outIdx),

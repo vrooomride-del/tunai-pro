@@ -151,10 +151,10 @@ class DspEngine {
     frame[idx++] = (pramAddr >> 8) & 0xFF;
     frame[idx++] = pramAddr & 0xFF;
     for (final c in [coeff.b0, coeff.b1, coeff.b2, coeff.a1, coeff.a2]) {
-      for (final b in toBytes4(toFixed523(c))) frame[idx++] = b;
+      for (final b in toBytes4(toFixed523(c))) { frame[idx++] = b; }
     }
     int checksum = 0;
-    for (int i = 0; i < 23; i++) checksum ^= frame[i];
+    for (int i = 0; i < 23; i++) { checksum ^= frame[i]; }
     frame[idx++] = checksum;
     frame[idx++] = 0x55;
     return frame;

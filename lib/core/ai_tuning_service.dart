@@ -74,17 +74,16 @@ class AiTuningService {
     }
     String tsSection = '';
     if (speakerProfile != null) {
-      final p = speakerProfile;
       tsSection = '''
 
 SPEAKER T/S PARAMETERS (PHYSICAL CONSTRAINTS - MUST RESPECT):
-  Name: \${p.name}
-  Fs: \${p.fs.toStringAsFixed(1)} Hz  → Do NOT boost below \${p.recommendedHpfFreq.toStringAsFixed(0)} Hz
-  Qts: \${p.qts.toStringAsFixed(3)}
-  Vas: \${p.vas.toStringAsFixed(1)} L
-  Xmax: \${p.xmax.toStringAsFixed(1)} mm  → Max bass boost: \${p.maxBassBoostDb.toStringAsFixed(1)} dB
-  Sensitivity: \${p.sensitivity.toStringAsFixed(1)} dB  → Gain offset ref: \${p.gainReferenceOffset >= 0 ? '+' : ''}\${p.gainReferenceOffset.toStringAsFixed(1)} dB
-CONSTRAINTS: Never recommend HPF below \${p.recommendedHpfFreq.toStringAsFixed(0)} Hz. Bass boost must not exceed \${p.maxBassBoostDb.toStringAsFixed(1)} dB.''';
+  Name: ${speakerProfile.name}
+  Fs: ${speakerProfile.fs.toStringAsFixed(1)} Hz  → Do NOT boost below ${speakerProfile.recommendedHpfFreq.toStringAsFixed(0)} Hz
+  Qts: ${speakerProfile.qts.toStringAsFixed(3)}
+  Vas: ${speakerProfile.vas.toStringAsFixed(1)} L
+  Xmax: ${speakerProfile.xmax.toStringAsFixed(1)} mm  → Max bass boost: ${speakerProfile.maxBassBoostDb.toStringAsFixed(1)} dB
+  Sensitivity: ${speakerProfile.sensitivity.toStringAsFixed(1)} dB  → Gain offset ref: ${speakerProfile.gainReferenceOffset >= 0 ? '+' : ''}${speakerProfile.gainReferenceOffset.toStringAsFixed(1)} dB
+CONSTRAINTS: Never recommend HPF below ${speakerProfile.recommendedHpfFreq.toStringAsFixed(0)} Hz. Bass boost must not exceed ${speakerProfile.maxBassBoostDb.toStringAsFixed(1)} dB.''';
     }
 
     return '''
@@ -99,6 +98,7 @@ DELAY: ${out.delayMs.toStringAsFixed(2)}ms
 CURRENT PEQ BANDS (20 bands):
 $currentBands
 $freqSection
+$tsSection
 
 USER REQUEST: "$userRequest"
 

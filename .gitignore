@@ -20,3 +20,4 @@ windows/flutter/ephemeral/
 .idea/
 .vscode/
 *.iml
+.DS_Store

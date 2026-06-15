@@ -66,7 +66,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     ok = await ref.read(authProvider.notifier)
                         .register(_emailCtrl.text.trim(), _passwordCtrl.text, _nicknameCtrl.text.trim());
                   }
-                  if (ok && mounted) Navigator.of(context).pop();
+                  if (!mounted) return;
+                  // ignore: use_build_context_synchronously
+                  if (ok) Navigator.of(context).pop();
                 },
                 child: Container(
                   height: 52,
@@ -84,8 +86,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              Row(
-                children: const [
+              const Row(
+                children: [
                   Expanded(child: Divider(color: Colors.white12)),
                   Padding(
                     padding: EdgeInsets.symmetric(horizontal: 12),
@@ -99,7 +101,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               GestureDetector(
                 onTap: () async {
                   final ok = await ref.read(authProvider.notifier).loginWithApple();
-                  if (ok && mounted) Navigator.of(context).pop();
+                  if (!mounted) return;
+                  // ignore: use_build_context_synchronously
+                  if (ok) Navigator.of(context).pop();
                 },
                 child: Container(
                   height: 52,
@@ -108,9 +112,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Colors.white24),
                   ),
-                  child: Row(
+                  child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
+                    children: [
                       Icon(Icons.apple, color: Colors.white, size: 22),
                       SizedBox(width: 8),
                       Text('Apple로 로그인',
@@ -125,7 +129,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               GestureDetector(
                 onTap: () async {
                   final ok = await ref.read(authProvider.notifier).loginWithGoogle();
-                  if (ok && mounted) Navigator.of(context).pop();
+                  if (!mounted) return;
+                  // ignore: use_build_context_synchronously
+                  if (ok) Navigator.of(context).pop();
                 },
                 child: Container(
                   height: 52,
@@ -134,9 +140,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     borderRadius: BorderRadius.circular(8),
                     color: Colors.white,
                   ),
-                  child: Row(
+                  child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
+                    children: [
                       Icon(Icons.g_mobiledata, color: Colors.red, size: 28),
                       SizedBox(width: 8),
                       Text('Google로 로그인',
@@ -151,7 +157,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               GestureDetector(
                 onTap: () async {
                   final ok = await ref.read(authProvider.notifier).loginWithKakao();
-                  if (ok && mounted) Navigator.of(context).pop();
+                  if (!mounted) return;
+                  // ignore: use_build_context_synchronously
+                  if (ok) Navigator.of(context).pop();
                 },
                 child: Container(
                   height: 52,
@@ -159,9 +167,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     color: const Color(0xFFFEE500),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Row(
+                  child: const Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
+                    children: [
                       Icon(Icons.chat_bubble, color: Color(0xFF3A1D1D), size: 18),
                       SizedBox(width: 8),
                       Text('카카오 로그인',

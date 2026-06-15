@@ -203,7 +203,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                       decoration: BoxDecoration(
                         border: Border.all(color: selected ? Colors.white : Colors.white24),
                         borderRadius: BorderRadius.circular(4),
-                        color: selected ? Colors.white.withOpacity(0.05) : Colors.transparent,
+                        color: selected ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
                       ),
                       child: Center(
                         child: Text(m.name,
@@ -335,7 +335,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
+                  border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(measState.error ?? '',
@@ -473,7 +473,7 @@ class _BodePlot extends StatelessWidget {
               dotData: const FlDotData(show: false),
               belowBarData: BarAreaData(
                 show: true,
-                color: Colors.white.withOpacity(0.04),
+                color: Colors.white.withValues(alpha: 0.04),
               ),
             ),
           ],

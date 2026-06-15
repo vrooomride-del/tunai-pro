@@ -50,8 +50,9 @@ class _CrossoverSideState extends State<_CrossoverSide> {
   @override
   void didUpdateWidget(_CrossoverSide old) {
     super.didUpdateWidget(old);
-    if (old.filter.frequency != widget.filter.frequency)
+    if (old.filter.frequency != widget.filter.frequency) {
       _freqCtrl.text = widget.filter.frequency.toStringAsFixed(0);
+    }
   }
 
   @override
@@ -90,7 +91,7 @@ class _CrossoverSideState extends State<_CrossoverSide> {
                   border: Border.all(
                     color: f.type == t ? Colors.white : Colors.white12, width: 0.5),
                   borderRadius: BorderRadius.circular(2),
-                  color: f.type == t ? Colors.white.withOpacity(0.05) : Colors.transparent,
+                  color: f.type == t ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
                 ),
                 child: Text(t.label,
                     style: TextStyle(
@@ -123,8 +124,9 @@ class _CrossoverSideState extends State<_CrossoverSide> {
                     keyboardType: TextInputType.number,
                     onSubmitted: (v) {
                       final freq = double.tryParse(v);
-                      if (freq != null)
+                      if (freq != null) {
                         widget.onChanged(f.copyWith(frequency: freq.clamp(20, 20000)));
+                      }
                     },
                   ),
                 ),

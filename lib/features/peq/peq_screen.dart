@@ -5,7 +5,6 @@ import 'dart:math';
 import 'peq_controller.dart';
 import '../../core/dsp_engine.dart';
 import '../../core/api_service.dart';
-import '../connect/connect_controller.dart';
 
 class PeqScreen extends ConsumerWidget {
   const PeqScreen({super.key});
@@ -83,12 +82,14 @@ class _TopBar extends ConsumerWidget {
           // 클라우드 업로드
           GestureDetector(
             onTap: () async {
+              final messenger = ScaffoldMessenger.of(context);
               final token = await ApiService.getToken();
               if (token == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                     const SnackBar(content: Text('TUNAI 앱에서 로그인 후 사용하세요.')));
                 return;
               }
+              if (!context.mounted) return;
               final nameCtrl = TextEditingController(text: 'Pro Preset');
               final roomCtrl = TextEditingController();
               showDialog(
@@ -124,7 +125,9 @@ class _TopBar extends ConsumerWidget {
                         child: const Text('취소', style: TextStyle(color: Colors.white38))),
                     TextButton(
                       onPressed: () async {
-                        Navigator.pop(context);
+                        final nav = Navigator.of(context);
+                        final snackbar = ScaffoldMessenger.of(context);
+                        nav.pop();
                         final fps = ref.read(peqProvider).filters.map((f) => {
                           'f': f.frequency, 'g': f.gainDb, 'q': f.q, 'type': f.type.index
                         }).toList();
@@ -134,8 +137,8 @@ class _TopBar extends ConsumerWidget {
                           fps: fps,
                           roomTag: roomCtrl.text.trim(),
                         );
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text(res['status'] == 'ok' ? '커뮤니티에 공유됐습니다!' : '공유 실패: \${res["message"]}'),
+                        snackbar.showSnackBar(SnackBar(
+                          content: Text(res['status'] == 'ok' ? '커뮤니티에 공유됐습니다!' : '공유 실패: ${res["message"]}'),
                         ));
                       },
                       child: const Text('공유', style: TextStyle(color: Colors.white)),
@@ -150,14 +153,16 @@ class _TopBar extends ConsumerWidget {
           // 클라우드 다운로드
           GestureDetector(
             onTap: () async {
+              final messenger = ScaffoldMessenger.of(context);
               final res = await ApiService.getPresets();
               if (res['status'] != 'ok') return;
               final presets = res['data'] as List;
               if (presets.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                     const SnackBar(content: Text('커뮤니티 프리셋이 없습니다.')));
                 return;
               }
+              if (!context.mounted) return;
               showDialog(
                 context: context,
                 builder: (_) => AlertDialog(
@@ -170,13 +175,15 @@ class _TopBar extends ConsumerWidget {
                       shrinkWrap: true,
                       children: presets.map<Widget>((p) => ListTile(
                         title: Text(p['title'] ?? '', style: const TextStyle(color: Colors.white, fontSize: 13)),
-                        subtitle: Text('by \${p["nickname"] ?? ""} · ↓\${p["downloads"] ?? 0}',
+                        subtitle: Text('by ${p["nickname"] ?? ""} · ↓${p["downloads"] ?? 0}',
                             style: const TextStyle(color: Colors.white38, fontSize: 11)),
                         onTap: () async {
-                          Navigator.pop(context);
+                          final nav = Navigator.of(context);
+                          final snackbar = ScaffoldMessenger.of(context);
+                          nav.pop();
                           final fps = p['fps_json'] as List? ?? [];
                           if (fps.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            snackbar.showSnackBar(
                                 const SnackBar(content: Text('필터 데이터가 없습니다.')));
                             return;
                           }
@@ -187,8 +194,8 @@ class _TopBar extends ConsumerWidget {
                             type: FilterType.values[f['type'] ?? 0],
                           )).toList();
                           ref.read(peqProvider.notifier).loadFilters(filters);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('\${p["title"]} 적용됐습니다.')));
+                          snackbar.showSnackBar(
+                              SnackBar(content: Text('${p["title"]} 적용됐습니다.')));
                         },
                       )).toList(),
                     ),
@@ -206,12 +213,14 @@ class _TopBar extends ConsumerWidget {
           // 불러오기
           GestureDetector(
             onTap: () async {
+              final messenger = ScaffoldMessenger.of(context);
               final presets = await ctrl.getSavedPresets();
               if (presets.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                     const SnackBar(content: Text('저장된 프리셋이 없습니다.')));
                 return;
               }
+              if (!context.mounted) return;
               showDialog(
                 context: context,
                 builder: (_) => AlertDialog(
@@ -227,15 +236,16 @@ class _TopBar extends ConsumerWidget {
                         trailing: IconButton(
                           icon: const Icon(Icons.delete_outline, color: Colors.white24, size: 16),
                           onPressed: () async {
+                            final nav = Navigator.of(context);
                             await ctrl.deletePreset(name);
-                            Navigator.pop(context);
+                            nav.pop();
                           },
                         ),
                         onTap: () {
                           ctrl.loadPreset(name);
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('\$name 불러왔습니다.')));
+                              SnackBar(content: Text('$name 불러왔습니다.')));
                         },
                       )).toList(),
                     ),
@@ -272,10 +282,12 @@ class _TopBar extends ConsumerWidget {
                         child: const Text('취소', style: TextStyle(color: Colors.white38))),
                     TextButton(
                       onPressed: () async {
+                        final nav = Navigator.of(context);
+                        final snackbar = ScaffoldMessenger.of(context);
                         await ctrl.savePreset(nameCtrl.text.trim());
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('\${nameCtrl.text} 저장됐습니다.')));
+                        nav.pop();
+                        snackbar.showSnackBar(
+                            SnackBar(content: Text('${nameCtrl.text} 저장됐습니다.')));
                       },
                       child: const Text('저장', style: TextStyle(color: Colors.white)),
                     ),
@@ -372,7 +384,7 @@ class _BodePlot extends StatelessWidget {
               dotData: const FlDotData(show: false),
               belowBarData: BarAreaData(
                 show: true,
-                color: Colors.white.withOpacity(0.05),
+                color: Colors.white.withValues(alpha: 0.05),
               ),
             ),
           ],

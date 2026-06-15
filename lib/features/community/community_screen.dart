@@ -117,8 +117,10 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                 description: 'TUNAI Pro ${out.name}',
                 fps: fps.cast<Map<String, dynamic>>(),
               );
+              if (!context.mounted) return;
               if (res['status'] == 'ok') {
                 _loadPresets();
+                // ignore: use_build_context_synchronously
                 ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('프리셋 공유됐습니다!')));
               }
@@ -572,7 +574,7 @@ class _SortBtn extends StatelessWidget {
         border: Border.all(
             color: selected ? Colors.white : Colors.white24, width: 0.5),
         borderRadius: BorderRadius.circular(20),
-        color: selected ? Colors.white.withOpacity(0.05) : Colors.transparent,
+        color: selected ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
       ),
       child: Text(label,
           style: TextStyle(

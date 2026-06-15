@@ -175,7 +175,7 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                         decoration: BoxDecoration(
                           border: Border.all(color: Colors.white12, width: 0.5),
                           borderRadius: BorderRadius.circular(4),
-                          color: Colors.white.withOpacity(0.02),
+                          color: Colors.white.withValues(alpha: 0.02),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,

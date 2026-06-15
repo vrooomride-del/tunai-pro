@@ -71,7 +71,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       final recPath = '${dir.path}/tunai_pro_measurement.wav';
 
       await _recorder.start(
-        RecordConfig(
+        const RecordConfig(
           encoder: AudioEncoder.wav,
           sampleRate: sampleRate,
           numChannels: 1,
@@ -80,7 +80,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       );
 
       // 핑크노이즈 재생
-      state = state.copyWith(message: '측정 중... (${durationSec}초)');
+      state = state.copyWith(message: '측정 중... ($durationSec초)');
       await _player.setFilePath(wavFile.path);
       await _player.play();
       await Future.delayed(const Duration(seconds: durationSec));
@@ -132,7 +132,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     final fft = FFT(fftSize);
     final freq = fft.realFft(input);
     final result = <Map<String, double>>[];
-    final nyquist = fftSize ~/ 2;
+    const nyquist = fftSize ~/ 2;
 
     // 1/3 옥타브 밴딩으로 스무딩
     final bands = <double, List<double>>{};
@@ -189,7 +189,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   Future<File> _generatePinkNoise() async {
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/pink_noise_pro.wav');
-    final totalSamples = sampleRate * durationSec;
+    const totalSamples = sampleRate * durationSec;
     final pcm = Int16List(totalSamples);
 
     // Paul Kellet 핑크노이즈
@@ -209,11 +209,11 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     }
 
     // WAV 헤더 생성
-    final dataSize = totalSamples * 2;
+    const dataSize = totalSamples * 2;
     final header = ByteData(44);
-    final setStr = (offset, s) {
-      for (int i = 0; i < s.length; i++) header.setUint8(offset + i, s.codeUnitAt(i));
-    };
+    void setStr(int offset, String s) {
+      for (int i = 0; i < s.length; i++) { header.setUint8(offset + i, s.codeUnitAt(i)); }
+    }
     setStr(0, 'RIFF'); header.setUint32(4, 36 + dataSize, Endian.little);
     setStr(8, 'WAVE'); setStr(12, 'fmt ');
     header.setUint32(16, 16, Endian.little);

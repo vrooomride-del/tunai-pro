@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import '../dsp_state.dart';
 
@@ -42,10 +41,12 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
   @override
   void didUpdateWidget(OutputChannelStrip old) {
     super.didUpdateWidget(old);
-    if (old.channel.gainDb != widget.channel.gainDb)
+    if (old.channel.gainDb != widget.channel.gainDb) {
       _gainCtrl.text = widget.channel.gainDb.toStringAsFixed(1);
-    if (old.channel.delayMs != widget.channel.delayMs)
+    }
+    if (old.channel.delayMs != widget.channel.delayMs) {
       _delayCtrl.text = widget.channel.delayMs.toStringAsFixed(2);
+    }
   }
 
   @override
@@ -68,7 +69,7 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
         decoration: BoxDecoration(
           border: Border.all(color: sel ? Colors.white38 : Colors.white12),
           borderRadius: BorderRadius.circular(6),
-          color: sel ? Colors.white.withOpacity(0.03) : Colors.transparent,
+          color: sel ? Colors.white.withValues(alpha: 0.03) : Colors.transparent,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -174,7 +175,7 @@ class _IconBtn extends StatelessWidget {
             border: Border.all(
                 color: active ? activeColor : Colors.white24, width: 0.5),
             borderRadius: BorderRadius.circular(3),
-            color: active ? activeColor.withOpacity(0.15) : Colors.transparent,
+            color: active ? activeColor.withValues(alpha: 0.15) : Colors.transparent,
           ),
           child: Center(
             child: Text(label,
@@ -312,8 +313,9 @@ class _InputChannelStripState extends State<InputChannelStrip> {
   @override
   void didUpdateWidget(InputChannelStrip old) {
     super.didUpdateWidget(old);
-    if (old.channel.gainDb != widget.channel.gainDb)
+    if (old.channel.gainDb != widget.channel.gainDb) {
       _gainCtrl.text = widget.channel.gainDb.toStringAsFixed(1);
+    }
   }
 
   @override
@@ -332,7 +334,7 @@ class _InputChannelStripState extends State<InputChannelStrip> {
         decoration: BoxDecoration(
           border: Border.all(color: sel ? Colors.white38 : Colors.white12),
           borderRadius: BorderRadius.circular(6),
-          color: sel ? Colors.white.withOpacity(0.03) : Colors.transparent,
+          color: sel ? Colors.white.withValues(alpha: 0.03) : Colors.transparent,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

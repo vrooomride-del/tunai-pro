@@ -48,7 +48,6 @@ class DspBodePlot extends StatelessWidget {
                 showTitles: true,
                 interval: 0.5,
                 getTitlesWidget: (v, _) {
-                  final freq = pow(10, v).toDouble();
                   const labels = {20: '20', 50: '50', 100: '100', 200: '200',
                     500: '500', 1000: '1k', 2000: '2k', 5000: '5k',
                     10000: '10k', 20000: '20k'};
@@ -91,7 +90,7 @@ class DspBodePlot extends StatelessWidget {
               dotData: const FlDotData(show: false),
               belowBarData: BarAreaData(
                 show: true,
-                color: Colors.white.withOpacity(0.04),
+                color: Colors.white.withValues(alpha: 0.04),
               ),
             ),
           ],
