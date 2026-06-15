@@ -8,6 +8,7 @@ import 'widgets/crossover.dart';
 import 'widgets/channel_strip.dart';
 import '../connect/connect_controller.dart';
 import 'widgets/ai_panel.dart';
+import '../../core/profiles/system_profile.dart';
 
 class DspScreen extends ConsumerWidget {
   const DspScreen({super.key});
@@ -18,6 +19,7 @@ class DspScreen extends ConsumerWidget {
     final ctrl = ref.read(dspProvider.notifier);
     final conn = ref.watch(connectProvider);
     final connected = conn.connection == UartConnectionState.connected;
+    final profile = ref.watch(systemProfileProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
@@ -37,6 +39,11 @@ class DspScreen extends ConsumerWidget {
                     const SnackBar(content: Text('CONNECT 탭에서 DSP 연결 먼저')));
                 return;
               }
+              if (profile.isAdau1466) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('ADAU1466 — SigmaStudio 주소맵 미확정')));
+                return;
+              }
               final messenger = ScaffoldMessenger.of(context);
               final ok = await ctrl.sendToDsp();
               messenger.showSnackBar(SnackBar(
@@ -44,6 +51,11 @@ class DspScreen extends ConsumerWidget {
               ));
             },
           ),
+
+          // ── 보드 선택 배너 ───────────────────────────
+          _BoardSelector(profile: profile, onSelect: (p) {
+            ref.read(systemProfileProvider.notifier).state = p;
+          }),
 
           // ── INPUT / OUTPUT 탭 선택 ───────────────────
           _SectionTabs(showInput: state.showInput, ctrl: ctrl, state: state),
@@ -476,6 +488,88 @@ class _InputView extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── 보드 선택 배너 ─────────────────────────────────────────────
+
+class _BoardSelector extends StatelessWidget {
+  final SystemProfile profile;
+  final ValueChanged<SystemProfile> onSelect;
+
+  const _BoardSelector({required this.profile, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFF0F0F0F),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+      child: Row(
+        children: [
+          const Text('BOARD',
+              style: TextStyle(color: Colors.white24, fontSize: 8, letterSpacing: 3)),
+          const SizedBox(width: 16),
+          ...kAllSystemProfiles.map((p) => _ProfileChip(
+            label: p.displayName,
+            chipLabel: p.chipLabel,
+            selected: p.id == profile.id,
+            onTap: () => onSelect(p),
+          )),
+          const Spacer(),
+          if (profile.isAdau1466)
+            const Text('SigmaStudio 주소맵 미확정 — 전송 비활성',
+                style: TextStyle(color: Colors.orange, fontSize: 8, letterSpacing: 1)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileChip extends StatelessWidget {
+  final String label;
+  final String chipLabel;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ProfileChip({
+    required this.label, required this.chipLabel,
+    required this.selected, required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: selected ? Colors.white54 : Colors.white12,
+            width: 0.5,
+          ),
+          borderRadius: BorderRadius.circular(3),
+          color: selected ? Colors.white.withValues(alpha: 0.06) : Colors.transparent,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label,
+                style: TextStyle(
+                  color: selected ? Colors.white : Colors.white38,
+                  fontSize: 9, letterSpacing: 1,
+                  fontWeight: selected ? FontWeight.w500 : FontWeight.w300,
+                )),
+            Text(chipLabel,
+                style: TextStyle(
+                  color: selected ? Colors.white38 : Colors.white12,
+                  fontSize: 7, letterSpacing: 1,
+                )),
+          ],
+        ),
+      ),
     );
   }
 }
