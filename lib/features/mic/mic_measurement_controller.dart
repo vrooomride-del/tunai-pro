@@ -3,6 +3,8 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/speaker_profile.dart';
+import '../../core/profiles/system_profile.dart';
+import '../../features/dsp/dsp_state.dart';
 import 'package:record/record.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,13 +15,17 @@ enum MeasurementStatus { idle, playing, recording, analyzing, done, error }
 class MicMeasurementState {
   final MeasurementStatus status;
   final String message;
-  final List<Map<String, double>> frequencyResponse; // {freq, db}
+  final List<Map<String, double>> frequencyResponse;
+  final Map<int, List<Map<String, double>>> channelResponses; // 채널별 측정
+  final List<double?> recommendedCrossovers; // 추천 크로스오버 주파수
   final String? error;
 
   const MicMeasurementState({
     this.status = MeasurementStatus.idle,
     this.message = '',
     this.frequencyResponse = const [],
+    this.channelResponses = const {},
+    this.recommendedCrossovers = const [],
     this.error,
   });
 
@@ -27,11 +33,15 @@ class MicMeasurementState {
     MeasurementStatus? status,
     String? message,
     List<Map<String, double>>? frequencyResponse,
+    Map<int, List<Map<String, double>>>? channelResponses,
+    List<double?>? recommendedCrossovers,
     String? error,
   }) => MicMeasurementState(
     status: status ?? this.status,
     message: message ?? this.message,
     frequencyResponse: frequencyResponse ?? this.frequencyResponse,
+    channelResponses: channelResponses ?? this.channelResponses,
+    recommendedCrossovers: recommendedCrossovers ?? this.recommendedCrossovers,
     error: error ?? this.error,
   );
 }
@@ -50,14 +60,24 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   static const int fftSize = 65536;
   static const int durationSec = 10;
 
+  static Future<bool> checkAndRequestPermission() async {
+    final recorder = AudioRecorder();
+    final ok = await recorder.hasPermission();
+    await recorder.dispose();
+    return ok;
+  }
+
+  static void openMicSettings() {
+    Process.run('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone']);
+  }
+
   Future<void> startMeasurement({List<double>? scfCorrection, SpeakerProfile? speakerProfile}) async {
     try {
-      // 권한 확인
       final hasPermission = await _recorder.hasPermission();
       if (!hasPermission) {
         state = state.copyWith(
           status: MeasurementStatus.error,
-          error: '마이크 권한이 필요합니다.',
+          error: 'MIC_PERMISSION_DENIED',
         );
         return;
       }
@@ -107,6 +127,145 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         error: e.toString(),
       );
     }
+  }
+
+  // 채널별 순차 측정 (각 채널 솔로 → 측정 → 크로스오버 추천)
+  Future<void> startChannelMeasurement({
+    required List<String> channelNames,
+    required List<ChannelType> channelTypes,
+    required Future<void> Function(int) muteAllExcept,
+    required Future<void> Function() unmuteAll,
+    required Function(int, CrossoverFilter) applyLp,
+    required Function(int, CrossoverFilter) applyHp,
+    required CrossoverType xoverType,
+    List<double>? scfCorrection,
+  }) async {
+    final hasPermission = await _recorder.hasPermission();
+    if (!hasPermission) {
+      state = state.copyWith(status: MeasurementStatus.error, error: 'MIC_PERMISSION_DENIED');
+      return;
+    }
+
+    final channelResponses = <int, List<Map<String, double>>>{};
+    final n = channelNames.length;
+
+    try {
+      for (int i = 0; i < n; i++) {
+        state = state.copyWith(
+          status: MeasurementStatus.playing,
+          message: '채널 ${i + 1}/$n — ${channelNames[i]} 측정 중...',
+        );
+
+        await muteAllExcept(i);
+        await Future.delayed(const Duration(milliseconds: 300)); // DSP 적용 대기
+
+        final response = await _measureOnce(scfCorrection: scfCorrection);
+        channelResponses[i] = response;
+      }
+
+      await unmuteAll();
+
+      // 크로스오버 추천 계산
+      final crossovers = _recommendCrossovers(channelTypes, channelResponses);
+
+      // DSP 자동 적용
+      for (int i = 0; i < n; i++) {
+        final type = channelTypes[i];
+        final xFreq = _getCrossoverFreq(i, channelTypes, crossovers);
+        if (xFreq == null) continue;
+
+        switch (type) {
+          case ChannelType.woofer:
+          case ChannelType.subwoofer:
+            applyLp(i, CrossoverFilter(type: xoverType, frequency: xFreq));
+          case ChannelType.tweeter:
+            applyHp(i, CrossoverFilter(type: xoverType, frequency: xFreq));
+          case ChannelType.mid:
+            final lpFreq = _getCrossoverFreqAbove(i, channelTypes, crossovers);
+            applyHp(i, CrossoverFilter(type: xoverType, frequency: xFreq));
+            if (lpFreq != null) applyLp(i, CrossoverFilter(type: xoverType, frequency: lpFreq));
+          case ChannelType.fullRange:
+            break;
+        }
+      }
+
+      // 전체 합성 응답도 저장
+      final combined = channelResponses.values.first;
+      state = state.copyWith(
+        status: MeasurementStatus.done,
+        message: '채널별 측정 완료 — 크로스오버 자동 적용됨',
+        frequencyResponse: combined,
+        channelResponses: channelResponses,
+        recommendedCrossovers: crossovers,
+      );
+    } catch (e) {
+      await unmuteAll();
+      state = state.copyWith(status: MeasurementStatus.error, error: e.toString());
+    }
+  }
+
+  Future<List<Map<String, double>>> _measureOnce({List<double>? scfCorrection}) async {
+    final wavFile = await _generatePinkNoise();
+    final dir = await getTemporaryDirectory();
+    final recPath = '${dir.path}/tunai_ch_${DateTime.now().millisecondsSinceEpoch}.wav';
+
+    await _recorder.start(
+      const RecordConfig(encoder: AudioEncoder.wav, sampleRate: sampleRate, numChannels: 1),
+      path: recPath,
+    );
+    await _player.setFilePath(wavFile.path);
+    await _player.play();
+    await Future.delayed(const Duration(seconds: durationSec));
+    await _recorder.stop();
+    await _player.stop();
+
+    final pcmBytes = await File(recPath).readAsBytes();
+    final rawPcm = Uint8List.sublistView(pcmBytes, 44);
+    final samples = _pcmToFloat(rawPcm);
+    return _analyzeFFT(samples, scfCorrection: scfCorrection);
+  }
+
+  List<double?> _recommendCrossovers(
+    List<ChannelType> types,
+    Map<int, List<Map<String, double>>> responses,
+  ) {
+    final crossovers = List<double?>.filled(types.length - 1, null);
+    for (int i = 0; i < types.length - 1; i++) {
+      final lowerResp = responses[i];
+      final upperResp = responses[i + 1];
+      if (lowerResp == null || upperResp == null) continue;
+
+      // 두 채널이 교차하는 주파수 찾기
+      double? crossFreq;
+      double minDiff = double.infinity;
+      for (final point in lowerResp) {
+        final f = point['frequency']!;
+        final lowerDb = point['db']!;
+        final upperDb = upperResp.firstWhere(
+          (p) => (p['frequency']! - f).abs() < 50,
+          orElse: () => {'frequency': f, 'db': -999.0},
+        )['db']!;
+        final diff = (lowerDb - upperDb).abs();
+        if (diff < minDiff) {
+          minDiff = diff;
+          crossFreq = f;
+        }
+      }
+      crossovers[i] = crossFreq;
+    }
+    return crossovers;
+  }
+
+  double? _getCrossoverFreq(int idx, List<ChannelType> types, List<double?> crossovers) {
+    // 이 채널 아래쪽 크로스오버 주파수
+    if (idx > 0 && idx - 1 < crossovers.length) return crossovers[idx - 1];
+    if (idx < crossovers.length) return crossovers[idx];
+    return null;
+  }
+
+  double? _getCrossoverFreqAbove(int idx, List<ChannelType> types, List<double?> crossovers) {
+    if (idx < crossovers.length) return crossovers[idx];
+    return null;
   }
 
   void reset() => state = const MicMeasurementState();

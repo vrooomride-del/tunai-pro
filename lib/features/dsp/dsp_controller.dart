@@ -42,6 +42,11 @@ class DspController extends StateNotifier<DspState> {
   void toggleMute(int idx) =>
       _updateOutput(idx, (o) => o.copyWith(muted: !o.muted));
 
+  Future<void> setMute(int idx, bool muted) async {
+    _updateOutput(idx, (o) => o.copyWith(muted: muted));
+    await sendToDsp(); // 즉시 실기기에 반영
+  }
+
   void togglePolarity(int idx) =>
       _updateOutput(idx, (o) => o.copyWith(polarity: !o.polarity));
 
@@ -129,7 +134,7 @@ class DspController extends StateNotifier<DspState> {
   // ── SEND TO DSP ───────────────────────────────────
   Future<bool> sendToDsp() async {
     final conn = _ref.read(connectProvider);
-    if (conn.connection != UartConnectionState.connected) return false;
+    if (conn.connection != ConnectionStatus.connected) return false;
 
     final profile = _ref.read(systemProfileProvider);
     if (profile.isAdau1466) return false; // 주소맵 미확정
@@ -141,10 +146,9 @@ class DspController extends StateNotifier<DspState> {
     for (var chIdx = 0; chIdx < state.outputs.length; chIdx++) {
       final out = state.outputs[chIdx];
 
+      // 뮤트 = 게인 -96dB로 전송 (채널별 측정 시 실제 DSP 소음 차단)
+      await adapter.writeGain(chIdx, out.muted ? -96.0 : out.gainDb);
       if (out.muted) continue;
-
-      // Gain
-      await adapter.writeGain(chIdx, out.gainDb);
 
       // Delay
       await adapter.writeDelay(chIdx, out.delayMs);

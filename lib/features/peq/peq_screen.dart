@@ -19,10 +19,8 @@ class PeqScreen extends ConsumerWidget {
       body: Column(
         children: [
           _TopBar(isDirty: state.isDirty, onReset: ctrl.resetAll),
-          // Bode Plot
           _BodePlot(response: state.frequencyResponse, filters: state.filters),
           const Divider(color: Colors.white12, height: 1),
-          // 필터 밴드 선택
           _FilterBandSelector(
             filters: state.filters,
             selectedIndex: state.selectedIndex,
@@ -31,15 +29,19 @@ class PeqScreen extends ConsumerWidget {
             onRemove: ctrl.removeFilter,
           ),
           const Divider(color: Colors.white12, height: 1),
-          // 선택된 필터 편집
-          if (state.filters.isNotEmpty)
-            _FilterEditor(
-              filter: state.filters[state.selectedIndex],
-              index: state.selectedIndex,
-              ctrl: ctrl,
+          // 필터 편집 영역 — 남은 공간 차지 후 스크롤
+          Expanded(
+            child: SingleChildScrollView(
+              child: state.filters.isNotEmpty
+                  ? _FilterEditor(
+                      filter: state.filters[state.selectedIndex],
+                      index: state.selectedIndex,
+                      ctrl: ctrl,
+                    )
+                  : const SizedBox.shrink(),
             ),
-          const Spacer(),
-          // 하단 전송 버튼
+          ),
+          // 하단 전송 버튼 — 항상 하단 고정
           _SendBar(onSend: () {
             final frames = ctrl.buildFrames();
             ScaffoldMessenger.of(context).showSnackBar(

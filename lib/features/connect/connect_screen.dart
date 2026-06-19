@@ -9,11 +9,13 @@ class ConnectScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(connectProvider);
     final ctrl = ref.read(connectProvider.notifier);
-    final connected = state.connection == UartConnectionState.connected;
+    final connected = state.connected;
+    final scanning = state.connection == ConnectionStatus.scanning ||
+        state.connection == ConnectionStatus.connecting;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -24,64 +26,113 @@ class ConnectScreen extends ConsumerWidget {
                     style: TextStyle(color: Colors.white, fontSize: 18,
                         fontWeight: FontWeight.w200, letterSpacing: 6)),
                 const Spacer(),
-                GestureDetector(
-                  onTap: ctrl.scanPorts,
-                  child: const Icon(Icons.refresh, color: Colors.white38, size: 16),
+                if (state.mode == ConnectMode.uart)
+                  GestureDetector(
+                    onTap: connected ? null : ctrl.scanPorts,
+                    child: const Icon(Icons.refresh, color: Colors.white38, size: 16),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 32),
+
+            // ── 모드 탭 ──────────────────────────────────────────────────
+            Row(
+              children: [
+                _ModeTab(
+                  label: 'USB / UART',
+                  active: state.mode == ConnectMode.uart,
+                  onTap: connected ? null : () => ctrl.setMode(ConnectMode.uart),
+                ),
+                const SizedBox(width: 8),
+                _ModeTab(
+                  label: 'BLE',
+                  active: state.mode == ConnectMode.ble,
+                  onTap: connected ? null : () => ctrl.setMode(ConnectMode.ble),
                 ),
               ],
             ),
-            const SizedBox(height: 48),
+            const SizedBox(height: 20),
+
             const Text('DSP CONNECTION',
                 style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 3)),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.white24),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: DropdownButton<String>(
-                value: state.selectedPort,
-                hint: Text(
-                  state.ports.isEmpty ? 'NO PORTS DETECTED' : 'SELECT UART PORT',
-                  style: const TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 1),
+
+            // ── UART 포트 선택 ───────────────────────────────────────────
+            if (state.mode == ConnectMode.uart) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white24),
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                dropdownColor: const Color(0xFF111111),
-                underline: const SizedBox(),
-                isExpanded: true,
-                items: state.ports.map((p) => DropdownMenuItem(
-                  value: p,
-                  child: Text(p, style: const TextStyle(color: Colors.white, fontSize: 11)),
-                )).toList(),
-                onChanged: connected ? null : (v) => ctrl.selectPort(v!),
+                child: DropdownButton<String>(
+                  value: state.selectedPort,
+                  hint: Text(
+                    state.ports.isEmpty ? 'NO PORTS DETECTED' : 'SELECT UART PORT',
+                    style: const TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 1),
+                  ),
+                  dropdownColor: const Color(0xFF111111),
+                  underline: const SizedBox(),
+                  isExpanded: true,
+                  items: state.ports.map((p) => DropdownMenuItem(
+                    value: p,
+                    child: Text(p, style: const TextStyle(color: Colors.white, fontSize: 11)),
+                  )).toList(),
+                  onChanged: connected ? null : (v) => ctrl.selectPort(v!),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 12),
+            ],
+
+            // ── BLE 안내 ─────────────────────────────────────────────────
+            if (state.mode == ConnectMode.ble && !connected) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'ICP5 BLE 동글이 Remote 모드(SW1=②)로 설정되어 있는지 확인하세요.',
+                  style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.6),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // ── CONNECT / SCAN / DISCONNECT 버튼 ─────────────────────────
             GestureDetector(
-              onTap: state.selectedPort == null ? null
-                  : connected ? ctrl.disconnect : ctrl.connect,
+              onTap: scanning ? null : (connected ? ctrl.disconnect : ctrl.connect),
               child: Container(
                 height: 44,
                 decoration: BoxDecoration(
                   border: Border.all(
-                    color: state.selectedPort == null ? Colors.white12 : Colors.white,
+                    color: scanning ? Colors.white24 : Colors.white,
                   ),
                   borderRadius: BorderRadius.circular(6),
                   color: connected ? Colors.white : Colors.transparent,
                 ),
                 child: Center(
                   child: Text(
-                    connected ? 'DISCONNECT' : 'CONNECT',
+                    connected
+                        ? 'DISCONNECT'
+                        : scanning
+                            ? (state.mode == ConnectMode.ble ? 'SCANNING...' : 'CONNECTING...')
+                            : (state.mode == ConnectMode.ble ? 'SCAN & CONNECT' : 'CONNECT'),
                     style: TextStyle(
-                      color: connected ? Colors.black
-                          : state.selectedPort == null ? Colors.white24 : Colors.white,
+                      color: connected
+                          ? Colors.black
+                          : scanning ? Colors.white38 : Colors.white,
                       fontSize: 12, letterSpacing: 3,
                     ),
                   ),
                 ),
               ),
             ),
+
             const SizedBox(height: 24),
+
+            // ── 상태 패널 ─────────────────────────────────────────────────
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -94,13 +145,16 @@ class ConnectScreen extends ConsumerWidget {
                   const Text('STATUS',
                       style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 2)),
                   const SizedBox(height: 12),
-                  _infoRow('PORT', state.selectedPort ?? '-',
-                      error: state.status.startsWith('ERROR')),
-                  _infoRow('BAUD', '38400'),
+                  _infoRow('MODE', state.mode == ConnectMode.ble ? 'BLE' : 'UART'),
+                  _infoRow(
+                    state.mode == ConnectMode.ble ? 'DEVICE' : 'PORT',
+                    state.deviceName ?? state.selectedPort ?? '-',
+                  ),
+                  if (state.mode == ConnectMode.uart) _infoRow('BAUD', '38400'),
                   _infoRow('TARGET', 'ADAU1701 via ICP5'),
                   _infoRow('STATUS', state.status,
                       error: state.status.startsWith('ERROR')),
-                  if (state.ports.isNotEmpty) ...[
+                  if (state.mode == ConnectMode.uart && state.ports.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     const Divider(color: Colors.white12, height: 1),
                     const SizedBox(height: 8),
@@ -137,6 +191,36 @@ class ConnectScreen extends ConsumerWidget {
               )),
         ),
       ],
+    ),
+  );
+}
+
+class _ModeTab extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback? onTap;
+
+  const _ModeTab({required this.label, required this.active, this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: active ? Colors.white : Colors.transparent,
+        border: Border.all(color: active ? Colors.white : Colors.white24),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: active ? Colors.black : Colors.white38,
+          fontSize: 10,
+          letterSpacing: 2,
+          fontWeight: active ? FontWeight.w600 : FontWeight.w300,
+        ),
+      ),
     ),
   );
 }

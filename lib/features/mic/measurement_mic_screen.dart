@@ -7,6 +7,9 @@ import 'package:fl_chart/fl_chart.dart';
 import 'mic_measurement_controller.dart';
 import 'speaker_profile_selector.dart';
 import '../../core/speaker_profile.dart';
+import '../../core/profiles/system_profile.dart';
+import '../../features/dsp/dsp_controller.dart';
+import '../../features/dsp/dsp_state.dart';
 
 class MicModel {
   final String id;
@@ -120,6 +123,7 @@ class MeasurementMicScreen extends ConsumerStatefulWidget {
 class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
   SpeakerProfileState _speakerProfile = const SpeakerProfileState();
   bool _profileSelected = false;
+  bool _channelMode = false;
 
   @override
   Widget build(BuildContext context) {
@@ -331,28 +335,43 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                 ),
               ),
 
-            if (measState.status == MeasurementStatus.error)
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(measState.error ?? '',
-                    style: const TextStyle(color: Colors.redAccent, fontSize: 11)),
-              ),
+                    if (measState.status == MeasurementStatus.error)
+              _buildErrorWidget(measState.error),
 
             const SizedBox(height: 24),
+
+            // 채널별 측정 결과 (크로스오버 추천)
+            if (measState.channelResponses.isNotEmpty && measState.recommendedCrossovers.isNotEmpty)
+              _buildChannelResults(measState),
+
+            const SizedBox(height: 16),
+
+            // 측정 모드 토글
+            if (!isMeasuring) ...[
+              Row(
+                children: [
+                  _ModeToggle(
+                    label: 'FULL RANGE',
+                    selected: !_channelMode,
+                    onTap: () => setState(() => _channelMode = false),
+                  ),
+                  const SizedBox(width: 8),
+                  _ModeToggle(
+                    label: 'PER CHANNEL',
+                    selected: _channelMode,
+                    onTap: () => setState(() => _channelMode = true),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
 
             // 측정 버튼
             Row(
               children: [
                 Expanded(
                   child: GestureDetector(
-                    onTap: isMeasuring ? null : () => measCtrl.startMeasurement(
-                      scfCorrection: micState.scfCorrection,
-                      speakerProfile: _speakerProfile.activeProfile,
-                    ),
+                    onTap: isMeasuring ? null : () => _startMeasurement(measCtrl, micState),
                     child: Container(
                       height: 52,
                       decoration: BoxDecoration(
@@ -361,11 +380,12 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                               : (micState.scfLoaded || !mic.needsScf) ? Colors.white : Colors.white38,
                         ),
                         borderRadius: BorderRadius.circular(6),
-                        color: isMeasuring ? Colors.transparent : Colors.transparent,
                       ),
                       child: Center(
                         child: Text(
-                          isMeasuring ? measState.message : 'START MEASUREMENT',
+                          isMeasuring ? measState.message
+                              : _channelMode ? 'START CHANNEL MEASUREMENT'
+                              : 'START MEASUREMENT',
                           style: TextStyle(
                             color: isMeasuring ? Colors.white24
                                 : (micState.scfLoaded || !mic.needsScf) ? Colors.white : Colors.white38,
@@ -398,6 +418,138 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _startMeasurement(MicMeasurementController measCtrl, MicState micState) {
+    if (_channelMode) {
+      final profile = ref.read(systemProfileProvider);
+      final dspCtrl = ref.read(dspProvider.notifier);
+      measCtrl.startChannelMeasurement(
+        channelNames: profile.channels.map((c) => c.name).toList(),
+        channelTypes: profile.channels.map((c) => c.type).toList(),
+        muteAllExcept: (idx) async {
+          for (int i = 0; i < profile.channels.length; i++) {
+            await dspCtrl.setMute(i, i != idx);
+          }
+        },
+        unmuteAll: () async {
+          for (int i = 0; i < profile.channels.length; i++) {
+            await dspCtrl.setMute(i, false);
+          }
+        },
+        applyLp: (i, f) => dspCtrl.updateLpFilter(i, f),
+        applyHp: (i, f) => dspCtrl.updateHpFilter(i, f),
+        xoverType: CrossoverType.lr24,
+        scfCorrection: micState.scfCorrection,
+      );
+    } else {
+      measCtrl.startMeasurement(
+        scfCorrection: micState.scfCorrection,
+        speakerProfile: _speakerProfile.activeProfile,
+      );
+    }
+  }
+
+  Widget _buildErrorWidget(String? error) {
+    final isPermDenied = error == 'MIC_PERMISSION_DENIED';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: isPermDenied
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('마이크 접근 권한이 필요합니다.',
+                    style: TextStyle(color: Colors.redAccent, fontSize: 11)),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: MicMeasurementController.openMicSettings,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white38),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('시스템 환경설정 열기 →',
+                        style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 1)),
+                  ),
+                ),
+              ],
+            )
+          : Text(error ?? '',
+              style: const TextStyle(color: Colors.redAccent, fontSize: 11)),
+    );
+  }
+
+  Widget _buildChannelResults(MicMeasurementState measState) {
+    final profile = ref.read(systemProfileProvider);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.white12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('RECOMMENDED CROSSOVERS',
+              style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+          const SizedBox(height: 10),
+          ...List.generate(measState.recommendedCrossovers.length, (i) {
+            final freq = measState.recommendedCrossovers[i];
+            final lowerName = i < profile.channels.length ? profile.channels[i].name : 'CH${i+1}';
+            final upperName = (i + 1) < profile.channels.length ? profile.channels[i + 1].name : 'CH${i+2}';
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                children: [
+                  Text('$lowerName / $upperName',
+                      style: const TextStyle(color: Colors.white54, fontSize: 10)),
+                  const Spacer(),
+                  Text(
+                    freq != null ? '${freq.round()} Hz' : '—',
+                    style: const TextStyle(color: Colors.white, fontSize: 11, letterSpacing: 1),
+                  ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 4),
+          const Text('자동으로 DSP에 적용되었습니다',
+              style: TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 1)),
+        ],
+      ),
+    );
+  }
+}  // end _MeasurementMicScreenState
+
+class _ModeToggle extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _ModeToggle({required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          border: Border.all(color: selected ? Colors.white : Colors.white24),
+          borderRadius: BorderRadius.circular(4),
+          color: selected ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
+        ),
+        child: Text(label,
+            style: TextStyle(
+              color: selected ? Colors.white : Colors.white38,
+              fontSize: 9, letterSpacing: 2,
+            )),
       ),
     );
   }

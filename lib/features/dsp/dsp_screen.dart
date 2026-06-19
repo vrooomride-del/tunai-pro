@@ -9,6 +9,7 @@ import 'widgets/channel_strip.dart';
 import '../connect/connect_controller.dart';
 import 'widgets/ai_panel.dart';
 import '../../core/profiles/system_profile.dart';
+import '../mic/mic_measurement_controller.dart';
 
 class DspScreen extends ConsumerWidget {
   const DspScreen({super.key});
@@ -18,12 +19,14 @@ class DspScreen extends ConsumerWidget {
     final state = ref.watch(dspProvider);
     final ctrl = ref.read(dspProvider.notifier);
     final conn = ref.watch(connectProvider);
-    final connected = conn.connection == UartConnectionState.connected;
+    final connected = conn.connected;
     final profile = ref.watch(systemProfileProvider);
+    final micState = ref.watch(micMeasurementProvider);
+    final freqResponse = micState.frequencyResponse.isEmpty ? null : micState.frequencyResponse;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
-      bottomSheet: const AiTuningPanel(),
+      bottomSheet: AiTuningPanel(frequencyResponse: freqResponse),
       body: Column(
         children: [
           // ── 상단 툴바 ────────────────────────────────

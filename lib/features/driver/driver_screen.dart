@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import '../../core/frd_parser.dart';
+import '../../core/profiles/system_profile.dart';
+import '../../features/dsp/dsp_controller.dart';
+import '../../features/dsp/dsp_state.dart';
 import 'driver_profile.dart';
 
 final systemConfigProvider = StateNotifierProvider<SystemConfigNotifier, SystemConfig>(
@@ -355,70 +358,211 @@ class _CrossoverTab extends ConsumerStatefulWidget {
 
 class _CrossoverTabState extends ConsumerState<_CrossoverTab> {
   final _freqCtrl = TextEditingController(text: '2500');
+  final _freq2Ctrl = TextEditingController(text: '400');
   String _xoverType = 'LR24';
+  String? _autoHint;
+
+  static CrossoverType _parseCrossoverType(String s) {
+    switch (s) {
+      case 'LR12': return CrossoverType.lr12;
+      case 'LR24': return CrossoverType.lr24;
+      case 'LR48': return CrossoverType.lr48;
+      case 'BW12': return CrossoverType.butterworth12;
+      case 'BW24': return CrossoverType.butterworth24;
+      default:     return CrossoverType.lr24;
+    }
+  }
 
   void _autoCalc() {
-    final woofer = widget.config.drivers.where((d) => d.role == DriverRole.woofer).firstOrNull;
+    final woofer  = widget.config.drivers.where((d) => d.role == DriverRole.woofer).firstOrNull;
     final tweeter = widget.config.drivers.where((d) => d.role == DriverRole.tweeter).firstOrNull;
+    final mid     = widget.config.drivers.where((d) => d.role == DriverRole.midrange).firstOrNull;
+
+    // FRD 데이터로 추천
     if (woofer?.hasFrd == true && tweeter?.hasFrd == true) {
       final freq = FrdParser.recommendCrossover(woofer!.frdData, tweeter!.frdData);
-      setState(() => _freqCtrl.text = freq.toStringAsFixed(0));
+      setState(() {
+        _freqCtrl.text = freq.toStringAsFixed(0);
+        _autoHint = 'FRD 분석 기반: ${freq.toStringAsFixed(0)} Hz';
+      });
+      return;
+    }
+
+    // T/S 파라미터로 추천 (Fs 기반)
+    String hint = '';
+    if (woofer?.hasTs == true) {
+      final fs = woofer!.tsParams!.fs;
+      final qts = woofer.tsParams!.qts;
+      // 우퍼 최대 사용 주파수: Fs × (3~5) — Qts가 낮을수록 더 낮게
+      final multiplier = qts < 0.3 ? 3.0 : qts < 0.5 ? 4.0 : 5.0;
+      final recommended = (fs * multiplier).clamp(500, 5000);
+      _freqCtrl.text = recommended.toStringAsFixed(0);
+      hint = '우퍼 Fs=${fs.toStringAsFixed(0)}Hz → 추천 ${recommended.toStringAsFixed(0)}Hz';
+    }
+    if (mid?.hasTs == true && woofer?.hasTs == true) {
+      final midFs = mid!.tsParams!.fs;
+      final wooferFs = woofer!.tsParams!.fs;
+      _freq2Ctrl.text = (wooferFs * 4).clamp(100, 800).toStringAsFixed(0);
+      _freqCtrl.text  = (midFs * 4).clamp(500, 5000).toStringAsFixed(0);
+      hint += '\n미드 Fs=${midFs.toStringAsFixed(0)}Hz → 상단 ${_freqCtrl.text}Hz';
+    }
+
+    if (hint.isNotEmpty) {
+      setState(() => _autoHint = hint);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('우퍼/트위터 FRD 데이터가 필요합니다')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('드라이버 FRD 또는 T/S 파라미터가 필요합니다')));
+    }
+  }
+
+  void _applyToDsp(double freq1, double? freq2) {
+    final profile = ref.read(systemProfileProvider);
+    final dspCtrl = ref.read(dspProvider.notifier);
+    final ct = _parseCrossoverType(_xoverType);
+
+    for (int i = 0; i < profile.channels.length; i++) {
+      final ch = profile.channels[i];
+      switch (ch.type) {
+        case ChannelType.woofer:
+        case ChannelType.subwoofer:
+          dspCtrl.updateLpFilter(i, CrossoverFilter(type: ct, frequency: freq1));
+          break;
+        case ChannelType.tweeter:
+          final hpFreq = freq2 ?? freq1;
+          dspCtrl.updateHpFilter(i, CrossoverFilter(type: ct, frequency: hpFreq));
+          break;
+        case ChannelType.mid:
+        case ChannelType.mid:
+          if (freq2 != null) {
+            dspCtrl.updateHpFilter(i, CrossoverFilter(type: ct, frequency: freq1));
+            dspCtrl.updateLpFilter(i, CrossoverFilter(type: ct, frequency: freq2));
+          } else {
+            dspCtrl.updateHpFilter(i, CrossoverFilter(type: ct, frequency: freq1 * 0.3));
+            dspCtrl.updateLpFilter(i, CrossoverFilter(type: ct, frequency: freq1));
+          }
+          break;
+        case ChannelType.fullRange:
+          break;
+      }
     }
   }
 
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.all(24),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      const Text('CROSSOVER TYPE', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
-      const SizedBox(height: 12),
-      Wrap(spacing: 8, runSpacing: 8, children: ['LR24', 'LR12', 'BW24', 'BW12'].map((t) => GestureDetector(
-        onTap: () => setState(() => _xoverType = t),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            border: Border.all(color: _xoverType == t ? Colors.white : Colors.white24),
-            borderRadius: BorderRadius.circular(4),
-            color: _xoverType == t ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
+  Widget build(BuildContext context) {
+    final profile = ref.watch(systemProfileProvider);
+    final is3way = profile.crossoverPoints >= 2;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text('CROSSOVER TYPE', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, runSpacing: 8, children: ['LR24', 'LR12', 'LR48', 'BW24', 'BW12'].map((t) => GestureDetector(
+          onTap: () => setState(() => _xoverType = t),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border.all(color: _xoverType == t ? Colors.white : Colors.white24),
+              borderRadius: BorderRadius.circular(4),
+              color: _xoverType == t ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
+            ),
+            child: Text(t, style: TextStyle(color: _xoverType == t ? Colors.white : Colors.white38, fontSize: 10)),
           ),
-          child: Text(t, style: TextStyle(color: _xoverType == t ? Colors.white : Colors.white38, fontSize: 10)),
+        )).toList()),
+
+        const SizedBox(height: 24),
+
+        // 채널 레이아웃 미리보기
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(border: Border.all(color: Colors.white12), borderRadius: BorderRadius.circular(6)),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: profile.channels.asMap().entries.map((e) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(e.value.name, style: const TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1)),
+                const SizedBox(height: 4),
+                Text(_channelFilterDesc(e.value.type, is3way),
+                  style: const TextStyle(color: Colors.white24, fontSize: 9)),
+              ]),
+            )).toList(),
+          ),
         ),
-      )).toList()),
-      const SizedBox(height: 20),
-      const Text('CROSSOVER FREQUENCY', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
-      const SizedBox(height: 8),
-      Row(children: [
-        Expanded(child: TextField(
-          controller: _freqCtrl,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
-          style: const TextStyle(color: Colors.white, fontSize: 13),
-          decoration: const InputDecoration(isDense: true, suffixText: 'Hz',
-            suffixStyle: TextStyle(color: Colors.white38),
-            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white54))),
-        )),
-        const SizedBox(width: 12),
-        GestureDetector(onTap: _autoCalc, child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(border: Border.all(color: Colors.white38), borderRadius: BorderRadius.circular(4)),
-          child: const Text('AUTO', style: TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1)),
-        )),
+
+        const SizedBox(height: 20),
+
+        if (is3way) ...[
+          const Text('LOW / MID 크로스오버', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+          const SizedBox(height: 8),
+          _freqField(_freq2Ctrl),
+          const SizedBox(height: 16),
+          const Text('MID / HIGH 크로스오버', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+        ] else
+          const Text('CROSSOVER FREQUENCY', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: _freqField(_freqCtrl)),
+          const SizedBox(width: 12),
+          GestureDetector(
+            onTap: _autoCalc,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(border: Border.all(color: Colors.white38), borderRadius: BorderRadius.circular(4)),
+              child: const Text('AUTO', style: TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1)),
+            ),
+          ),
+        ]),
+
+        if (_autoHint != null) ...[
+          const SizedBox(height: 8),
+          Text(_autoHint!, style: const TextStyle(color: Colors.white38, fontSize: 10, height: 1.5)),
+        ],
+
+        const SizedBox(height: 24),
+        ElevatedButton(
+          onPressed: () {
+            final freq1 = double.tryParse(_freqCtrl.text) ?? 2500;
+            final freq2 = is3way ? double.tryParse(_freq2Ctrl.text) : null;
+            ref.read(systemConfigProvider.notifier).updateCrossover(freq1, _xoverType);
+            _applyToDsp(freq1, freq2);
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('${freq1.toStringAsFixed(0)}Hz $_xoverType → DSP 적용 완료'),
+            ));
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white, foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6))),
+          child: const Text('DSP에 적용', style: TextStyle(fontSize: 12, letterSpacing: 2)),
+        ),
       ]),
-      const SizedBox(height: 24),
-      ElevatedButton(
-        onPressed: () {
-          final freq = double.tryParse(_freqCtrl.text) ?? 2500;
-          ref.read(systemConfigProvider.notifier).updateCrossover(freq, _xoverType);
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('크로스오버 ${freq.toStringAsFixed(0)}Hz $_xoverType 저장됨')));
-        },
-        style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black,
-          padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6))),
-        child: const Text('저장 후 DSP 적용', style: TextStyle(fontSize: 12, letterSpacing: 2)),
-      ),
-    ]),
+    );
+  }
+
+  Widget _freqField(TextEditingController ctrl) => TextField(
+    controller: ctrl,
+    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+    style: const TextStyle(color: Colors.white, fontSize: 13),
+    decoration: const InputDecoration(
+      isDense: true, suffixText: 'Hz',
+      suffixStyle: TextStyle(color: Colors.white38),
+      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+      focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white54)),
+    ),
   );
+
+  String _channelFilterDesc(ChannelType type, bool is3way) {
+    switch (type) {
+      case ChannelType.woofer:
+      case ChannelType.subwoofer: return 'LP →';
+      case ChannelType.tweeter:   return '← HP';
+      case ChannelType.mid:
+      case ChannelType.mid:  return '← HP + LP →';
+      case ChannelType.fullRange: return 'FULL';
+    }
+  }
 }
