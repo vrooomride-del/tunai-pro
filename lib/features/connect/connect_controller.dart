@@ -113,6 +113,16 @@ class ConnectController extends StateNotifier<ConnectState> {
     'cu.WONDOM',
   ];
 
+  // USB 시리얼 칩 VID 목록 — ICP5(WONDOM)은 CH34x 탑재
+  // VID 0x1A86: WinChipHead (CH340/CH341)
+  // VID 0x0403: FTDI
+  // VID 0x10C4: Silicon Labs (CP210x)
+  // VID 0x067B: Prolific (PL2303)
+  static const _kIcp5Vids = {0x1A86, 0x0403, 0x10C4, 0x067B};
+
+  // CH34x 구체적 PID (VID 0x1A86 기준) — 이 PID이면 CH34x로 확신
+  static const _kCh34xPids = {0x7523, 0x5523, 0x7522, 0x55D4};
+
   static bool _isSystemPort(String port) =>
       _kSystemPortPatterns.any((p) => port.contains(p));
 
@@ -147,6 +157,11 @@ class ConnectController extends StateNotifier<ConnectState> {
     try {
       _port?.close();
       _port = SerialPort(state.selectedPort!);
+
+      // VID/PID는 포트를 열기 전에 조회 가능 (libserialport가 OS USB 트리에서 읽음)
+      final board = _detectBoardFromUart(_port!, state.selectedPort!);
+      debugPrint('[BOARD] UART 탐지: $board  VID=${_port!.vendorId?.toRadixString(16)}  PID=${_port!.productId?.toRadixString(16)}  port=${state.selectedPort}');
+
       final config = SerialPortConfig();
       config.baudRate = 38400;
       config.bits = 8;
@@ -154,10 +169,23 @@ class ConnectController extends StateNotifier<ConnectState> {
       config.parity = SerialPortParity.none;
       if (!_port!.openReadWrite()) throw Exception('포트 열기 실패');
       _port!.config = config;
+
+      String connStatus;
+      switch (board) {
+        case DetectedBoard.icp5Adau1701:
+          _ref.read(systemProfileProvider.notifier).state = kTunaiOneSystemProfile;
+          connStatus = 'CONNECTED (UART · ADAU1701 자동 선택됨)';
+        case DetectedBoard.adau1466:
+          connStatus = 'CONNECTED (UART · ADAU1466 — 지원 준비 중)';
+        case DetectedBoard.unknown:
+          connStatus = 'CONNECTED (UART · 보드 미식별 — 수동 선택 필요)';
+      }
+
       state = state.copyWith(
         connection: ConnectionStatus.connected,
-        status: 'CONNECTED',
+        status: connStatus,
         deviceName: state.selectedPort,
+        detectedBoard: board,
       );
     } catch (e) {
       state = state.copyWith(
@@ -167,6 +195,38 @@ class ConnectController extends StateNotifier<ConnectState> {
     }
   }
 
+  /// UART 포트 이름 + VID/PID 기반 보드 탐지
+  ///
+  /// 우선순위: VID/PID(정확) → 포트 이름 패턴(추정)
+  DetectedBoard _detectBoardFromUart(SerialPort port, String portName) {
+    final vid = port.vendorId;
+    final pid = port.productId;
+    final name = portName.toLowerCase();
+
+    // VID/PID로 판별 (가장 신뢰도 높음)
+    if (vid != null) {
+      if (_kIcp5Vids.contains(vid)) {
+        // CH34x VID(0x1A86) + 알려진 PID이면 CH34x로 확신
+        if (vid == 0x1A86 && pid != null && _kCh34xPids.contains(pid)) {
+          return DetectedBoard.icp5Adau1701;
+        }
+        // 다른 USB 시리얼 칩 VID → ADAU1701로 추정 (ICP5 탑재 가능성 높음)
+        return DetectedBoard.icp5Adau1701;
+      }
+      // 알 수 없는 VID → unknown (포트 이름 패턴도 시도)
+    }
+
+    // 포트 이름 패턴으로 폴백
+    if (_isPreferredPort(portName)) return DetectedBoard.icp5Adau1701;
+
+    // 파란보드 패턴 (UART 경로로 연결될 경우 대비)
+    if (_adau1466Names.any((n) => name.contains(n.toLowerCase()))) {
+      return DetectedBoard.adau1466;
+    }
+
+    return DetectedBoard.unknown;
+  }
+
   void disconnectUart() {
     _port?.close();
     _port = null;
@@ -174,6 +234,7 @@ class ConnectController extends StateNotifier<ConnectState> {
       connection: ConnectionStatus.disconnected,
       status: 'READY',
       deviceName: null,
+      detectedBoard: null,
     );
   }
 
