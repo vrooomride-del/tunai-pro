@@ -432,6 +432,10 @@ class _CrossoverTabState extends ConsumerState<_CrossoverTab> {
   String _xoverType = 'LR24';
   String? _autoHint;
 
+  // 위상 정합: 채널별 음향 중심 거리 (우퍼 기준, cm)
+  final _tweeterDistCtrl = TextEditingController(text: '0');
+  final _midDistCtrl     = TextEditingController(text: '0');
+
   static CrossoverType _parseCrossoverType(String s) {
     switch (s) {
       case 'LR12': return CrossoverType.lr12;
@@ -441,6 +445,78 @@ class _CrossoverTabState extends ConsumerState<_CrossoverTab> {
       case 'BW24': return CrossoverType.butterworth24;
       default:     return CrossoverType.lr24;
     }
+  }
+
+  // 거리(cm) → 딜레이(ms) 변환: 음속 343m/s = 34300cm/s
+  static double _cmToMs(double cm) => cm / 34.3;
+
+  // 채널 타입 → 드라이버 역할 매핑
+  DriverRole? _roleOf(ChannelType type) {
+    switch (type) {
+      case ChannelType.tweeter:   return DriverRole.tweeter;
+      case ChannelType.mid:       return DriverRole.midrange;
+      case ChannelType.woofer:
+      case ChannelType.subwoofer: return DriverRole.woofer;
+      case ChannelType.fullRange: return DriverRole.fullrange;
+    }
+  }
+
+  void _applyAcousticDelay() {
+    final profile = ref.read(systemProfileProvider);
+    final dspCtrl = ref.read(dspProvider.notifier);
+    for (int i = 0; i < profile.channels.length; i++) {
+      final ch = profile.channels[i];
+      double distCm = 0;
+      switch (ch.type) {
+        case ChannelType.tweeter:
+          distCm = double.tryParse(_tweeterDistCtrl.text) ?? 0;
+          break;
+        case ChannelType.mid:
+          distCm = double.tryParse(_midDistCtrl.text) ?? 0;
+          break;
+        default:
+          distCm = 0;
+      }
+      dspCtrl.updateOutputDelay(i, _cmToMs(distCm).clamp(0, 100));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('위상 정합 딜레이 적용 완료'), duration: Duration(seconds: 1)));
+  }
+
+  void _applySensitivityMatch() {
+    final config = ref.read(systemConfigProvider);
+    final profile = ref.read(systemProfileProvider);
+    final dspCtrl = ref.read(dspProvider.notifier);
+
+    // role → 감도(dB) 맵 구성
+    final sensMap = <DriverRole, double>{};
+    for (final driver in config.drivers) {
+      final s = driver.hasFrd
+          ? FrdParser.calculateSensitivity(driver.frdData)
+          : driver.sensitivity;
+      if (s != null) sensMap[driver.role] = s;
+    }
+
+    if (sensMap.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('감도 매칭: 2개 이상 채널에 FRD가 필요합니다')));
+      return;
+    }
+
+    // 가장 낮은 감도를 기준으로 높은 채널을 깎음 (헤드룸 보존)
+    final minSens = sensMap.values.reduce(min);
+
+    for (int i = 0; i < profile.channels.length; i++) {
+      final role = _roleOf(profile.channels[i].type);
+      if (role == null) continue;
+      final sens = sensMap[role];
+      if (sens == null) continue;
+      final cut = (minSens - sens).clamp(-40.0, 0.0); // 항상 0 이하
+      dspCtrl.updateOutputGain(i, cut);
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('감도 매칭 완료 — 기준 ${minSens.toStringAsFixed(1)} dB')));
   }
 
   void _autoCalc() {
@@ -501,7 +577,6 @@ class _CrossoverTabState extends ConsumerState<_CrossoverTab> {
           final hpFreq = freq2 ?? freq1;
           dspCtrl.updateHpFilter(i, CrossoverFilter(type: ct, frequency: hpFreq));
           break;
-        case ChannelType.mid:
         case ChannelType.mid:
           if (freq2 != null) {
             dspCtrl.updateHpFilter(i, CrossoverFilter(type: ct, frequency: freq1));
@@ -607,6 +682,92 @@ class _CrossoverTabState extends ConsumerState<_CrossoverTab> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6))),
           child: const Text('DSP에 적용', style: TextStyle(fontSize: 12, letterSpacing: 2)),
         ),
+
+        // ── 위상 정합 (Acoustic Delay) ─────────────────────────────
+        const SizedBox(height: 32),
+        const Divider(color: Colors.white12),
+        const SizedBox(height: 20),
+        const Text('ACOUSTIC DELAY (위상 정합)', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+        const SizedBox(height: 6),
+        const Text('우퍼 음향 중심 기준 — 앞에 있으면 양수(cm)', style: TextStyle(color: Colors.white24, fontSize: 9)),
+        const SizedBox(height: 16),
+        if (is3way) ...[
+          Row(children: [
+            Expanded(child: _distField('트위터 거리 (cm)', _tweeterDistCtrl)),
+            const SizedBox(width: 12),
+            Expanded(child: _distField('미드 거리 (cm)', _midDistCtrl)),
+          ]),
+        ] else ...[
+          _distField('트위터 거리 (cm)', _tweeterDistCtrl),
+        ],
+        const SizedBox(height: 8),
+        // 실시간 ms 미리보기
+        ValueListenableBuilder(
+          valueListenable: _tweeterDistCtrl,
+          builder: (_, __, ___) {
+            final twDist = double.tryParse(_tweeterDistCtrl.text) ?? 0;
+            final midDist = is3way ? (double.tryParse(_midDistCtrl.text) ?? 0) : 0.0;
+            return Text(
+              '트위터 ${_cmToMs(twDist).toStringAsFixed(3)} ms'
+              '${is3way ? ' · 미드 ${_cmToMs(midDist).toStringAsFixed(3)} ms' : ''}',
+              style: const TextStyle(color: Colors.white38, fontSize: 10, fontFamily: 'monospace'),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          onPressed: _applyAcousticDelay,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.white54,
+            side: const BorderSide(color: Colors.white24),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6))),
+          child: const Text('딜레이 적용', style: TextStyle(fontSize: 11, letterSpacing: 2)),
+        ),
+
+        // ── 감도 자동 매칭 ─────────────────────────────────────────
+        const SizedBox(height: 32),
+        const Divider(color: Colors.white12),
+        const SizedBox(height: 20),
+        const Text('SENSITIVITY MATCH (감도 매칭)', style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+        const SizedBox(height: 6),
+        const Text('DRIVERS 탭에서 FRD 로드 후 사용 — 가장 낮은 감도 기준으로 다른 채널을 깎음', style: TextStyle(color: Colors.white24, fontSize: 9, height: 1.5)),
+        const SizedBox(height: 12),
+        Builder(builder: (ctx) {
+          final config = ref.watch(systemConfigProvider);
+          final sensMap = <String, double>{};
+          for (final d in config.drivers) {
+            final s = d.hasFrd ? FrdParser.calculateSensitivity(d.frdData) : d.sensitivity;
+            if (s != null) sensMap[d.role.name] = s;
+          }
+          if (sensMap.isEmpty) {
+            return const Text('FRD 데이터 없음', style: TextStyle(color: Colors.white24, fontSize: 10));
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...sensMap.entries.map((e) => Text(
+                '${e.key.toUpperCase()}: ${e.value.toStringAsFixed(1)} dB',
+                style: const TextStyle(color: Colors.white54, fontSize: 10, fontFamily: 'monospace'),
+              )),
+              const SizedBox(height: 8),
+              Text(
+                '기준: ${sensMap.values.reduce(min).toStringAsFixed(1)} dB',
+                style: const TextStyle(color: Colors.white38, fontSize: 10),
+              ),
+            ],
+          );
+        }),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          onPressed: _applySensitivityMatch,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.white54,
+            side: const BorderSide(color: Colors.white24),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6))),
+          child: const Text('감도 매칭 적용', style: TextStyle(fontSize: 11, letterSpacing: 2)),
+        ),
       ]),
     );
   }
@@ -625,12 +786,33 @@ class _CrossoverTabState extends ConsumerState<_CrossoverTab> {
     ),
   );
 
+  Widget _distField(String label, TextEditingController ctrl) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: const TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 1)),
+      const SizedBox(height: 4),
+      TextField(
+        controller: ctrl,
+        onChanged: (_) => setState(() {}),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        decoration: const InputDecoration(
+          isDense: true, suffixText: 'cm',
+          suffixStyle: TextStyle(color: Colors.white38),
+          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+          focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.white54)),
+        ),
+      ),
+    ],
+  );
+
   String _channelFilterDesc(ChannelType type, bool is3way) {
     switch (type) {
       case ChannelType.woofer:
       case ChannelType.subwoofer: return 'LP →';
       case ChannelType.tweeter:   return '← HP';
-      case ChannelType.mid:
       case ChannelType.mid:  return '← HP + LP →';
       case ChannelType.fullRange: return 'FULL';
     }
