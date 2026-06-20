@@ -130,7 +130,48 @@ class ConnectScreen extends ConsumerWidget {
               ),
             ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
+
+            // ── 보드 자동탐지 배너 ─────────────────────────────────────────
+            if (state.detectedBoard == DetectedBoard.adau1466) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                  borderRadius: BorderRadius.circular(6),
+                  color: Colors.amber.withValues(alpha: 0.05),
+                ),
+                child: const Row(children: [
+                  Icon(Icons.info_outline, color: Colors.amber, size: 14),
+                  SizedBox(width: 8),
+                  Expanded(child: Text(
+                    'ADAU1466 보드가 탐지됐습니다. 현재 지원 준비 중입니다.\n'
+                    'ADAU1701(JAB4) 보드에서 사용 가능합니다.',
+                    style: TextStyle(color: Colors.amber, fontSize: 10, height: 1.5),
+                  )),
+                ]),
+              ),
+              const SizedBox(height: 8),
+            ] else if (connected && state.detectedBoard == DetectedBoard.unknown) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Row(children: [
+                  Icon(Icons.help_outline, color: Colors.white38, size: 14),
+                  SizedBox(width: 8),
+                  Expanded(child: Text(
+                    '보드를 자동으로 식별하지 못했습니다. 아래 목록에서 직접 선택하세요.',
+                    style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.5),
+                  )),
+                ]),
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            const SizedBox(height: 8),
 
             // ── 상태 패널 ─────────────────────────────────────────────────
             Container(

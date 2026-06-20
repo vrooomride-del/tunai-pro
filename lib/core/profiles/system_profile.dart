@@ -1,6 +1,12 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../dsp/dsp_adapter.dart';
 import '../dsp/adau1701_adapter.dart';
 import '../dsp/adau1466_adapter.dart';
+
+/// 선택된 시스템 프로파일 전역 상태 — core에 선언 (circular import 방지)
+final systemProfileProvider = StateProvider<SystemProfile>(
+  (ref) => kTunaiOneSystemProfile,
+);
 
 enum SystemProfileId {
   tunaiOne,       // JAB4(ADAU1701) 2웨이

@@ -8,10 +8,6 @@ import '../../core/dsp/adau1701_adapter.dart';
 import '../../core/profiles/system_profile.dart';
 import '../connect/connect_controller.dart';
 
-/// 선택된 시스템 프로파일 (JAB4 / 파란보드)
-final systemProfileProvider = StateProvider<SystemProfile>(
-  (ref) => kTunaiOneSystemProfile,
-);
 
 final dspProvider = StateNotifierProvider<DspController, DspState>(
   (ref) => DspController(ref),

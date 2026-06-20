@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/profiles/system_profile.dart';
 
 // ICP5(WONDOM) BLE GATT UUID — GATT 덤프로 확인된 실제 값
 class _ICP5UUID {
@@ -15,6 +16,13 @@ enum ConnectMode { uart, ble }
 
 enum ConnectionStatus { disconnected, scanning, connecting, connected, error }
 
+/// 연결 후 보드 자동탐지 결과
+enum DetectedBoard {
+  icp5Adau1701, // ICP5 + fff0 서비스 → ADAU1701(JAB4)
+  adau1466,     // 파란보드 패턴 → ADAU1466 (미지원)
+  unknown,      // 식별 불가 → 수동 선택 유지
+}
+
 class ConnectState {
   final ConnectMode mode;
   final List<String> ports;
@@ -22,6 +30,7 @@ class ConnectState {
   final ConnectionStatus connection;
   final String status;
   final String? deviceName;
+  final DetectedBoard? detectedBoard;
 
   const ConnectState({
     this.mode = ConnectMode.uart,
@@ -30,6 +39,7 @@ class ConnectState {
     this.connection = ConnectionStatus.disconnected,
     this.status = 'READY',
     this.deviceName,
+    this.detectedBoard,
   });
 
   bool get connected => connection == ConnectionStatus.connected;
@@ -41,6 +51,7 @@ class ConnectState {
     ConnectionStatus? connection,
     String? status,
     String? deviceName,
+    DetectedBoard? detectedBoard,
   }) => ConnectState(
     mode: mode ?? this.mode,
     ports: ports ?? this.ports,
@@ -48,15 +59,17 @@ class ConnectState {
     connection: connection ?? this.connection,
     status: status ?? this.status,
     deviceName: deviceName ?? this.deviceName,
+    detectedBoard: detectedBoard ?? this.detectedBoard,
   );
 }
 
 final connectProvider = StateNotifierProvider<ConnectController, ConnectState>(
-  (ref) => ConnectController(),
+  (ref) => ConnectController(ref),
 );
 
 class ConnectController extends StateNotifier<ConnectState> {
-  ConnectController() : super(const ConnectState()) {
+  final Ref _ref;
+  ConnectController(this._ref) : super(const ConnectState()) {
     scanPorts();
   }
 
@@ -70,6 +83,9 @@ class ConnectController extends StateNotifier<ConnectState> {
   static const List<String> _bleTargetNames = [
     'ICP5', 'icp5', 'TUNAI', 'tunai', 'BT_AUDIO', 'WONDOM',
   ];
+
+  // 파란보드(ADAU1466) advName 패턴
+  static const List<String> _adau1466Names = ['REFERENCE', 'TUNAI-REF', 'QCC5125', 'CS42448'];
 
   // ── 모드 전환 ────────────────────────────────────────────────────────────
 
@@ -233,10 +249,27 @@ class ConnectController extends StateNotifier<ConnectState> {
         throw Exception('DSP Write 캐릭터리스틱을 찾을 수 없습니다 (fff2)');
       }
 
+      // ── 보드 자동탐지 ──────────────────────────────────────────────────────
+      final board = _detectBoard(found.advName, services);
+      debugPrint('[BOARD] 탐지 결과: $board (advName=${found.advName})');
+
+      String connStatus;
+      switch (board) {
+        case DetectedBoard.icp5Adau1701:
+          _ref.read(systemProfileProvider.notifier).state = kTunaiOneSystemProfile;
+          connStatus = 'CONNECTED (BLE · ADAU1701 자동 선택됨)';
+        case DetectedBoard.adau1466:
+          connStatus = 'CONNECTED (BLE · ADAU1466 — 지원 준비 중)';
+        case DetectedBoard.unknown:
+          connStatus = 'CONNECTED (BLE · 보드 미식별 — 수동 선택 필요)';
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
       state = state.copyWith(
         connection: ConnectionStatus.connected,
-        status: 'CONNECTED (BLE)',
+        status: connStatus,
         deviceName: found.advName,
+        detectedBoard: board,
       );
 
       found.connectionState.listen((s) {
@@ -247,6 +280,7 @@ class ConnectController extends StateNotifier<ConnectState> {
             connection: ConnectionStatus.disconnected,
             status: 'READY',
             deviceName: null,
+            detectedBoard: null,
           );
         }
       });
@@ -259,6 +293,16 @@ class ConnectController extends StateNotifier<ConnectState> {
     }
   }
 
+  DetectedBoard _detectBoard(String advName, List<BluetoothService> services) {
+    final name = advName.toUpperCase();
+    final hasFff0 = services.any((s) => s.uuid.str128.contains(_ICP5UUID.service));
+    final isIcp5Name = _bleTargetNames.any((n) => name.contains(n.toUpperCase()));
+    if (isIcp5Name && hasFff0) return DetectedBoard.icp5Adau1701;
+    if (isIcp5Name) return DetectedBoard.icp5Adau1701;
+    if (_adau1466Names.any((n) => name.contains(n.toUpperCase()))) return DetectedBoard.adau1466;
+    return DetectedBoard.unknown;
+  }
+
   Future<void> disconnectBle() async {
     await _bleDevice?.disconnect();
     _bleDevice = null;
@@ -267,6 +311,7 @@ class ConnectController extends StateNotifier<ConnectState> {
       connection: ConnectionStatus.disconnected,
       status: 'READY',
       deviceName: null,
+      detectedBoard: null,
     );
   }
 

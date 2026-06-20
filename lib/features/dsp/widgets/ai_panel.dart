@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../dsp_state.dart';
 import '../dsp_controller.dart';
+import '../../../core/profiles/system_profile.dart';
 import '../../../core/ai_tuning_service.dart';
 
 class AiTuningPanel extends ConsumerStatefulWidget {
