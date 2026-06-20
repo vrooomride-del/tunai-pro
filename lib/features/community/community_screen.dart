@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api_service.dart';
+import '../../core/enclosure_hash.dart';
 import '../auth/auth_controller.dart';
 import '../auth/auth_screen.dart';
 import '../dsp/dsp_state.dart';
 import '../dsp/dsp_controller.dart';
+import '../driver/driver_profile.dart';
+import '../driver/driver_screen.dart';
 
 class ProCommunityScreen extends ConsumerStatefulWidget {
   const ProCommunityScreen({super.key});
@@ -33,11 +36,38 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
   @override
   void dispose() { _tabCtrl.dispose(); super.dispose(); }
 
+  /// SystemConfig(EnclosureConfig + DriverProfile)로부터 인클로저 해시 계산
+  String? _myHash() {
+    final config = ref.read(systemConfigProvider);
+    final enc = config.enclosure;
+    if (enc == null) return null;
+
+    // 우퍼 T/S 파라미터 (선택적)
+    final woofer = config.drivers
+        .where((d) => d.role == DriverRole.woofer)
+        .firstOrNull;
+    final ts = woofer?.tsParams;
+
+    return EnclosureHash.fromEnclosure(
+      volumeL:      enc.volume,
+      portLengthMm: enc.portLength,
+      portDiamMm:   enc.portDiameter,
+      fsHz:         ts?.fs,
+      vasL:         ts?.vas,
+    );
+  }
+
   Future<void> _loadPresets() async {
     setState(() => _loadingPresets = true);
-    final res = _sort == 'trending'
-        ? await ApiService.getTrending()
-        : await ApiService.getPresets();
+    final Future<Map<String, dynamic>> request;
+    if (_sort == 'trending') {
+      request = ApiService.getTrending();
+    } else if (_sort == 'match') {
+      request = ApiService.getPresets(hash: _myHash());
+    } else {
+      request = ApiService.getPresets();
+    }
+    final res = await request;
     setState(() {
       _presets = res['data'] ?? [];
       _loadingPresets = false;
@@ -116,6 +146,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                 title: titleCtrl.text.trim(),
                 description: 'TUNAI Pro ${out.name}',
                 fps: fps.cast<Map<String, dynamic>>(),
+                enclosureHash: _myHash(),
               );
               if (!context.mounted) return;
               if (res['status'] == 'ok') {
@@ -216,6 +247,9 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                           const SizedBox(width: 8),
                           _SortBtn('최신순', _sort == 'latest',
                               () { setState(() => _sort = 'latest'); _loadPresets(); }),
+                          const SizedBox(width: 8),
+                          _SortBtn('내 스피커', _sort == 'match',
+                              () { setState(() => _sort = 'match'); _loadPresets(); }),
                         ],
                       ),
                     ),

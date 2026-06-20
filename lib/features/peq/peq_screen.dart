@@ -5,6 +5,8 @@ import 'dart:math';
 import 'peq_controller.dart';
 import '../../core/dsp_engine.dart';
 import '../../core/api_service.dart';
+import '../../core/enclosure_hash.dart';
+import '../driver/driver_screen.dart';
 
 class PeqScreen extends ConsumerWidget {
   const PeqScreen({super.key});
@@ -133,11 +135,19 @@ class _TopBar extends ConsumerWidget {
                         final fps = ref.read(peqProvider).filters.map((f) => {
                           'f': f.frequency, 'g': f.gainDb, 'q': f.q, 'type': f.type.index
                         }).toList();
+                        // 인클로저 해시 — EnclosureConfig가 있으면 첨부
+                        final enc = ref.read(systemConfigProvider).enclosure;
+                        final hash = enc == null ? null : EnclosureHash.fromEnclosure(
+                          volumeL: enc.volume,
+                          portLengthMm: enc.portLength,
+                          portDiamMm: enc.portDiameter,
+                        );
                         final res = await ApiService.uploadPreset(
                           title: nameCtrl.text.trim(),
                           description: 'TUNAI Pro 프리셋',
                           fps: fps,
                           roomTag: roomCtrl.text.trim(),
+                          enclosureHash: hash,
                         );
                         snackbar.showSnackBar(SnackBar(
                           content: Text(res['status'] == 'ok' ? '커뮤니티에 공유됐습니다!' : '공유 실패: ${res["message"]}'),
