@@ -26,10 +26,12 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
     setState(() { _loading = true; _result = null; });
 
     final state = ref.read(dspProvider);
+    final systemProfile = ref.read(systemProfileProvider);
     final result = await AiTuningService.suggest(
       dspState: state,
       userRequest: _ctrl.text.trim(),
       frequencyResponse: widget.frequencyResponse,
+      systemProfile: systemProfile,
     );
 
     setState(() { _loading = false; _result = result; });

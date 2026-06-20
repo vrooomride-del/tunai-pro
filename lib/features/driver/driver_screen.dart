@@ -1,7 +1,9 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'dart:io';
 import '../../core/frd_parser.dart';
 import '../../core/profiles/system_profile.dart';
@@ -216,9 +218,8 @@ class _DriverCardState extends ConsumerState<_DriverCard> {
               if (d.sensitivity != null) _TsRow('감도', '${d.sensitivity!.toStringAsFixed(1)} dB'),
             ],
             if (d.hasFrd) ...[
-              const SizedBox(height: 8),
-              Text('FRD: ${d.frdData.length}포인트 · ${d.frdData.first.frequency.toStringAsFixed(0)}~${d.frdData.last.frequency.toStringAsFixed(0)}Hz',
-                style: const TextStyle(color: Colors.white24, fontSize: 10)),
+              const SizedBox(height: 12),
+              _FrdGraph(frdData: d.frdData),
             ],
           ])),
         ],
@@ -256,6 +257,75 @@ class _TsRow extends StatelessWidget {
       Text(value, style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w500)),
     ]),
   );
+}
+
+class _FrdGraph extends StatelessWidget {
+  final List<FrdPoint> frdData;
+  const _FrdGraph({required this.frdData});
+
+  @override
+  Widget build(BuildContext context) {
+    if (frdData.isEmpty) return const SizedBox.shrink();
+
+    final minSpl = frdData.map((p) => p.spl).reduce(min) - 3;
+    final maxSpl = frdData.map((p) => p.spl).reduce(max) + 3;
+
+    final spots = frdData
+        .where((p) => p.frequency >= 20 && p.frequency <= 20000)
+        .map((p) => FlSpot(log(p.frequency) / log(10), p.spl))
+        .toList();
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(
+        'FRD  ${frdData.first.frequency.toStringAsFixed(0)}–${frdData.last.frequency.toStringAsFixed(0)} Hz  ·  ${frdData.length}pts',
+        style: const TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 1),
+      ),
+      const SizedBox(height: 6),
+      SizedBox(
+        height: 140,
+        child: LineChart(LineChartData(
+          backgroundColor: Colors.transparent,
+          gridData: FlGridData(
+            show: true,
+            getDrawingHorizontalLine: (_) => const FlLine(color: Colors.white10, strokeWidth: 0.5),
+            getDrawingVerticalLine: (_) => const FlLine(color: Colors.white10, strokeWidth: 0.5),
+          ),
+          titlesData: FlTitlesData(
+            bottomTitles: AxisTitles(sideTitles: SideTitles(
+              showTitles: true, interval: 1,
+              getTitlesWidget: (v, _) {
+                final freq = pow(10, v).toInt();
+                if ([20, 100, 1000, 10000].any((f) => (log(f) / log(10) - v).abs() < 0.05)) {
+                  return Text(freq >= 1000 ? '${freq ~/ 1000}k' : '$freq',
+                      style: const TextStyle(color: Colors.white24, fontSize: 8));
+                }
+                return const SizedBox.shrink();
+              },
+            )),
+            leftTitles: AxisTitles(sideTitles: SideTitles(
+              showTitles: true, interval: 10,
+              getTitlesWidget: (v, _) => Text('${v.toInt()}',
+                  style: const TextStyle(color: Colors.white24, fontSize: 8)),
+            )),
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          ),
+          borderData: FlBorderData(show: false),
+          minX: log(20) / log(10),
+          maxX: log(20000) / log(10),
+          minY: minSpl, maxY: maxSpl,
+          lineBarsData: [LineChartBarData(
+            spots: spots,
+            isCurved: true,
+            color: Colors.white70,
+            barWidth: 1.2,
+            dotData: const FlDotData(show: false),
+            belowBarData: BarAreaData(show: true, color: Colors.white.withValues(alpha: 0.04)),
+          )],
+        )),
+      ),
+    ]);
+  }
 }
 
 class _EnclosureTab extends ConsumerStatefulWidget {
