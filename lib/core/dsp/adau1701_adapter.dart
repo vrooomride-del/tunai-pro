@@ -6,16 +6,18 @@ import '../dsp_engine.dart';
 ///
 /// 프레임: [0xAA][Addr 2B][Data 20B = 5×4B][XOR][0x55] = 27바이트
 ///
-/// ▼ PRAM 주소 — SigmaStudio export 전까지 TODO 상태
-///   PEQ  : 채널별 20밴드 × 5 워드
-///   XO   : PEQ 직후 HP/LP 각 최대 4 슬롯 (LR48 대응)
-///   GAIN : 채널별 1 워드 (단일 계수, 5.23 선형값)
-///   DELAY: 채널별 1 워드 (샘플 카운트, 정수)
+/// ▼ PRAM 주소 — SigmaStudio IC Memory Map (WONDOM 기본 데모, 2025-06-20 확인)
+///   GAIN : ExtSWGainDB 셀, 5.23 선형값 1워드
+///     ch0 Woofer  = 7  (ExtSWGainDB2step_20, "Vol")
+///     ch1 Tweeter = 6  (ExtSWGainDB3step_19, "Vol_2")
+///   DELAY: 현 펌웨어에 Delay 블록 없음 — 추가+재컴파일 필요, 현재 미지원
+///   PEQ  : 채널별 20밴드 × 5 워드 (주소 미확정, 별도 확인 필요)
+///   XO   : PEQ 직후 HP/LP 각 최대 4 슬롯
 class Adau1701Adapter implements DspAdapter {
   final RawWriteFn _send;
 
-  // ── PRAM 레이아웃 (TODO: SigmaStudio export 후 정확한 주소로 교체) ──
-  static const int _peqBase         = 0x0010; // PEQ 밴드 시작
+  // ── PRAM 레이아웃 ──────────────────────────────────────────────
+  static const int _peqBase         = 0x0010; // PEQ 밴드 시작 (미확정)
   static const int _peqBands        = 20;
   static const int _peqChStride     = _peqBands * 5; // ch당 100 워드
 
@@ -24,9 +26,12 @@ class Adau1701Adapter implements DspAdapter {
   static const int _xoSlotsPerSide  = 4; // LR48 최대 4 biquad
   static const int _xoChStride      = _xoSlotsPerSide * 2 * 5; // (HP+LP) × 5워드
 
-  // TODO: SigmaStudio export 파일(.h)에서 실제 주소 확인 필요
-  static const int _gainBase        = 0x0000; // ← TODO
-  static const int _delayBase       = 0x0000; // ← TODO
+  // Gain 셀 PRAM 주소 — ch0/ch1 순서가 비연속이므로 배열로 관리
+  // SigmaStudio 프로젝트(.dspproj)가 변경되면 재확인 필요
+  static const List<int> _gainAddresses = [7, 6]; // [ch0 Woofer=Vol, ch1 Tweeter=Vol_2]
+
+  // Delay: 현 펌웨어에 블록 없음 → 미지원
+  static const int _delayBase       = 0x0000; // Delay 블록 추가+재컴파일 전까지 미사용
 
   Adau1701Adapter({required RawWriteFn send}) : _send = send;
 
@@ -68,15 +73,16 @@ class Adau1701Adapter implements DspAdapter {
   // ── Gain ─────────────────────────────────────────────────────
   @override
   Future<void> writeGain(int channelIndex, double gainDb) async {
-    if (_gainBase == 0x0000) return; // TODO: 주소 미확정
+    if (channelIndex >= _gainAddresses.length) return;
     final linear = pow(10.0, gainDb / 20.0).toDouble();
-    await _send(DspEngine.buildGainFrame(linear, _gainBase + channelIndex));
+    await _send(DspEngine.buildGainFrame(linear, _gainAddresses[channelIndex]));
   }
 
   // ── Delay ────────────────────────────────────────────────────
+  // 현 펌웨어에 Delay 블록 없음 — SigmaStudio에서 블록 추가+재컴파일 필요
   @override
   Future<void> writeDelay(int channelIndex, double delayMs) async {
-    if (_delayBase == 0x0000) return; // TODO: 주소 미확정
+    if (_delayBase == 0x0000) return; // Delay 블록 미존재
     await _send(DspEngine.buildDelayFrame(delayMs, _delayBase + channelIndex));
   }
 
