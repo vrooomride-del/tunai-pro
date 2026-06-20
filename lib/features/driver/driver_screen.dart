@@ -499,7 +499,7 @@ class _CrossoverTabState extends ConsumerState<_CrossoverTab> {
 
     if (sensMap.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('감도 매칭: 2개 이상 채널에 FRD가 필요합니다')));
+        const SnackBar(content: Text('감도 매칭: 2개 이상 채널의 감도 정보가 필요합니다 (FRD 또는 T/S 파라미터)')));
       return;
     }
 
