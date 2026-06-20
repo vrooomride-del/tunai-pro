@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -81,13 +80,46 @@ class ConnectController extends StateNotifier<ConnectState> {
 
   // ── UART ─────────────────────────────────────────────────────────────────
 
+  // macOS 시스템 가상 포트 — DSP 연결과 무관, 자동 선택 후보에서 제외
+  static const _kSystemPortPatterns = [
+    'Bluetooth-Incoming-Port',
+    'Bluetooth-Modem',
+    'debug-console',
+  ];
+
+  // ICP5/CH34x 실제 디바이스 포트 패턴 (우선 자동 선택)
+  static const _kPreferredPatterns = [
+    'usbserial',   // CH340/CH341/FTDI macOS 드라이버
+    'wchusbserial', // CH34x 공식 드라이버
+    'usbmodem',    // CDC ACM
+    'cu.ICP',
+    'cu.TUNAI',
+    'cu.WONDOM',
+  ];
+
+  static bool _isSystemPort(String port) =>
+      _kSystemPortPatterns.any((p) => port.contains(p));
+
+  static bool _isPreferredPort(String port) =>
+      _kPreferredPatterns.any((p) => port.toLowerCase().contains(p.toLowerCase()));
+
   void scanPorts() {
-    final ports = SerialPort.availablePorts;
-    state = state.copyWith(
-      ports: ports,
-      selectedPort: state.selectedPort != null && ports.contains(state.selectedPort)
-          ? state.selectedPort : null,
-    );
+    final all = SerialPort.availablePorts;
+
+    // 시스템 가상 포트 제외
+    final filtered = all.where((p) => !_isSystemPort(p)).toList();
+
+    // 현재 선택 포트 유지 (필터된 목록에 있으면)
+    String? selected = state.selectedPort != null && filtered.contains(state.selectedPort)
+        ? state.selectedPort : null;
+
+    // 자동 선택: 선호 패턴이 정확히 1개 → 자동 선택, 여러 개면 null 유지(수동 선택)
+    if (selected == null) {
+      final preferred = filtered.where(_isPreferredPort).toList();
+      if (preferred.length == 1) selected = preferred.first;
+    }
+
+    state = state.copyWith(ports: filtered, selectedPort: selected);
   }
 
   void selectPort(String port) {

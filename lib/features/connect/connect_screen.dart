@@ -68,7 +68,7 @@ class ConnectScreen extends ConsumerWidget {
                 child: DropdownButton<String>(
                   value: state.selectedPort,
                   hint: Text(
-                    state.ports.isEmpty ? 'NO PORTS DETECTED' : 'SELECT UART PORT',
+                    state.ports.isEmpty ? 'NO PORTS DETECTED' : 'SELECT PORT (ICP5 / CH34x)',
                     style: const TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 1),
                   ),
                   dropdownColor: const Color(0xFF111111),
