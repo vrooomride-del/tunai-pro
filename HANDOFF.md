@@ -3,7 +3,7 @@
 > 이 표는 매 세션 시작/종료 시 갱신한다.
 > 새 작업으로 새기 전에 반드시 먼저 읽고, 세션 끝나면 변경된 항목만 갱신해서 다음 HANDOFF.md에 그대로 옮긴다.
 
-**업데이트: 2026-06-20 (포트 자동감지 버그 수정 + 보드 자동탐지 완료)**
+**업데이트: 2026-06-21 (1단계 완전 마무리 — UART VID/PID 탐지, 감도매칭 DSP 연결)**
 
 ---
 
@@ -11,8 +11,8 @@
 
 | # | 단계 | 모바일 상태 | Pro 상태 | 비고 |
 |---|---|---|---|---|
-| 1 | 스피커/DSP 보드 탐지 | ✅ BLE advName+UUID 자동탐지 | ✅ BLE 동일 이식 | UART 이름 기반 탐지는 다음 세션. ADAU1466 stub 유지 |
-| 2 | 유닛 물성 기반 크로스오버 제안 | ✅ T/S+FRD 추천 | ⚠️ 크로스오버 UI 100% / DSP 50% — writeDelay/writeGain stub | 선결: SigmaStudio PRAM 주소 export. PRO_CROSSOVER_AUDIT.md 참고 |
+| 1 | 스피커/DSP 보드 탐지 | ✅ BLE 기반 완료 | ✅ BLE+UART(VID/PID) 완전 완료 | ADAU1466 stub 유지 |
+| 2 | 유닛 물성 기반 크로스오버 제안 | ✅ T/S+FRD 추천 | ✅ 크로스오버+감도매칭 DSP 연결 완료. 위상정합은 Delay 블록 펌웨어 작업 필요 | PRO_CROSSOVER_AUDIT.md 참고 |
 | 3 | DSP 자동 적용 (트위터 보호) | ✅ 완료 | — | — |
 | 4 | 측정→AI 튜닝→APPLY | ✅ 완료 | ✅ 완료 + AUTO TUNE 반복수렴 | 갭: Closed Loop 모바일 적용 여부 미확인 |
 | 5 | 폰용 Pro 모드 | ⏸ 설계완료, FRD 임포트 완료 / ADAU1466 대기 | — | — |
@@ -91,3 +91,24 @@ SigmaStudio export (`.h` 또는 `param_data.dat`) — 딜레이/게인 셀 PRAM 
 ### 이번 세션 처리
 - snackbar 텍스트 수정: "FRD가 필요" → "감도 정보가 필요 (FRD 또는 T/S)"
 - 커밋: `c549639`
+
+---
+
+## 이번 세션 추가 — UART VID/PID 기반 보드 탐지 (1단계 완전 마무리)
+
+### 구현 내용 (`connect_controller.dart`)
+
+`_detectBoardFromUart()` 추가:
+1. **VID/PID 우선** — `SerialPort.vendorId/.productId` (포트 열기 전 조회 가능)
+   - `0x1A86`(CH34x) + 알려진 PID(`0x7523/5523/7522/55D4`) → `icp5Adau1701` 확신
+   - 기타 USB 시리얼 VID(`0x0403 FTDI / 0x10C4 CP210x / 0x067B Prolific`) → `icp5Adau1701` 추정
+2. **이름 패턴 폴백** — VID 없으면 `usbserial/wchusbserial/usbmodem` 등으로 추정
+3. **ADAU1466 대비** — 파란보드 이름 패턴 → `adau1466` (향후 연결 대비)
+
+`connectUart()`:
+- 포트 열기 전 탐지 실행 → `systemProfileProvider` 자동 설정
+- `detectedBoard` 상태 업데이트 → 기존 배너 UI 재사용 (화면 변경 없음)
+- `disconnectUart()`: `detectedBoard` null 초기화 추가
+
+### 커밋
+`6153212` — feat: 1단계 보드 자동탐지 — UART VID/PID 기반 식별 추가
