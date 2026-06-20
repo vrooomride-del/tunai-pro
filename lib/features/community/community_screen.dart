@@ -6,7 +6,6 @@ import '../auth/auth_controller.dart';
 import '../auth/auth_screen.dart';
 import '../dsp/dsp_state.dart';
 import '../dsp/dsp_controller.dart';
-import '../driver/driver_profile.dart';
 import '../driver/driver_screen.dart';
 
 class ProCommunityScreen extends ConsumerStatefulWidget {
@@ -42,18 +41,10 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
     final enc = config.enclosure;
     if (enc == null) return null;
 
-    // 우퍼 T/S 파라미터 (선택적)
-    final woofer = config.drivers
-        .where((d) => d.role == DriverRole.woofer)
-        .firstOrNull;
-    final ts = woofer?.tsParams;
-
     return EnclosureHash.fromEnclosure(
       volumeL:      enc.volume,
       portLengthMm: enc.portLength,
       portDiamMm:   enc.portDiameter,
-      fsHz:         ts?.fs,
-      vasL:         ts?.vas,
     );
   }
 
