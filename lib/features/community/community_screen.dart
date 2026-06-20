@@ -94,8 +94,10 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
         enabled: true,
       ));
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${preset['title']} → DSP 적용 완료')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('${preset['title']} 로드 완료 — DSP 탭에서 APPLY를 눌러야 실제 적용됩니다'),
+      duration: const Duration(seconds: 3),
+    ));
   }
 
   Future<void> _shareCurrentDsp() async {
