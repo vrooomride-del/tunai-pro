@@ -45,12 +45,16 @@ jobs:
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
       - run: flutter build windows --release
-      - name: Zip exe
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath TUNAI_Pro_windows.zip
+      - name: Install Inno Setup
+        run: choco install innosetup --yes
+      - name: Build installer
+        run: |
+          New-Item -ItemType Directory -Force -Path installer\output
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\tunai_pro.iss
       - uses: actions/upload-artifact@v4
         with:
           name: TUNAI-Pro-Windows
-          path: TUNAI_Pro_windows.zip
+          path: installer\output\TUNAIPro_Setup.exe
 
   release:
     needs: [build-macos, build-windows]
@@ -79,10 +83,10 @@ jobs:
           name: TUNAI Pro ${{ steps.version.outputs.tag }}
           body: |
             ## TUNAI Pro
-            - macOS (.app)
-            - Windows (.exe)
+            - macOS: TUNAI_Pro_mac.zip (.app)
+            - Windows: TUNAIPro_Setup.exe (설치 마법사)
           files: |
             ./artifacts/TUNAI_Pro_mac.zip
-            ./artifacts/TUNAI_Pro_windows.zip
+            ./artifacts/TUNAIPro_Setup.exe
           draft: false
           prerelease: false
