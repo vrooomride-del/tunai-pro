@@ -105,12 +105,13 @@ class ConnectController extends StateNotifier<ConnectState> {
 
   // ICP5/CH34x 실제 디바이스 포트 패턴 (우선 자동 선택)
   static const _kPreferredPatterns = [
-    'usbserial',   // CH340/CH341/FTDI macOS 드라이버
+    'usbserial',    // CH340/CH341/FTDI macOS 드라이버
     'wchusbserial', // CH34x 공식 드라이버
-    'usbmodem',    // CDC ACM
+    'usbmodem',     // CDC ACM
     'cu.ICP',
     'cu.TUNAI',
     'cu.WONDOM',
+    'COM',          // Windows COM 포트 (CH9143/CH34x → COM3, COM4 등)
   ];
 
   // USB 시리얼 칩 VID 목록 — ICP5(WONDOM)은 CH34x 탑재

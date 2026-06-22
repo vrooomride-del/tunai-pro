@@ -68,7 +68,11 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   }
 
   static void openMicSettings() {
-    Process.run('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone']);
+    if (Platform.isMacOS) {
+      Process.run('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone']);
+    } else if (Platform.isWindows) {
+      Process.run('ms-settings:privacy-microphone', [], runInShell: true);
+    }
   }
 
   Future<void> startMeasurement({List<double>? scfCorrection, SpeakerProfile? speakerProfile}) async {
