@@ -5,7 +5,7 @@ AppPublisher=TUNAI
 AppPublisherURL=https://tunai.app
 AppSupportURL=https://tunai.app
 AppUpdatesURL=https://tunai.app
-DefaultDirName={autopf}\TUNAI Pro
+DefaultDirName={localappdata}\TUNAI Pro
 DefaultGroupName=TUNAI Pro
 AllowNoIcons=yes
 OutputDir={#SourcePath}\output
@@ -16,7 +16,6 @@ WizardStyle=modern
 SetupIconFile={#SourcePath}\..\windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\tunai_pro.exe
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
