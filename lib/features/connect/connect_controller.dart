@@ -70,8 +70,9 @@ final connectProvider = StateNotifierProvider<ConnectController, ConnectState>(
 
 class ConnectController extends StateNotifier<ConnectState> {
   final Ref _ref;
-  ConnectController(this._ref) : super(const ConnectState()) {
-    scanPorts();
+  ConnectController(this._ref)
+      : super(ConnectState(mode: Platform.isMacOS ? ConnectMode.ble : ConnectMode.uart)) {
+    if (!Platform.isMacOS) scanPorts();
   }
 
   // UART

@@ -39,13 +39,15 @@ class ConnectScreen extends ConsumerWidget {
             // ── 모드 탭 ──────────────────────────────────────────────────
             Row(
               children: [
-                _ModeTab(
-                  label: 'USB / UART',
-                  active: state.mode == ConnectMode.uart,
-                  onTap: connected ? null : () => ctrl.setMode(ConnectMode.uart),
-                ),
+                if (!Platform.isMacOS) ...[
+                  _ModeTab(
+                    label: 'USB / UART',
+                    active: state.mode == ConnectMode.uart,
+                    onTap: connected ? null : () => ctrl.setMode(ConnectMode.uart),
+                  ),
+                ],
                 if (!Platform.isWindows) ...[
-                  const SizedBox(width: 8),
+                  if (!Platform.isMacOS) const SizedBox(width: 8),
                   _ModeTab(
                     label: 'BLE',
                     active: state.mode == ConnectMode.ble,
