@@ -1,3 +1,4 @@
+; Rebuilt for icon + UAC fix
 [Setup]
 AppName=TUNAI Pro
 AppVersion=1.0.0
