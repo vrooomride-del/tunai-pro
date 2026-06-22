@@ -21,7 +21,6 @@ class AiTuningService {
   }) async {
     try {
       final outIdx = dspState.selectedOutput;
-      final out = dspState.outputs[outIdx];
 
       final body = {
         'dspState': {
