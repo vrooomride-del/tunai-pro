@@ -29,6 +29,7 @@ Name: "startmenuicon"; Description: "Create Start Menu shortcut"; GroupDescripti
 
 [Files]
 Source: "{#SourcePath}\..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourcePath}\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{group}\TUNAI Pro"; Filename: "{app}\tunai_pro.exe"
@@ -36,6 +37,7 @@ Name: "{group}\{cm:UninstallProgram,TUNAI Pro}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\TUNAI Pro"; Filename: "{app}\tunai_pro.exe"; Tasks: desktopicon
 
 [Run]
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/passive /norestart"; StatusMsg: "Installing Visual C++ Redistributable..."; Flags: waituntilterminated
 Filename: "{app}\tunai_pro.exe"; Description: "{cm:LaunchProgram,TUNAI Pro}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
