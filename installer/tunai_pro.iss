@@ -8,12 +8,12 @@ AppUpdatesURL=https://tunai.app
 DefaultDirName={autopf}\TUNAI Pro
 DefaultGroupName=TUNAI Pro
 AllowNoIcons=yes
-OutputDir=installer\output
+OutputDir={#SourcePath}\output
 OutputBaseFilename=TUNAIPro_Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile=windows\runner\resources\app_icon.ico
+SetupIconFile={#SourcePath}\..\windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\tunai_pro.exe
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
@@ -28,7 +28,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "startmenuicon"; Description: "Create Start Menu shortcut"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
-Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourcePath}\..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\TUNAI Pro"; Filename: "{app}\tunai_pro.exe"

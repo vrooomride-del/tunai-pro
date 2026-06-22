@@ -50,7 +50,8 @@ jobs:
       - name: Build installer
         run: |
           New-Item -ItemType Directory -Force -Path installer\output
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\tunai_pro.iss
+          $issPath = Resolve-Path "installer\tunai_pro.iss"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "$issPath"
       - uses: actions/upload-artifact@v4
         with:
           name: TUNAI-Pro-Windows
