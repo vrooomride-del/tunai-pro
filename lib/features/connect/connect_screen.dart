@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'connect_controller.dart';
@@ -43,12 +44,14 @@ class ConnectScreen extends ConsumerWidget {
                   active: state.mode == ConnectMode.uart,
                   onTap: connected ? null : () => ctrl.setMode(ConnectMode.uart),
                 ),
-                const SizedBox(width: 8),
-                _ModeTab(
-                  label: 'BLE',
-                  active: state.mode == ConnectMode.ble,
-                  onTap: connected ? null : () => ctrl.setMode(ConnectMode.ble),
-                ),
+                if (!Platform.isWindows) ...[
+                  const SizedBox(width: 8),
+                  _ModeTab(
+                    label: 'BLE',
+                    active: state.mode == ConnectMode.ble,
+                    onTap: connected ? null : () => ctrl.setMode(ConnectMode.ble),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 20),

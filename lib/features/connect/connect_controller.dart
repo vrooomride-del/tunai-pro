@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -380,7 +381,7 @@ class ConnectController extends StateNotifier<ConnectState> {
   // ── 공통 인터페이스 (dsp_controller가 사용) ───────────────────────────────
 
   Future<void> connect() async {
-    if (state.mode == ConnectMode.ble) {
+    if (state.mode == ConnectMode.ble && !Platform.isWindows) {
       await scanAndConnectBle();
     } else {
       await connectUart();
