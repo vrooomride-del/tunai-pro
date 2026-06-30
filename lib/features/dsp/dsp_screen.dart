@@ -10,6 +10,7 @@ import '../connect/connect_controller.dart';
 import 'widgets/ai_panel.dart';
 import '../../core/profiles/system_profile.dart';
 import '../mic/mic_measurement_controller.dart';
+import '../../core/channel_link_provider.dart';
 
 class DspScreen extends ConsumerWidget {
   const DspScreen({super.key});
@@ -251,14 +252,40 @@ class _Btn extends StatelessWidget {
 }
 
 // ── INPUT/OUTPUT 탭 ───────────────────────────────────
-class _SectionTabs extends StatelessWidget {
+class _SectionTabs extends ConsumerWidget {
   final bool showInput;
   final DspController ctrl;
   final DspState state;
   const _SectionTabs({required this.showInput, required this.ctrl, required this.state});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final links = ref.watch(channelLinkProvider);
+
+    // OUTPUT 탭 목록: L 탭 → 🔗 버튼 → R 탭 순으로 삽입
+    final outputWidgets = <Widget>[];
+    for (int i = 0; i < state.outputs.length; i++) {
+      outputWidgets.add(_Tab(
+        label: state.outputs[i].name,
+        selected: !showInput && state.selectedOutput == i,
+        onTap: () => ctrl.selectOutput(i),
+        muted: state.outputs[i].muted,
+      ));
+      // L 탭 뒤에 🔗 버튼 삽입 (even index = L)
+      if (i.isEven && i + 1 < state.outputs.length) {
+        final group = channelGroupOf(i);
+        final linked = group < links.length && links[group];
+        outputWidgets.add(_LinkToggle(
+          linked: linked,
+          onToggle: () {
+            final updated = List<bool>.from(links);
+            updated[group] = !updated[group];
+            ref.read(channelLinkProvider.notifier).state = updated;
+          },
+        ));
+      }
+    }
+
     return Container(
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.white12, width: 0.5)),
@@ -272,17 +299,32 @@ class _SectionTabs extends StatelessWidget {
             onTap: () => ctrl.selectInput(e.key),
           )),
           Container(width: 1, height: 32, color: Colors.white12),
-          // OUTPUT 탭
-          ...state.outputs.asMap().entries.map((e) => _Tab(
-            label: e.value.name,
-            selected: !showInput && state.selectedOutput == e.key,
-            onTap: () => ctrl.selectOutput(e.key),
-            muted: e.value.muted,
-          )),
+          // OUTPUT 탭 + 🔗 토글
+          ...outputWidgets,
         ],
       ),
     );
   }
+}
+
+class _LinkToggle extends StatelessWidget {
+  final bool linked;
+  final VoidCallback onToggle;
+  const _LinkToggle({required this.linked, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onToggle,
+    child: Container(
+      width: 22,
+      height: 32,
+      alignment: Alignment.center,
+      child: Text(
+        linked ? '🔗' : '⛓️',
+        style: const TextStyle(fontSize: 10),
+      ),
+    ),
+  );
 }
 
 class _Tab extends StatelessWidget {

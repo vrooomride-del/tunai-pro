@@ -7,6 +7,7 @@ import '../../core/dsp/dsp_adapter.dart';
 import '../../core/dsp/adau1701_adapter.dart';
 import '../../core/profiles/system_profile.dart';
 import '../connect/connect_controller.dart';
+import '../../core/channel_link_provider.dart';
 
 
 final dspProvider = StateNotifierProvider<DspController, DspState>(
@@ -23,9 +24,22 @@ class DspController extends StateNotifier<DspState> {
   void selectBand(int i)   => state = state.copyWith(selectedBand: i);
 
   // ── OUTPUT 편집 ──────────────────────────────────
-  void _updateOutput(int idx, OutputChannel Function(OutputChannel) fn) {
+  void _updateOutput(int idx, OutputChannel Function(OutputChannel) fn,
+      {bool propagate = true}) {
     final outputs = List<OutputChannel>.from(state.outputs);
     outputs[idx] = fn(outputs[idx]);
+
+    // L/R 링크 시 페어 채널에도 동일하게 적용
+    if (propagate) {
+      final links = _ref.read(channelLinkProvider);
+      if (isChannelLinked(links, idx)) {
+        final pair = channelPairOf(idx);
+        if (pair >= 0 && pair < outputs.length) {
+          outputs[pair] = fn(outputs[pair]);
+        }
+      }
+    }
+
     state = state.copyWith(outputs: outputs, isDirty: true);
   }
 
@@ -53,11 +67,23 @@ class DspController extends StateNotifier<DspState> {
       _updateOutput(idx, (o) => o.copyWith(lpFilter: f));
 
   void updateOutputBand(int outIdx, int bandIdx, PeqBand band) {
-    _updateOutput(outIdx, (o) {
-      final bands = List<PeqBand>.from(o.bands);
+    final outputs = List<OutputChannel>.from(state.outputs);
+
+    void applyBand(int chIdx) {
+      final bands = List<PeqBand>.from(outputs[chIdx].bands);
       bands[bandIdx] = band;
-      return o.copyWith(bands: bands);
-    });
+      outputs[chIdx] = outputs[chIdx].copyWith(bands: bands);
+    }
+
+    applyBand(outIdx);
+
+    final links = _ref.read(channelLinkProvider);
+    if (isChannelLinked(links, outIdx)) {
+      final pair = channelPairOf(outIdx);
+      if (pair >= 0 && pair < outputs.length) applyBand(pair);
+    }
+
+    state = state.copyWith(outputs: outputs, isDirty: true);
   }
 
   void toggleOutputBand(int outIdx, int bandIdx) {
