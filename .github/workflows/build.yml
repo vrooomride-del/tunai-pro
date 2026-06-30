@@ -8,6 +8,8 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -25,13 +27,26 @@ jobs:
         run: |
           cd build/macos/Build/Products/Release
           zip -r ~/TUNAI_Pro_mac.zip tunai_pro.app
-      - uses: actions/upload-artifact@v4
+      - name: Get version
+        id: version
+        run: echo "tag=v$(date +'%Y.%m.%d')-$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+      - name: Create / update Release (macOS)
+        uses: softprops/action-gh-release@v2
         with:
-          name: TUNAI-Pro-macOS
-          path: ~/TUNAI_Pro_mac.zip
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: TUNAI Pro ${{ steps.version.outputs.tag }}
+          body: |
+            ## TUNAI Pro
+            - macOS: TUNAI_Pro_mac.zip (.app)
+            - Windows: TUNAIPro_Setup.exe (설치 마법사)
+          files: ~/TUNAI_Pro_mac.zip
+          draft: false
+          prerelease: false
 
   build-windows:
     runs-on: windows-2022
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Add msbuild to PATH
@@ -55,32 +70,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path installer\output
           $issPath = Resolve-Path "installer\tunai_pro.iss"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "$issPath"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: TUNAI-Pro-Windows
-          path: installer\output\TUNAIPro_Setup.exe
-
-  release:
-    needs: [build-macos, build-windows]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: TUNAI-Pro-macOS
-          path: ./artifacts
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: TUNAI-Pro-Windows
-          path: ./artifacts
       - name: Get version
         id: version
+        shell: bash
         run: echo "tag=v$(date +'%Y.%m.%d')-$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
-      - name: Create Release
+      - name: Create / update Release (Windows)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -89,8 +83,6 @@ jobs:
             ## TUNAI Pro
             - macOS: TUNAI_Pro_mac.zip (.app)
             - Windows: TUNAIPro_Setup.exe (설치 마법사)
-          files: |
-            ./artifacts/TUNAI_Pro_mac.zip
-            ./artifacts/TUNAIPro_Setup.exe
+          files: installer\output\TUNAIPro_Setup.exe
           draft: false
           prerelease: false
