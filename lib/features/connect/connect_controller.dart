@@ -15,7 +15,7 @@ class _ICP5UUID {
 
 enum ConnectMode { uart, ble }
 
-enum ConnectionStatus { disconnected, scanning, connecting, connected, error }
+enum ConnectionStatus { disconnected, scanning, connecting, connected, error, bluetoothOff }
 
 /// 연결 후 보드 자동탐지 결과
 enum DetectedBoard {
@@ -250,11 +250,17 @@ class ConnectController extends StateNotifier<ConnectState> {
     );
 
     try {
-      // macOS: CBManagerState가 unknown → on으로 전환될 때까지 대기 (최대 5초)
-      await FlutterBluePlus.adapterState
-          .where((s) => s == BluetoothAdapterState.on)
-          .first
-          .timeout(const Duration(seconds: 5));
+      // ── Bluetooth 어댑터 상태 확인 ────────────────────────────
+      // adapterState는 BehaviorSubject → .first로 현재값 즉시 수신
+      final adapterState = await FlutterBluePlus.adapterState.first;
+      if (adapterState != BluetoothAdapterState.on) {
+        state = state.copyWith(
+          connection: ConnectionStatus.bluetoothOff,
+          status: '블루투스가 꺼져 있습니다. 설정에서 켜주세요.',
+        );
+        return;
+      }
+      // ──────────────────────────────────────────────────────────
 
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
 

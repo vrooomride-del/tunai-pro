@@ -3,6 +3,43 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'connect_controller.dart';
 
+Future<void> _showBluetoothOffDialog(BuildContext context) async {
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: const Color(0xFF1A1A1A),
+      title: const Text(
+        '블루투스가 꺼져 있습니다',
+        style: TextStyle(color: Colors.white, fontSize: 15),
+      ),
+      content: const Text(
+        '블루투스가 꺼져 있습니다. 설정에서 켜주세요.',
+        style: TextStyle(color: Colors.white54, fontSize: 13, height: 1.5),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('닫기', style: TextStyle(color: Colors.white38)),
+        ),
+        TextButton(
+          onPressed: () async {
+            Navigator.pop(ctx);
+            if (Platform.isMacOS) {
+              // macOS 시스템 환경설정 → Bluetooth 패널 직접 열기
+              await Process.run('open', [
+                'x-apple.systempreferences:com.apple.preference.bluetooth',
+              ]);
+            }
+          },
+          child: const Text('Bluetooth 설정 열기',
+              style: TextStyle(color: Colors.white70)),
+        ),
+      ],
+    ),
+  );
+}
+
 class ConnectScreen extends ConsumerWidget {
   const ConnectScreen({super.key});
 
@@ -13,6 +50,15 @@ class ConnectScreen extends ConsumerWidget {
     final connected = state.connected;
     final scanning = state.connection == ConnectionStatus.scanning ||
         state.connection == ConnectionStatus.connecting;
+
+    // Bluetooth OFF 감지 → 안내 다이얼로그 (BLE 모드일 때만)
+    ref.listen<ConnectState>(connectProvider, (prev, next) {
+      if (next.connection == ConnectionStatus.bluetoothOff &&
+          prev?.connection != ConnectionStatus.bluetoothOff &&
+          next.mode == ConnectMode.ble) {
+        _showBluetoothOffDialog(context);
+      }
+    });
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
