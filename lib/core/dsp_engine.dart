@@ -205,11 +205,22 @@ class DspEngine {
 
   // ── ADAU1701 고정소수점 ────────────────────────────────────────
 
-  // 5.23 — PEQ 계수, gain 선형값
+  // 5.23 — ADAU1701 PEQ 계수·gain 선형값 (28bit 유효)
   static int toFixed523(double value) {
     final clamped = value.clamp(-16.0, 15.9999999);
-    int fixedVal = (clamped * 8388608).round();
+    int fixedVal = (clamped * 8388608).round(); // × 2^23
     if (fixedVal < 0) fixedVal = (0x10000000 + fixedVal) & 0x0FFFFFFF;
+    return fixedVal;
+  }
+
+  // ── ADAU1466 고정소수점 ────────────────────────────────────────
+
+  // 5.27 — ADAU1466 PEQ 계수·gain 선형값 (32bit 전체 사용)
+  // ADAU1701의 5.23과 달리 32bit 전체가 유효 (상위 5bit 정수, 하위 27bit 소수)
+  static int toFixed527(double value) {
+    final clamped = value.clamp(-16.0, 15.9999999);
+    int fixedVal = (clamped * 134217728).round(); // × 2^27
+    if (fixedVal < 0) fixedVal = fixedVal & 0xFFFFFFFF; // 32bit two's complement
     return fixedVal;
   }
 
@@ -227,26 +238,35 @@ class DspEngine {
   // [0xAA][addr_hi][addr_lo][data 20B = 5×4B][XOR][0x55] = 27바이트
   // ADAU1701 Safeload: 5개 PRAM 워드 원자 기록
 
-  // biquad 5계수 프레임
+  // ── ADAU1701 프레임 빌더 (5.23) ──────────────────────────────
+
+  // biquad 5계수 프레임 (ADAU1701 — 5.23)
   static Uint8List buildBleFrame(BiquadCoefficients coeff, int pramAddr) {
     final vals = [coeff.b0, coeff.b1, coeff.b2, coeff.a1, coeff.a2];
     return _buildFrame(pramAddr, vals.map(toFixed523).toList());
   }
 
-  // gain 단일 계수 프레임 (선형 비율, 5.23)
-  // addr = SigmaStudio gain 셀 주소 (TODO: .dspproj 확인)
+  // gain 단일 계수 프레임 (ADAU1701 — 5.23)
   static Uint8List buildGainFrame(double gainLinear, int pramAddr) {
-    return _buildFrame(pramAddr, [
-      toFixed523(gainLinear), 0, 0, 0, 0,
-    ]);
+    return _buildFrame(pramAddr, [toFixed523(gainLinear), 0, 0, 0, 0]);
   }
 
-  // delay 프레임 (샘플 카운트, 28.0 정수)
-  // addr = SigmaStudio delay 셀 주소 (TODO: .dspproj 확인)
+  // delay 프레임 (ADAU1701/1466 공용 — 28.0 샘플 카운트)
   static Uint8List buildDelayFrame(double delayMs, int pramAddr) {
-    return _buildFrame(pramAddr, [
-      toSampleCount(delayMs), 0, 0, 0, 0,
-    ]);
+    return _buildFrame(pramAddr, [toSampleCount(delayMs), 0, 0, 0, 0]);
+  }
+
+  // ── ADAU1466 프레임 빌더 (5.27) ──────────────────────────────
+
+  // biquad 5계수 프레임 (ADAU1466 — 5.27)
+  static Uint8List buildBleFrame1466(BiquadCoefficients coeff, int pramAddr) {
+    final vals = [coeff.b0, coeff.b1, coeff.b2, coeff.a1, coeff.a2];
+    return _buildFrame(pramAddr, vals.map(toFixed527).toList());
+  }
+
+  // gain 단일 계수 프레임 (ADAU1466 — 5.27)
+  static Uint8List buildGainFrame1466(double gainLinear, int pramAddr) {
+    return _buildFrame(pramAddr, [toFixed527(gainLinear), 0, 0, 0, 0]);
   }
 
   static Uint8List _buildFrame(int pramAddr, List<int> words5) {
