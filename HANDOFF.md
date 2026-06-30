@@ -36,7 +36,7 @@
 | 항목 | 상태 |
 |---|---|
 | JAB4 + ICP5 브링업 | ✅ 해결 — VMware USB 패스스루 한계였음. 실물 Windows PC에서 정상 인식. 코드 이슈 아님, 작업 종료 |
-| ADAU1466 어댑터 | stub, 보드 도착 대기 |
+| ADAU1466 어댑터 | ✅ 구현 완료 — writeGain/Delay 확정 (Volume SPI 검증, Delay 추정). PEQ/XO 5.27 패턴 구현, 주소 미확정 (SigmaStudio export 필요) |
 | Pro 포트 자동감지 | ✅ 완료 — 시스템 가상 포트 필터링 + ICP5/CH34x 자동 선택 구현 |
 | 보드 자동탐지 (BLE) | ✅ 완료 — DetectedBoard, advName+fff0 탐지, systemProfileProvider core 이동 |
 
@@ -50,7 +50,7 @@
 | 모바일 위상정합/감도매칭 이식 | ✅ 가능 | 2단계 모바일 완성도 상승 |
 | Closed Loop 모바일 적용 확인/구현 | ✅ 가능 | 미확인 상태 — 진단 필요 |
 | Pro 2단계 잔여 10% 확인 | ✅ 가능 | 무엇이 빠졌는지 진단 필요 |
-| ADAU1466 어댑터 구현 | ❌ 보드 도착 대기 | 물리적 전제조건 |
+| ADAU1466 어댑터 구현 | ✅ 완료 — SigmaStudio PEQ/XO 주소 확인 후 _peqBase/_xoBase 교체 필요 | |
 | Modular Tuning Plate 출원 | ❌ 설계 확정 대기 | 외부 공개 전 필수 |
 
 ---
