@@ -158,7 +158,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
             Row(
               children: [
                 const Text('MEASUREMENT MIC',
-                    style: TextStyle(color: Colors.white, fontSize: 13,
+                    style: TextStyle(color: Colors.white, fontSize: 16,
                         fontWeight: FontWeight.w200, letterSpacing: 4)),
                 const Spacer(),
                 Container(
@@ -178,8 +178,8 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                         : 'MEASURING...',
                     style: TextStyle(
                       color: measState.status == MeasurementStatus.done
-                          ? Colors.white : Colors.white38,
-                      fontSize: 9, letterSpacing: 2,
+                          ? Colors.white : Colors.white60,
+                      fontSize: 11, letterSpacing: 2,
                     ),
                   ),
                 ),
@@ -189,7 +189,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
 
             // 마이크 기종 선택
             const Text('MODEL',
-                style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+                style: TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 3)),
             const SizedBox(height: 10),
             SizedBox(
               height: 36,
@@ -212,8 +212,8 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                       child: Center(
                         child: Text(m.name,
                             style: TextStyle(
-                              color: selected ? Colors.white : Colors.white38,
-                              fontSize: 10, letterSpacing: 1,
+                              color: selected ? Colors.white : Colors.white60,
+                              fontSize: 12, letterSpacing: 1,
                             )),
                       ),
                     ),
@@ -238,10 +238,10 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(mic.name,
-                          style: const TextStyle(color: Colors.white, fontSize: 13, letterSpacing: 2)),
+                          style: const TextStyle(color: Colors.white, fontSize: 15, letterSpacing: 2)),
                       const SizedBox(height: 3),
                       Text('${mic.manufacturer}  ·  ${mic.capsule}  ·  ${mic.connector}',
-                          style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                          style: const TextStyle(color: Colors.white60, fontSize: 12)),
                     ],
                   ),
                 ],
@@ -251,7 +251,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
 
             // SCF 교정파일
             const Text('CALIBRATION FILE (SCF)',
-                style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+                style: TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 3)),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -270,8 +270,8 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                             ? micState.scfPath!.split('/').last
                             : mic.needsScf ? 'REQUIRED' : 'OPTIONAL',
                         style: TextStyle(
-                          color: micState.scfLoaded ? Colors.white : Colors.white24,
-                          fontSize: 10,
+                          color: micState.scfLoaded ? Colors.white : Colors.white54,
+                          fontSize: 12,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -290,7 +290,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                     ),
                     child: const Center(
                       child: Text('LOAD',
-                          style: TextStyle(color: Colors.white, fontSize: 10, letterSpacing: 2)),
+                          style: TextStyle(color: Colors.white, fontSize: 13, letterSpacing: 2)),
                     ),
                   ),
                 ),
@@ -308,7 +308,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
             // Bode plot (측정 결과)
             if (measState.frequencyResponse.isNotEmpty) ...[
               const Text('FREQUENCY RESPONSE',
-                  style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+                  style: TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 3)),
               const SizedBox(height: 8),
               _BodePlot(response: measState.frequencyResponse),
               const SizedBox(height: 24),
@@ -330,7 +330,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                     ),
                     const SizedBox(width: 12),
                     Text(measState.message,
-                        style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                        style: const TextStyle(color: Colors.white70, fontSize: 13)),
                   ],
                 ),
               ),
@@ -388,8 +388,8 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                               : 'START MEASUREMENT',
                           style: TextStyle(
                             color: isMeasuring ? Colors.white24
-                                : (micState.scfLoaded || !mic.needsScf) ? Colors.white : Colors.white38,
-                            fontSize: 11, letterSpacing: 3,
+                                : (micState.scfLoaded || !mic.needsScf) ? Colors.white : Colors.white60,
+                            fontSize: 13, letterSpacing: 3,
                           ),
                         ),
                       ),
@@ -409,7 +409,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
                       ),
                       child: const Center(
                         child: Text('RESET',
-                            style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+                            style: TextStyle(color: Colors.white60, fontSize: 12, letterSpacing: 2)),
                       ),
                     ),
                   ),
@@ -498,7 +498,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('RECOMMENDED CROSSOVERS',
-              style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+              style: TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 3)),
           const SizedBox(height: 10),
           ...List.generate(measState.recommendedCrossovers.length, (i) {
             final freq = measState.recommendedCrossovers[i];
@@ -509,11 +509,11 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
               child: Row(
                 children: [
                   Text('$lowerName / $upperName',
-                      style: const TextStyle(color: Colors.white54, fontSize: 10)),
+                      style: const TextStyle(color: Colors.white70, fontSize: 12)),
                   const Spacer(),
                   Text(
                     freq != null ? '${freq.round()} Hz' : '—',
-                    style: const TextStyle(color: Colors.white, fontSize: 11, letterSpacing: 1),
+                    style: const TextStyle(color: Colors.white, fontSize: 14, letterSpacing: 1),
                   ),
                 ],
               ),
@@ -521,7 +521,7 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
           }),
           const SizedBox(height: 4),
           const Text('자동으로 DSP에 적용되었습니다',
-              style: TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 1)),
+              style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 1)),
         ],
       ),
     );
@@ -547,8 +547,8 @@ class _ModeToggle extends StatelessWidget {
         ),
         child: Text(label,
             style: TextStyle(
-              color: selected ? Colors.white : Colors.white38,
-              fontSize: 9, letterSpacing: 2,
+              color: selected ? Colors.white : Colors.white60,
+              fontSize: 11, letterSpacing: 2,
             )),
       ),
     );

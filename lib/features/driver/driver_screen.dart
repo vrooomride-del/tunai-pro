@@ -58,7 +58,7 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('DRIVER & SYSTEM', style: TextStyle(color: Colors.white70, fontSize: 11, letterSpacing: 3)),
+      const Text('DRIVER & SYSTEM', style: TextStyle(color: Colors.white, fontSize: 14, letterSpacing: 3)),
       const SizedBox(height: 16),
       Row(children: [
         _Tab(label: 'DRIVERS', selected: tab == 0, onTap: () => onTab(0)),
@@ -86,7 +86,7 @@ class _Tab extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
         color: selected ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
       ),
-      child: Text(label, style: TextStyle(color: selected ? Colors.white : Colors.white38, fontSize: 10, letterSpacing: 1.5)),
+      child: Text(label, style: TextStyle(color: selected ? Colors.white : Colors.white60, fontSize: 13, letterSpacing: 1.5)),
     ),
   );
 }
@@ -113,8 +113,8 @@ class _DriversTab extends ConsumerWidget {
         child: const Column(children: [
           Icon(Icons.speaker, color: Colors.white12, size: 40),
           SizedBox(height: 12),
-          Text('드라이버를 추가하세요', style: TextStyle(color: Colors.white24, fontSize: 12)),
-          Text('FRD/ZMA 파일 임포트 또는 직접 측정', style: TextStyle(color: Colors.white12, fontSize: 10)),
+          Text('드라이버를 추가하세요', style: TextStyle(color: Colors.white54, fontSize: 14)),
+          Text('FRD/ZMA 파일 임포트 또는 직접 측정', style: TextStyle(color: Colors.white38, fontSize: 12)),
         ]),
       ),
     ]),
@@ -133,7 +133,7 @@ class _AddBtn extends StatelessWidget {
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(border: Border.all(color: Colors.white24), borderRadius: BorderRadius.circular(4)),
-      child: Text(label, style: const TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1)),
+      child: Text(label, style: const TextStyle(color: Colors.white70, fontSize: 13, letterSpacing: 1)),
     ),
   );
 }
@@ -235,9 +235,9 @@ class _DriverCardState extends ConsumerState<_DriverCard> {
           child: Padding(padding: const EdgeInsets.all(14), child: Row(children: [
             Container(width: 8, height: 8, decoration: BoxDecoration(color: roleColor, shape: BoxShape.circle)),
             const SizedBox(width: 10),
-            Text(d.name, style: const TextStyle(color: Colors.white, fontSize: 12, letterSpacing: 1.5)),
+            Text(d.name, style: const TextStyle(color: Colors.white, fontSize: 15, letterSpacing: 1.5)),
             const SizedBox(width: 8),
-            Text(d.role.name.toUpperCase(), style: TextStyle(color: roleColor, fontSize: 9, letterSpacing: 1)),
+            Text(d.role.name.toUpperCase(), style: TextStyle(color: roleColor, fontSize: 11, letterSpacing: 1)),
             const Spacer(),
             if (d.hasFrd) const Icon(Icons.equalizer, color: Colors.white38, size: 14),
             if (d.hasZma) const Icon(Icons.show_chart, color: Colors.white38, size: 14),
@@ -265,12 +265,12 @@ class _DriverCardState extends ConsumerState<_DriverCard> {
             const Text(
               'FRD: 주파수 응답 파일 (.frd/.txt) — REW, ARTA, Room EQ Wizard 등\n'
               'ZMA: 임피던스 파일 (.zma/.txt) — 선택사항, T/S 파라미터 자동 추출',
-              style: TextStyle(color: Colors.white24, fontSize: 9, height: 1.5),
+              style: TextStyle(color: Colors.white54, fontSize: 11, height: 1.5),
             ),
             const SizedBox(height: 4),
             const Text(
               'FRD/ZMA 없이 아래 T/S 파라미터만으로도 크로스오버 추천 가능합니다',
-              style: TextStyle(color: Colors.white38, fontSize: 9, height: 1.4),
+              style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.4),
             ),
             const SizedBox(height: 12),
             const Divider(color: Colors.white12, height: 1),
@@ -281,7 +281,7 @@ class _DriverCardState extends ConsumerState<_DriverCard> {
               onTap: () => setState(() => _showTsInput = !_showTsInput),
               child: Row(children: [
                 Text(d.hasTs ? 'T/S PARAMETERS' : 'T/S 파라미터 직접 입력',
-                    style: const TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 2)),
+                    style: const TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 2)),
                 const Spacer(),
                 Icon(_showTsInput ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                     color: Colors.white24, size: 14),
@@ -317,13 +317,13 @@ class _DriverCardState extends ConsumerState<_DriverCard> {
                   ),
                   child: const Center(child: Text(
                     '이 T/S 파라미터로 저장 및 크로스오버 추천',
-                    style: TextStyle(color: Colors.white60, fontSize: 10, letterSpacing: 0.5),
+                    style: TextStyle(color: Colors.white, fontSize: 13, letterSpacing: 0.5),
                   )),
                 ),
               ),
             ],
 
-            if (_status.isNotEmpty) ...[const SizedBox(height: 8), Text(_status, style: const TextStyle(color: Colors.white38, fontSize: 10))],
+            if (_status.isNotEmpty) ...[const SizedBox(height: 8), Text(_status, style: const TextStyle(color: Colors.white60, fontSize: 12))],
             if (d.hasFrd) ...[
               const SizedBox(height: 12),
               _FrdGraph(frdData: d.frdData),
@@ -348,7 +348,7 @@ class _ImportBtn extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
         color: loaded ? Colors.white.withValues(alpha: 0.05) : Colors.transparent,
       ),
-      child: Center(child: Text(label, style: TextStyle(color: loaded ? Colors.white60 : Colors.white38, fontSize: 10, letterSpacing: 1))),
+      child: Center(child: Text(label, style: TextStyle(color: loaded ? Colors.white70 : Colors.white60, fontSize: 12, letterSpacing: 1))),
     ),
   );
 }
@@ -362,7 +362,7 @@ class _TsField extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(label, style: const TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 1)),
+      Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 1)),
       const SizedBox(height: 4),
       TextField(
         controller: controller,
@@ -388,8 +388,8 @@ class _TsRow extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 2),
     child: Row(children: [
-      SizedBox(width: 40, child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 10))),
-      Text(value, style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w500)),
+      SizedBox(width: 40, child: Text(label, style: const TextStyle(color: Colors.white60, fontSize: 12))),
+      Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
     ]),
   );
 }
@@ -538,7 +538,7 @@ class _EnclosureTabState extends ConsumerState<_EnclosureTab> {
   Widget _encField(String label, TextEditingController ctrl) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(label, style: const TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 1)),
+      Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 1)),
       const SizedBox(height: 4),
       TextField(
         controller: ctrl, onChanged: (_) => setState(() {}),
@@ -924,7 +924,7 @@ class _CrossoverTabState extends ConsumerState<_CrossoverTab> {
   Widget _distField(String label, TextEditingController ctrl) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(label, style: const TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 1)),
+      Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 1)),
       const SizedBox(height: 4),
       TextField(
         controller: ctrl,

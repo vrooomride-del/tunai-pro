@@ -168,7 +168,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
             child: Row(
               children: [
                 const Text('COMMUNITY',
-                    style: TextStyle(color: Colors.white, fontSize: 14,
+                    style: TextStyle(color: Colors.white, fontSize: 16,
                         fontWeight: FontWeight.w200, letterSpacing: 6)),
                 const Spacer(),
                 GestureDetector(
@@ -180,7 +180,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: const Text('SHARE DSP',
-                        style: TextStyle(color: Colors.white54, fontSize: 9, letterSpacing: 2)),
+                        style: TextStyle(color: Colors.white70, fontSize: 11, letterSpacing: 2)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -201,8 +201,8 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                     child: Text(
                       auth.isLoggedIn ? auth.nickname ?? 'ME' : 'LOGIN',
                       style: TextStyle(
-                        color: auth.isLoggedIn ? Colors.white38 : Colors.white,
-                        fontSize: 9, letterSpacing: 2,
+                        color: auth.isLoggedIn ? Colors.white60 : Colors.white,
+                        fontSize: 11, letterSpacing: 2,
                       ),
                     ),
                   ),
@@ -219,8 +219,8 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
               indicatorColor: Colors.white,
               indicatorWeight: 1,
               labelColor: Colors.white,
-              unselectedLabelColor: Colors.white38,
-              labelStyle: const TextStyle(fontSize: 9, letterSpacing: 2),
+              unselectedLabelColor: Colors.white60,
+              labelStyle: const TextStyle(fontSize: 12, letterSpacing: 2),
               tabs: const [Tab(text: 'PRESETS'), Tab(text: 'BOARD')],
             ),
           ),
@@ -252,7 +252,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                               color: Colors.white24, strokeWidth: 1))
                           : _presets.isEmpty
                               ? const Center(child: Text('프리셋이 없습니다.',
-                                    style: TextStyle(color: Colors.white38)))
+                                    style: TextStyle(color: Colors.white60)))
                               : ListView.separated(
                                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
                                   itemCount: _presets.length,
@@ -273,11 +273,11 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                                               children: [
                                                 Text(p['title'] ?? '',
                                                     style: const TextStyle(
-                                                        color: Colors.white, fontSize: 13)),
+                                                        color: Colors.white, fontSize: 15)),
                                                 const SizedBox(height: 4),
                                                 Text('by ${p['nickname'] ?? ''}  ·  ↓${p['downloads'] ?? 0}  ·  ♥${p['likes'] ?? 0}',
                                                     style: const TextStyle(
-                                                        color: Colors.white38, fontSize: 10)),
+                                                        color: Colors.white60, fontSize: 12)),
                                               ],
                                             ),
                                           ),
@@ -292,7 +292,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                                               ),
                                               child: const Text('APPLY',
                                                   style: TextStyle(color: Colors.white,
-                                                      fontSize: 9, letterSpacing: 2)),
+                                                      fontSize: 11, letterSpacing: 2)),
                                             ),
                                           ),
                                         ],
@@ -342,7 +342,7 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                               color: Colors.white24, strokeWidth: 1))
                           : _posts.isEmpty
                               ? const Center(child: Text('게시글이 없습니다.',
-                                    style: TextStyle(color: Colors.white38)))
+                                    style: TextStyle(color: Colors.white60)))
                               : ListView.separated(
                                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
                                   itemCount: _posts.length,
@@ -363,19 +363,19 @@ class _ProCommunityScreenState extends ConsumerState<ProCommunityScreen>
                                             ),
                                             child: Text(p['category'] ?? '',
                                                 style: const TextStyle(
-                                                    color: Colors.white38, fontSize: 9)),
+                                                    color: Colors.white60, fontSize: 11)),
                                           ),
                                           const SizedBox(width: 10),
                                           Expanded(
                                             child: Text(p['title'] ?? '',
                                                 style: const TextStyle(
-                                                    color: Colors.white, fontSize: 12),
+                                                    color: Colors.white, fontSize: 14),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis),
                                           ),
                                           Text('${p['nickname'] ?? ''}',
                                               style: const TextStyle(
-                                                  color: Colors.white38, fontSize: 10)),
+                                                  color: Colors.white60, fontSize: 12)),
                                         ],
                                       ),
                                     );
@@ -508,7 +508,7 @@ class ProProfileScreen extends ConsumerWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const Text('PROFILE',
-                        style: TextStyle(color: Colors.white38, fontSize: 13, letterSpacing: 4)),
+                        style: TextStyle(color: Colors.white60, fontSize: 15, letterSpacing: 4)),
                     const SizedBox(height: 32),
                     GestureDetector(
                       onTap: () => showDialog(context: context, builder: (_) => const Dialog(child: AuthScreen())),
@@ -519,7 +519,7 @@ class ProProfileScreen extends ConsumerWidget {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: const Text('LOGIN',
-                            style: TextStyle(color: Colors.white, fontSize: 12, letterSpacing: 4)),
+                            style: TextStyle(color: Colors.white, fontSize: 14, letterSpacing: 4)),
                       ),
                     ),
                   ],
@@ -542,7 +542,7 @@ class _LoggedInProfile extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('PROFILE',
-              style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 4)),
+              style: TextStyle(color: Colors.white60, fontSize: 12, letterSpacing: 4)),
           const SizedBox(height: 24),
           Row(
             children: [
@@ -562,7 +562,7 @@ class _LoggedInProfile extends ConsumerWidget {
                       style: const TextStyle(color: Colors.white, fontSize: 18)),
                   const SizedBox(height: 4),
                   Text(auth.email ?? '',
-                      style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                      style: const TextStyle(color: Colors.white60, fontSize: 13)),
                 ],
               ),
             ],
@@ -577,7 +577,7 @@ class _LoggedInProfile extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: const Text('LOGOUT',
-                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 2)),
+                  style: TextStyle(color: Colors.white60, fontSize: 12, letterSpacing: 2)),
             ),
           ),
         ],
@@ -605,7 +605,7 @@ class _SortBtn extends StatelessWidget {
       ),
       child: Text(label,
           style: TextStyle(
-            color: selected ? Colors.white : Colors.white38, fontSize: 10)),
+            color: selected ? Colors.white : Colors.white60, fontSize: 12)),
     ),
   );
 }

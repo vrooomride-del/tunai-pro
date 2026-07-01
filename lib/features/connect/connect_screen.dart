@@ -105,7 +105,7 @@ class ConnectScreen extends ConsumerWidget {
             const SizedBox(height: 20),
 
             const Text('DSP CONNECTION',
-                style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 3)),
+                style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 3)),
             const SizedBox(height: 16),
 
             // ── UART 포트 선택 ───────────────────────────────────────────
@@ -120,14 +120,14 @@ class ConnectScreen extends ConsumerWidget {
                   value: state.selectedPort,
                   hint: Text(
                     state.ports.isEmpty ? 'NO PORTS DETECTED' : 'SELECT PORT (ICP5 / CH34x)',
-                    style: const TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 1),
+                    style: const TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 1),
                   ),
                   dropdownColor: const Color(0xFF111111),
                   underline: const SizedBox(),
                   isExpanded: true,
                   items: state.ports.map((p) => DropdownMenuItem(
                     value: p,
-                    child: Text(p, style: const TextStyle(color: Colors.white, fontSize: 11)),
+                    child: Text(p, style: const TextStyle(color: Colors.white, fontSize: 13)),
                   )).toList(),
                   onChanged: connected ? null : (v) => ctrl.selectPort(v!),
                 ),
@@ -145,7 +145,7 @@ class ConnectScreen extends ConsumerWidget {
                 ),
                 child: const Text(
                   'ICP5 BLE 동글이 Remote 모드(SW1=②)로 설정되어 있는지 확인하세요.',
-                  style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.6),
+                  style: TextStyle(color: Colors.white60, fontSize: 12, height: 1.6),
                 ),
               ),
               const SizedBox(height: 12),
@@ -174,7 +174,7 @@ class ConnectScreen extends ConsumerWidget {
                       color: connected
                           ? Colors.black
                           : scanning ? Colors.white38 : Colors.white,
-                      fontSize: 12, letterSpacing: 3,
+                      fontSize: 14, letterSpacing: 3,
                     ),
                   ),
                 ),
@@ -198,7 +198,7 @@ class ConnectScreen extends ConsumerWidget {
                   Expanded(child: Text(
                     'ADAU1466 보드가 탐지됐습니다. 현재 지원 준비 중입니다.\n'
                     'ADAU1701(JAB4) 보드에서 사용 가능합니다.',
-                    style: TextStyle(color: Colors.amber, fontSize: 10, height: 1.5),
+                    style: TextStyle(color: Colors.amber, fontSize: 12, height: 1.5),
                   )),
                 ]),
               ),
@@ -215,7 +215,7 @@ class ConnectScreen extends ConsumerWidget {
                   SizedBox(width: 8),
                   Expanded(child: Text(
                     '보드를 자동으로 식별하지 못했습니다. 아래 목록에서 직접 선택하세요.',
-                    style: TextStyle(color: Colors.white38, fontSize: 10, height: 1.5),
+                    style: TextStyle(color: Colors.white60, fontSize: 12, height: 1.5),
                   )),
                 ]),
               ),
@@ -235,7 +235,7 @@ class ConnectScreen extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('STATUS',
-                      style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 2)),
+                      style: TextStyle(color: Colors.white60, fontSize: 12, letterSpacing: 2)),
                   const SizedBox(height: 12),
                   _infoRow('MODE', state.mode == ConnectMode.ble ? 'BLE' : 'UART'),
                   _infoRow(
@@ -251,12 +251,12 @@ class ConnectScreen extends ConsumerWidget {
                     const Divider(color: Colors.white12, height: 1),
                     const SizedBox(height: 8),
                     const Text('AVAILABLE PORTS',
-                        style: TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 1)),
+                        style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 1)),
                     const SizedBox(height: 6),
                     ...state.ports.map((p) => Padding(
                       padding: const EdgeInsets.only(bottom: 3),
                       child: Text(p,
-                          style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                          style: const TextStyle(color: Colors.white60, fontSize: 12)),
                     )),
                   ],
                 ],
@@ -274,12 +274,12 @@ class ConnectScreen extends ConsumerWidget {
       children: [
         SizedBox(width: 70,
             child: Text(label,
-                style: const TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1))),
+                style: const TextStyle(color: Colors.white60, fontSize: 12, letterSpacing: 1))),
         Expanded(
           child: Text(value,
               style: TextStyle(
                 color: error ? Colors.redAccent : Colors.white,
-                fontSize: 10,
+                fontSize: 13,
               )),
         ),
       ],
@@ -307,8 +307,8 @@ class _ModeTab extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: active ? Colors.black : Colors.white38,
-          fontSize: 10,
+          color: active ? Colors.black : Colors.white60,
+          fontSize: 13,
           letterSpacing: 2,
           fontWeight: active ? FontWeight.w600 : FontWeight.w300,
         ),
