@@ -10,6 +10,7 @@ import '../../core/speaker_profile.dart';
 import '../../core/profiles/system_profile.dart';
 import '../../features/dsp/dsp_controller.dart';
 import '../../features/dsp/dsp_state.dart';
+import '../../core/ai_tuning_service.dart';
 
 class MicModel {
   final String id;
@@ -124,6 +125,37 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
   SpeakerProfileState _speakerProfile = const SpeakerProfileState();
   bool _profileSelected = false;
   bool _channelMode = false;
+  AiTuningResult? _aiResult;
+  bool _aiLoading = false;
+  bool _aiApplying = false;
+
+  Future<void> _autoAnalyze(MicMeasurementState measState) async {
+    if (_aiLoading) return;
+    setState(() { _aiLoading = true; _aiResult = null; });
+    final dspState = ref.read(dspProvider);
+    final systemProfile = ref.read(systemProfileProvider);
+    final result = await AiTuningService.suggest(
+      dspState: dspState,
+      userRequest: '측정된 주파수 응답을 분석하고 자연스럽고 균형잡힌 소리로 PEQ를 추천해줘',
+      frequencyResponse: measState.frequencyResponse.isEmpty ? null : measState.frequencyResponse,
+      speakerProfile: _speakerProfile.activeProfile,
+      systemProfile: systemProfile,
+    );
+    if (mounted) setState(() { _aiLoading = false; _aiResult = result; });
+  }
+
+  Future<void> _applyAiToDsp() async {
+    if (_aiResult == null || !_aiResult!.success) return;
+    setState(() => _aiApplying = true);
+    final dspCtrl = ref.read(dspProvider.notifier);
+    final outIdx = ref.read(dspProvider).selectedOutput;
+    for (final b in _aiResult!.bands) {
+      if (!b.enabled) continue;
+      dspCtrl.updateOutputBand(outIdx, b.index, b.toPeqBand());
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    if (mounted) setState(() => _aiApplying = false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +167,14 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
     final isMeasuring = measState.status == MeasurementStatus.playing ||
         measState.status == MeasurementStatus.recording ||
         measState.status == MeasurementStatus.analyzing;
+
+    ref.listen<MicMeasurementState>(micMeasurementProvider, (prev, next) {
+      if (prev?.status != MeasurementStatus.done &&
+          next.status == MeasurementStatus.done &&
+          next.frequencyResponse.isNotEmpty) {
+        _autoAnalyze(next);
+      }
+    });
 
     if (!_profileSelected) {
       return Scaffold(
@@ -310,8 +350,97 @@ class _MeasurementMicScreenState extends ConsumerState<MeasurementMicScreen> {
               const Text('FREQUENCY RESPONSE',
                   style: TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 3)),
               const SizedBox(height: 8),
-              _BodePlot(response: measState.frequencyResponse),
+              _BodePlot(
+                response: measState.frequencyResponse,
+                height: MediaQuery.of(context).size.height * 0.42,
+              ),
               const SizedBox(height: 24),
+            ],
+
+            // AI 분석 결과
+            if (_aiLoading)
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Row(children: [
+                  SizedBox(width: 14, height: 14,
+                      child: CircularProgressIndicator(color: Colors.white38, strokeWidth: 1)),
+                  SizedBox(width: 12),
+                  Text('AI가 주파수 응답을 분석 중입니다...',
+                      style: TextStyle(color: Colors.white60, fontSize: 13)),
+                ]),
+              ),
+            if (_aiResult != null) ...[
+              // 트위터 경고 — 항상 표시
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                  borderRadius: BorderRadius.circular(6),
+                  color: Colors.amber.withValues(alpha: 0.04),
+                ),
+                child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('⚠️ ', style: TextStyle(fontSize: 12)),
+                  Expanded(child: Text(
+                    'PEQ 값 조정 시 트위터 채널 게인을 크게 올리지 마세요. '
+                    '볼륨이 높은 상태에서 트위터가 손상될 수 있습니다.',
+                    style: TextStyle(color: Colors.amber, fontSize: 12, height: 1.5),
+                  )),
+                ]),
+              ),
+              const SizedBox(height: 12),
+              if (_aiResult!.success) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.white12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('AI 분석',
+                        style: TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 3)),
+                    const SizedBox(height: 8),
+                    Text(_aiResult!.analysis,
+                        style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.7)),
+                    if (_aiResult!.summary.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(_aiResult!.summary,
+                          style: const TextStyle(color: Colors.white60, fontSize: 12, height: 1.5)),
+                    ],
+                  ]),
+                ),
+                const SizedBox(height: 10),
+                GestureDetector(
+                  onTap: _aiApplying ? null : _applyAiToDsp,
+                  child: Container(
+                    height: 48,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: _aiApplying ? Colors.white24 : Colors.white),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Center(child: Text(
+                      _aiApplying ? '적용 중...' : 'DSP에 적용',
+                      style: TextStyle(
+                        color: _aiApplying ? Colors.white38 : Colors.white,
+                        fontSize: 13, letterSpacing: 3,
+                      ),
+                    )),
+                  ),
+                ),
+              ] else
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text('AI 오류: ${_aiResult!.error}',
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                ),
+              const SizedBox(height: 16),
             ],
 
             // 상태 메시지
@@ -557,11 +686,12 @@ class _ModeToggle extends StatelessWidget {
 
 class _BodePlot extends StatelessWidget {
   final List<Map<String, double>> response;
-  const _BodePlot({required this.response});
+  final double height;
+  const _BodePlot({required this.response, this.height = 200});
 
   @override
   Widget build(BuildContext context) {
-    if (response.isEmpty) return const SizedBox(height: 200);
+    if (response.isEmpty) return SizedBox(height: height);
 
     final spots = response.map((r) {
       final logFreq = log(r['frequency']!) / log(10);
@@ -569,7 +699,7 @@ class _BodePlot extends StatelessWidget {
     }).toList();
 
     return Container(
-      height: 200,
+      height: height,
       padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
       decoration: BoxDecoration(
         border: Border.all(color: Colors.white12),
