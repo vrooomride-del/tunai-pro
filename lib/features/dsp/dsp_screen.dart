@@ -54,6 +54,7 @@ class DspScreen extends ConsumerWidget {
           // ── 보드 선택 배너 ───────────────────────────
           _BoardSelector(profile: profile, onSelect: (p) {
             ref.read(systemProfileProvider.notifier).state = p;
+            ctrl.resetBandsForProfile(p.maxPeqBands);
           }),
 
           // ── INPUT / OUTPUT 탭 선택 ───────────────────
@@ -425,7 +426,7 @@ class _OutputView extends ConsumerWidget {
                       style: const TextStyle(color: Colors.white54, fontSize: 13, letterSpacing: 1)),
                   const Spacer(),
                   GestureDetector(
-                    onTap: () => ctrl.resetOutputBands(outIdx),
+                    onTap: () => ctrl.resetOutputBands(outIdx, bandCount: maxBands),
                     child: const Text('RESET BANDS',
                         style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 1)),
                   ),

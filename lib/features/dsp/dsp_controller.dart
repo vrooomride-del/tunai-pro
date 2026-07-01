@@ -114,8 +114,15 @@ class DspController extends StateNotifier<DspState> {
     state = DspState.initial();
   }
 
-  void resetOutputBands(int idx) {
-    _updateOutput(idx, (o) => o.copyWith(bands: OutputChannel.defaultBands()));
+  void resetOutputBands(int idx, {int bandCount = 20}) {
+    _updateOutput(idx, (o) => o.copyWith(bands: OutputChannel.defaultBands(count: bandCount)));
+  }
+
+  void resetBandsForProfile(int maxPeqBands) {
+    state = state.copyWith(
+      outputs: state.outputs.map((o) =>
+          o.copyWith(bands: OutputChannel.defaultBands(count: maxPeqBands))).toList(),
+    );
   }
 
   // ── 프리셋 저장/불러오기 ──────────────────────────

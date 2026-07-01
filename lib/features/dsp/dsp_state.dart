@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 enum FilterType { peaking, lowShelf, highShelf, lowPass, highPass, notch, allPass }
 enum CrossoverType { bypass, butterworth12, butterworth24, lr12, lr24, lr48 }
@@ -28,6 +29,18 @@ extension CrossoverLabel on CrossoverType {
       case CrossoverType.lr48:           return 'LR48';
     }
   }
+}
+
+/// 20Hz ~ 20kHz를 count 구간으로 로그 균등 분할, i번째 주파수 반환
+double _logEqualFreq(int i, int count) {
+  const logMin = 1.30103;   // log10(20)
+  const logMax = 4.30103;   // log10(20000)
+  if (count <= 1) return 1000;
+  final logF = logMin + i * (logMax - logMin) / (count - 1);
+  // 소수점 불필요한 잡음 제거: 반올림 후 1 자리 유효숫자
+  final raw = pow(10, logF).toDouble();
+  return (raw / pow(10, (log(raw) / ln10).floor() - 1)).round() *
+      pow(10, (log(raw) / ln10).floor() - 1).toDouble();
 }
 
 /// 단일 PEQ 밴드
@@ -144,13 +157,8 @@ class OutputChannel {
     bands: (j['bands'] as List? ?? []).map((b) => PeqBand.fromJson(b)).toList(),
   );
 
-  static List<PeqBand> defaultBands() => List.generate(20, (i) {
-    const freqs = [
-      20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160,
-      200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600,
-    ];
-    return PeqBand(frequency: freqs[i].toDouble());
-  });
+  static List<PeqBand> defaultBands({int count = 20}) =>
+      List.generate(20, (i) => PeqBand(frequency: _logEqualFreq(i, count)));
 }
 
 /// 입력 채널 (2개: L/R)
@@ -194,10 +202,8 @@ class InputChannel {
     bands: (j['bands'] as List? ?? []).map((b) => PeqBand.fromJson(b)).toList(),
   );
 
-  static List<PeqBand> defaultBands() => List.generate(10, (i) {
-    const freqs = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-    return PeqBand(frequency: freqs[i].toDouble());
-  });
+  static List<PeqBand> defaultBands({int count = 10}) =>
+      List.generate(10, (i) => PeqBand(frequency: _logEqualFreq(i, count)));
 }
 
 /// 전체 DSP 상태
