@@ -162,7 +162,7 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                         ),
                         child: Text(q,
                             style: const TextStyle(
-                                color: Colors.white24, fontSize: 10)),
+                                color: Colors.white54, fontSize: 12)),
                       ),
                     )).toList(),
                   ),
@@ -186,12 +186,12 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text('ANALYSIS',
-                                style: TextStyle(color: Colors.white24,
-                                    fontSize: 8, letterSpacing: 2)),
+                                style: TextStyle(color: Colors.white54,
+                                    fontSize: 11, letterSpacing: 2)),
                             const SizedBox(height: 6),
                             Text(_result!.analysis,
                                 style: const TextStyle(
-                                    color: Colors.white54, fontSize: 13, height: 1.6)),
+                                    color: Colors.white70, fontSize: 14, height: 1.6)),
                           ],
                         ),
                       ),
@@ -217,7 +217,8 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                                 child: Center(
                                   child: Text('${s.index + 1}',
                                       style: const TextStyle(
-                                          color: Colors.white38, fontSize: 9)),
+                                          color: Colors.white60, fontSize: 12,
+                                          fontWeight: FontWeight.bold)),
                                 ),
                               ),
                               const SizedBox(width: 10),
@@ -231,13 +232,14 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                                       'Q${s.q.toStringAsFixed(2)}  '
                                       '${FilterType.values[s.type.clamp(0, 6)].label}',
                                       style: const TextStyle(
-                                          color: Colors.white, fontSize: 11,
-                                          fontFamily: 'monospace'),
+                                          color: Colors.white, fontSize: 13,
+                                          fontFamily: 'monospace',
+                                          fontWeight: FontWeight.w500),
                                     ),
                                     const SizedBox(height: 3),
                                     Text(s.reason,
                                         style: const TextStyle(
-                                            color: Colors.white38, fontSize: 10)),
+                                            color: Colors.white60, fontSize: 12)),
                                   ],
                                 ),
                               ),
@@ -259,8 +261,8 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                                     borderRadius: BorderRadius.circular(3),
                                   ),
                                   child: const Text('APPLY',
-                                      style: TextStyle(color: Colors.white38,
-                                          fontSize: 9, letterSpacing: 1)),
+                                      style: TextStyle(color: Colors.white60,
+                                          fontSize: 11, letterSpacing: 1)),
                                 ),
                               ),
                             ],

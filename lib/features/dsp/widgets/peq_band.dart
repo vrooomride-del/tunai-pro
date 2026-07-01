@@ -84,19 +84,20 @@ class _PeqBandEditorState extends State<PeqBandEditor> {
               children: [
                 Text('${widget.index + 1}',
                     style: TextStyle(
-                      color: b.enabled ? Colors.white : Colors.white24,
-                      fontSize: 11, letterSpacing: 1,
+                      color: b.enabled ? Colors.white : Colors.white38,
+                      fontSize: 13, letterSpacing: 1,
                       fontFamily: 'monospace',
+                      fontWeight: FontWeight.bold,
                     )),
                 const Spacer(),
                 GestureDetector(
                   onTap: () => widget.onChanged(b.copyWith(enabled: !b.enabled)),
                   child: Container(
-                    width: 10, height: 10,
+                    width: 12, height: 12,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: b.enabled ? Colors.white : Colors.transparent,
-                      border: Border.all(color: Colors.white38, width: 0.5),
+                      border: Border.all(color: Colors.white54, width: 0.5),
                     ),
                   ),
                 ),
@@ -176,8 +177,8 @@ class _InputField extends StatelessWidget {
     return Row(
       children: [
         Text(label, style: TextStyle(
-            color: enabled ? Colors.white38 : Colors.white12,
-            fontSize: 10, letterSpacing: 1)),
+            color: enabled ? Colors.white60 : Colors.white24,
+            fontSize: 12, letterSpacing: 1)),
         const SizedBox(width: 4),
         Expanded(
           child: Listener(
@@ -194,17 +195,18 @@ class _InputField extends StatelessWidget {
             controller: controller,
             enabled: enabled,
             style: TextStyle(
-                color: enabled ? Colors.white : Colors.white24,
-                fontSize: 12, fontFamily: 'monospace'),
+                color: enabled ? Colors.white : Colors.white38,
+                fontSize: 14, fontFamily: 'monospace',
+                fontWeight: FontWeight.w500),
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               border: UnderlineInputBorder(
-                  borderSide: BorderSide(color: Colors.white12, width: 0.5)),
+                  borderSide: BorderSide(color: Colors.white24, width: 0.5)),
               enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: Colors.white12, width: 0.5)),
+                  borderSide: BorderSide(color: Colors.white24, width: 0.5)),
               focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: Colors.white38, width: 0.5)),
+                  borderSide: BorderSide(color: Colors.white54, width: 0.5)),
             ),
             keyboardType: TextInputType.text,
             onSubmitted: onSubmit,
@@ -245,8 +247,8 @@ class _SliderInput extends StatelessWidget {
     return Row(
       children: [
         Text(label, style: TextStyle(
-            color: enabled ? Colors.white38 : Colors.white12,
-            fontSize: 10, letterSpacing: 1)),
+            color: enabled ? Colors.white60 : Colors.white24,
+            fontSize: 12, letterSpacing: 1)),
         const SizedBox(width: 4),
         Expanded(
           child: Listener(
@@ -259,11 +261,11 @@ class _SliderInput extends StatelessWidget {
             } : null,
             child: SliderTheme(
               data: SliderThemeData(
-                activeTrackColor: enabled ? Colors.white : Colors.white12,
-                inactiveTrackColor: Colors.white12,
-                thumbColor: enabled ? Colors.white : Colors.white24,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
-                trackHeight: 1.5,
+                activeTrackColor: enabled ? Colors.white : Colors.white24,
+                inactiveTrackColor: Colors.white24,
+                thumbColor: enabled ? Colors.white : Colors.white38,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                trackHeight: 2,
                 overlayShape: SliderComponentShape.noOverlay,
               ),
               child: Slider(
@@ -286,8 +288,9 @@ class _SliderInput extends StatelessWidget {
             controller: controller,
             enabled: enabled,
             style: TextStyle(
-                color: enabled ? Colors.white : Colors.white24,
-                fontSize: 11, fontFamily: 'monospace'),
+                color: enabled ? Colors.white : Colors.white38,
+                fontSize: 13, fontFamily: 'monospace',
+                fontWeight: FontWeight.w500),
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
@@ -319,8 +322,8 @@ class _TypeSelector extends StatelessWidget {
           decoration: BoxDecoration(
             border: Border.all(
               color: selected == t
-                  ? (enabled ? Colors.white : Colors.white38)
-                  : Colors.white12,
+                  ? (enabled ? Colors.white60 : Colors.white38)
+                  : Colors.white24,
               width: 0.5,
             ),
             borderRadius: BorderRadius.circular(2),
@@ -328,9 +331,9 @@ class _TypeSelector extends StatelessWidget {
           child: Text(t.label,
               style: TextStyle(
                 color: selected == t
-                    ? (enabled ? Colors.white : Colors.white38)
-                    : Colors.white24,
-                fontSize: 9, letterSpacing: 0.5,
+                    ? (enabled ? Colors.white : Colors.white54)
+                    : Colors.white38,
+                fontSize: 11, letterSpacing: 0.5,
               )),
         ),
       )).toList(),

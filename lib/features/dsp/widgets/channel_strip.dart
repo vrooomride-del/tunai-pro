@@ -68,7 +68,7 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
         padding: const EdgeInsets.all(12),
         clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
-          border: Border.all(color: sel ? Colors.white38 : Colors.white12),
+          border: Border.all(color: sel ? Colors.white54 : Colors.white12),
           borderRadius: BorderRadius.circular(6),
           color: sel ? Colors.white.withValues(alpha: 0.03) : Colors.transparent,
         ),
@@ -81,8 +81,10 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
                 Expanded(
                   child: Text(ch.name,
                       style: TextStyle(
-                        color: ch.muted ? Colors.white24 : Colors.white,
-                        fontSize: 13, letterSpacing: 2,
+                        color: ch.muted ? Colors.white38 : Colors.white,
+                        fontSize: 16,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.bold,
                       )),
                 ),
                 _IconBtn(
@@ -173,18 +175,18 @@ class _IconBtn extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 22, height: 22,
+          width: 24, height: 24,
           decoration: BoxDecoration(
             border: Border.all(
-                color: active ? activeColor : Colors.white24, width: 0.5),
+                color: active ? activeColor : Colors.white38, width: 0.5),
             borderRadius: BorderRadius.circular(3),
             color: active ? activeColor.withValues(alpha: 0.15) : Colors.transparent,
           ),
           child: Center(
             child: Text(label,
                 style: TextStyle(
-                  color: active ? activeColor : Colors.white24,
-                  fontSize: 11, letterSpacing: 0.5,
+                  color: active ? activeColor : Colors.white38,
+                  fontSize: 13, letterSpacing: 0.5,
                 )),
           ),
         ),
@@ -215,10 +217,10 @@ class _StripRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        SizedBox(width: 38,
+        SizedBox(width: 44,
             child: Text(label,
                 style: const TextStyle(
-                    color: Colors.white38, fontSize: 10, letterSpacing: 1))),
+                    color: Colors.white60, fontSize: 13, letterSpacing: 1))),
         Expanded(
           child: Listener(
             onPointerSignal: (event) {
@@ -230,10 +232,10 @@ class _StripRow extends StatelessWidget {
             child: SliderTheme(
               data: SliderThemeData(
                 activeTrackColor: Colors.white,
-                inactiveTrackColor: Colors.white12,
+                inactiveTrackColor: Colors.white24,
                 thumbColor: Colors.white,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
-                trackHeight: 1.5,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                trackHeight: 2,
                 overlayShape: SliderComponentShape.noOverlay,
               ),
               child: Slider(
@@ -244,15 +246,18 @@ class _StripRow extends StatelessWidget {
           ),
         ),
         SizedBox(
-          width: 48,
+          width: 58,
           child: TextField(
             controller: controller,
             style: const TextStyle(
-                color: Colors.white, fontSize: 11, fontFamily: 'monospace'),
+                color: Colors.white,
+                fontSize: 13,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w500),
             decoration: InputDecoration(
               isDense: true,
               suffix: Text(unit,
-                  style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                  style: const TextStyle(color: Colors.white60, fontSize: 12)),
               contentPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
               border: InputBorder.none,
             ),
@@ -275,10 +280,10 @@ class _XoChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final active = filter.type != CrossoverType.bypass;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
         border: Border.all(
-            color: active ? Colors.white24 : Colors.white12, width: 0.5),
+            color: active ? Colors.white38 : Colors.white12, width: 0.5),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Text(
@@ -286,8 +291,8 @@ class _XoChip extends StatelessWidget {
             ? '$label ${filter.type.label} ${filter.frequency.toStringAsFixed(0)}Hz'
             : '$label BYP',
         style: TextStyle(
-          color: active ? Colors.white54 : Colors.white24,
-          fontSize: 10, letterSpacing: 0.5,
+          color: active ? Colors.white70 : Colors.white38,
+          fontSize: 12, letterSpacing: 0.5,
         ),
       ),
     );
@@ -344,7 +349,7 @@ class _InputChannelStripState extends State<InputChannelStrip> {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          border: Border.all(color: sel ? Colors.white38 : Colors.white12),
+          border: Border.all(color: sel ? Colors.white54 : Colors.white12),
           borderRadius: BorderRadius.circular(6),
           color: sel ? Colors.white.withValues(alpha: 0.03) : Colors.transparent,
         ),
@@ -353,7 +358,10 @@ class _InputChannelStripState extends State<InputChannelStrip> {
           children: [
             Text(ch.name,
                 style: const TextStyle(
-                    color: Colors.white, fontSize: 13, letterSpacing: 2)),
+                    color: Colors.white,
+                    fontSize: 16,
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             _StripRow(
               label: 'GAIN', unit: 'dB',

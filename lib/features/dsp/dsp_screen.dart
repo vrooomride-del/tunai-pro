@@ -189,7 +189,7 @@ class _TopBar extends StatelessWidget {
                 borderRadius: BorderRadius.circular(3),
               ),
               child: const Text('UNSAVED',
-                  style: TextStyle(color: Colors.white38, fontSize: 8, letterSpacing: 1)),
+                  style: TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1)),
             ),
           ],
           const Spacer(),
@@ -204,8 +204,8 @@ class _TopBar extends StatelessWidget {
             ),
             child: Text(connected ? '● DSP' : '○ NO DSP',
                 style: TextStyle(
-                  color: connected ? Colors.white54 : Colors.white24,
-                  fontSize: 8, letterSpacing: 1,
+                  color: connected ? Colors.white70 : Colors.white38,
+                  fontSize: 11, letterSpacing: 1,
                 )),
           ),
           _Btn('LOAD', onLoad, dim: true),
@@ -239,8 +239,8 @@ class _Btn extends StatelessWidget {
       ),
       child: Text(label,
           style: TextStyle(
-            color: dim ? Colors.white38 : Colors.white,
-            fontSize: 9, letterSpacing: 2,
+            color: dim ? Colors.white54 : Colors.white,
+            fontSize: 11, letterSpacing: 2,
           )),
     ),
   );
@@ -343,9 +343,10 @@ class _Tab extends StatelessWidget {
       ),
       child: Text(label,
           style: TextStyle(
-            color: muted ? Colors.red.withValues(alpha: 0.5)
-                : selected ? Colors.white : Colors.white38,
-            fontSize: 11, letterSpacing: 1.5,
+            color: muted ? Colors.red.withValues(alpha: 0.6)
+                : selected ? Colors.white : Colors.white60,
+            fontSize: 13, letterSpacing: 1.5,
+            fontWeight: selected ? FontWeight.w500 : FontWeight.w300,
           )),
     ),
   );
@@ -403,7 +404,7 @@ class _OutputView extends StatelessWidget {
 
               // 크로스오버
               const Text('CROSSOVER',
-                  style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 3)),
+                  style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 3)),
               const SizedBox(height: 8),
               CrossoverEditor(
                 hpFilter: out.hpFilter,
@@ -417,15 +418,15 @@ class _OutputView extends StatelessWidget {
               Row(
                 children: [
                   const Text('PEQ',
-                      style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 3)),
+                      style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 3)),
                   const SizedBox(width: 12),
                   const Text('20 BANDS',
-                      style: TextStyle(color: Colors.white24, fontSize: 11, letterSpacing: 1)),
+                      style: TextStyle(color: Colors.white54, fontSize: 13, letterSpacing: 1)),
                   const Spacer(),
                   GestureDetector(
                     onTap: () => ctrl.resetOutputBands(outIdx),
                     child: const Text('RESET BANDS',
-                        style: TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 1)),
+                        style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 1)),
                   ),
                 ],
               ),
@@ -507,7 +508,7 @@ class _InputView extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               const Text('INPUT PEQ',
-                  style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+                  style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 3)),
               const SizedBox(height: 8),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -548,7 +549,7 @@ class _BoardSelector extends StatelessWidget {
       child: Row(
         children: [
           const Text('BOARD',
-              style: TextStyle(color: Colors.white24, fontSize: 8, letterSpacing: 3)),
+              style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 3)),
           const SizedBox(width: 16),
           ...kAllSystemProfiles.map((p) => _ProfileChip(
             label: p.displayName,
@@ -595,14 +596,14 @@ class _ProfileChip extends StatelessWidget {
           children: [
             Text(label,
                 style: TextStyle(
-                  color: selected ? Colors.white : Colors.white38,
-                  fontSize: 9, letterSpacing: 1,
+                  color: selected ? Colors.white : Colors.white60,
+                  fontSize: 11, letterSpacing: 1,
                   fontWeight: selected ? FontWeight.w500 : FontWeight.w300,
                 )),
             Text(chipLabel,
                 style: TextStyle(
-                  color: selected ? Colors.white38 : Colors.white12,
-                  fontSize: 7, letterSpacing: 1,
+                  color: selected ? Colors.white54 : Colors.white24,
+                  fontSize: 9, letterSpacing: 1,
                 )),
           ],
         ),
