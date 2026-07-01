@@ -353,13 +353,14 @@ class _Tab extends StatelessWidget {
 }
 
 // ── OUTPUT 뷰 ────────────────────────────────────────
-class _OutputView extends StatelessWidget {
+class _OutputView extends ConsumerWidget {
   final DspState state;
   final DspController ctrl;
   const _OutputView({required this.state, required this.ctrl});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final maxBands = ref.watch(systemProfileProvider).maxPeqBands;
     final outIdx = state.selectedOutput;
     final out = state.outputs[outIdx];
 
@@ -420,8 +421,8 @@ class _OutputView extends StatelessWidget {
                   const Text('PEQ',
                       style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 3)),
                   const SizedBox(width: 12),
-                  const Text('20 BANDS',
-                      style: TextStyle(color: Colors.white54, fontSize: 13, letterSpacing: 1)),
+                  Text('$maxBands BANDS',
+                      style: const TextStyle(color: Colors.white54, fontSize: 13, letterSpacing: 1)),
                   const Spacer(),
                   GestureDetector(
                     onTap: () => ctrl.resetOutputBands(outIdx),
@@ -439,16 +440,36 @@ class _OutputView extends StatelessWidget {
                   children: List.generate(4, (col) {
                     final bandIdx = row * 4 + col;
                     if (bandIdx >= out.bands.length) return const Expanded(child: SizedBox());
+                    final locked = bandIdx >= maxBands;
                     return Expanded(
                       child: Padding(
                         padding: EdgeInsets.only(right: col < 3 ? 5 : 0),
-                        child: PeqBandEditor(
-                          band: out.bands[bandIdx],
-                          index: bandIdx,
-                          selected: state.selectedBand == bandIdx,
-                          onChanged: (b) => ctrl.updateOutputBand(outIdx, bandIdx, b),
-                          onSelect: () => ctrl.selectBand(bandIdx),
-                        ),
+                        child: locked
+                            ? Tooltip(
+                                message: '이 보드는 $maxBands밴드까지 지원합니다',
+                                child: Opacity(
+                                  opacity: 0.35,
+                                  child: Stack(children: [
+                                    PeqBandEditor(
+                                      band: out.bands[bandIdx],
+                                      index: bandIdx,
+                                      selected: false,
+                                      onChanged: (_) {},
+                                      onSelect: () {},
+                                    ),
+                                    const Positioned.fill(child: ColoredBox(color: Colors.transparent)),
+                                    const Positioned(right: 4, top: 4,
+                                        child: Icon(Icons.lock_outline, color: Colors.white38, size: 10)),
+                                  ]),
+                                ),
+                              )
+                            : PeqBandEditor(
+                                band: out.bands[bandIdx],
+                                index: bandIdx,
+                                selected: state.selectedBand == bandIdx,
+                                onChanged: (b) => ctrl.updateOutputBand(outIdx, bandIdx, b),
+                                onSelect: () => ctrl.selectBand(bandIdx),
+                              ),
                       ),
                     );
                   }),

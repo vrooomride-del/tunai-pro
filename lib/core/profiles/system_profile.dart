@@ -44,6 +44,7 @@ class SystemProfile {
 
   int get channelCount => channels.length;
   bool get isAdau1466 => id == SystemProfileId.isobarik || id == SystemProfileId.tunaiReference;
+  int get maxPeqBands => isAdau1466 ? 20 : 10;
 }
 
 // ── 사전 정의 프로파일 ─────────────────────────────────────────
