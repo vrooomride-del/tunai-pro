@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import '../dsp_state.dart';
 
@@ -84,7 +85,7 @@ class _PeqBandEditorState extends State<PeqBandEditor> {
                 Text('${widget.index + 1}',
                     style: TextStyle(
                       color: b.enabled ? Colors.white : Colors.white24,
-                      fontSize: 9, letterSpacing: 1,
+                      fontSize: 11, letterSpacing: 1,
                       fontFamily: 'monospace',
                     )),
                 const Spacer(),
@@ -116,13 +117,14 @@ class _PeqBandEditorState extends State<PeqBandEditor> {
             ),
             const SizedBox(height: 4),
 
-            // Gain 슬라이더 + 입력
+            // Gain 슬라이더 + 입력 (휠 ±0.1dB)
             _SliderInput(
               label: 'dB',
               value: b.gainDb,
               min: -24, max: 24,
               controller: _gainCtrl,
               enabled: b.enabled,
+              scrollStep: 0.1,
               onChanged: (v) => widget.onChanged(b.copyWith(gainDb: v)),
               onSubmit: (v) {
                 final g = double.tryParse(v);
@@ -131,7 +133,7 @@ class _PeqBandEditorState extends State<PeqBandEditor> {
             ),
             const SizedBox(height: 4),
 
-            // Q 슬라이더 + 입력
+            // Q 슬라이더 + 입력 (휠 ±0.05)
             _SliderInput(
               label: 'Q',
               value: b.q,
@@ -139,6 +141,7 @@ class _PeqBandEditorState extends State<PeqBandEditor> {
               controller: _qCtrl,
               enabled: b.enabled,
               isLog: true,
+              scrollStep: 0.05,
               onChanged: (v) => widget.onChanged(b.copyWith(q: v)),
               onSubmit: (v) {
                 final q = double.tryParse(v);
@@ -174,15 +177,25 @@ class _InputField extends StatelessWidget {
       children: [
         Text(label, style: TextStyle(
             color: enabled ? Colors.white38 : Colors.white12,
-            fontSize: 8, letterSpacing: 1)),
+            fontSize: 10, letterSpacing: 1)),
         const SizedBox(width: 4),
         Expanded(
-          child: TextField(
+          child: Listener(
+            onPointerSignal: enabled ? (event) {
+              if (event is PointerScrollEvent) {
+                final dir = event.scrollDelta.dy > 0 ? -1.0 : 1.0;
+                final cur = double.tryParse(
+                  controller.text.replaceAll('k', '')) ?? 0;
+                final raw = controller.text.endsWith('k') ? cur * 1000 : cur;
+                onSubmit((raw + dir * 5.0).clamp(20, 20000).toStringAsFixed(0));
+              }
+            } : null,
+            child: TextField(
             controller: controller,
             enabled: enabled,
             style: TextStyle(
                 color: enabled ? Colors.white : Colors.white24,
-                fontSize: 10, fontFamily: 'monospace'),
+                fontSize: 12, fontFamily: 'monospace'),
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
@@ -197,6 +210,7 @@ class _InputField extends StatelessWidget {
             onSubmitted: onSubmit,
             inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.k\-]'))],
           ),
+          ),
         ),
       ],
     );
@@ -210,6 +224,7 @@ class _SliderInput extends StatelessWidget {
   final TextEditingController controller;
   final bool enabled;
   final bool isLog;
+  final double scrollStep;
   final Function(double) onChanged;
   final Function(String) onSubmit;
   const _SliderInput({
@@ -218,6 +233,7 @@ class _SliderInput extends StatelessWidget {
     required this.controller, required this.enabled,
     required this.onChanged, required this.onSubmit,
     this.isLog = false,
+    this.scrollStep = 0.1,
   });
 
   @override
@@ -230,28 +246,37 @@ class _SliderInput extends StatelessWidget {
       children: [
         Text(label, style: TextStyle(
             color: enabled ? Colors.white38 : Colors.white12,
-            fontSize: 8, letterSpacing: 1)),
+            fontSize: 10, letterSpacing: 1)),
         const SizedBox(width: 4),
         Expanded(
-          child: SliderTheme(
-            data: SliderThemeData(
-              activeTrackColor: enabled ? Colors.white : Colors.white12,
-              inactiveTrackColor: Colors.white12,
-              thumbColor: enabled ? Colors.white : Colors.white24,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
-              trackHeight: 1,
-              overlayShape: SliderComponentShape.noOverlay,
-            ),
-            child: Slider(
-              value: sliderVal.clamp(0.0, 1.0),
-              onChanged: enabled ? (v) {
-                if (isLog) {
-                  final logVal = log(min) + v * (log(max) - log(min));
-                  onChanged(exp(logVal));
-                } else {
-                  onChanged(min + v * (max - min));
-                }
-              } : null,
+          child: Listener(
+            onPointerSignal: enabled ? (event) {
+              if (event is PointerScrollEvent) {
+                final dir = event.scrollDelta.dy > 0 ? -1.0 : 1.0;
+                final newVal = (value + dir * scrollStep).clamp(min, max);
+                onChanged(newVal);
+              }
+            } : null,
+            child: SliderTheme(
+              data: SliderThemeData(
+                activeTrackColor: enabled ? Colors.white : Colors.white12,
+                inactiveTrackColor: Colors.white12,
+                thumbColor: enabled ? Colors.white : Colors.white24,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
+                trackHeight: 1.5,
+                overlayShape: SliderComponentShape.noOverlay,
+              ),
+              child: Slider(
+                value: sliderVal.clamp(0.0, 1.0),
+                onChanged: enabled ? (v) {
+                  if (isLog) {
+                    final logVal = log(min) + v * (log(max) - log(min));
+                    onChanged(exp(logVal));
+                  } else {
+                    onChanged(min + v * (max - min));
+                  }
+                } : null,
+              ),
             ),
           ),
         ),
@@ -262,7 +287,7 @@ class _SliderInput extends StatelessWidget {
             enabled: enabled,
             style: TextStyle(
                 color: enabled ? Colors.white : Colors.white24,
-                fontSize: 9, fontFamily: 'monospace'),
+                fontSize: 11, fontFamily: 'monospace'),
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
@@ -305,7 +330,7 @@ class _TypeSelector extends StatelessWidget {
                 color: selected == t
                     ? (enabled ? Colors.white : Colors.white38)
                     : Colors.white24,
-                fontSize: 7, letterSpacing: 0.5,
+                fontSize: 9, letterSpacing: 0.5,
               )),
         ),
       )).toList(),

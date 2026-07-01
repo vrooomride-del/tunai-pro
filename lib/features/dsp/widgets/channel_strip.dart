@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../dsp_state.dart';
 
@@ -81,7 +82,7 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
                   child: Text(ch.name,
                       style: TextStyle(
                         color: ch.muted ? Colors.white24 : Colors.white,
-                        fontSize: 10, letterSpacing: 2,
+                        fontSize: 13, letterSpacing: 2,
                       )),
                 ),
                 _IconBtn(
@@ -102,12 +103,13 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
             ),
             const SizedBox(height: 12),
 
-            // GAIN
+            // GAIN (휠 ±0.1dB)
             _StripRow(
               label: 'GAIN',
               unit: 'dB',
               value: ch.gainDb,
               min: -40, max: 12,
+              scrollStep: 0.1,
               controller: _gainCtrl,
               onChanged: widget.onGainChanged,
               onSubmit: (v) {
@@ -117,14 +119,15 @@ class _OutputChannelStripState extends State<OutputChannelStrip> {
             ),
             const SizedBox(height: 8),
 
-            // DELAY
+            // DELAY (휠 ±0.01ms)
             _StripRow(
               label: 'DLY',
               unit: 'ms',
               value: ch.delayMs,
               min: 0, max: 100,
-              controller: _delayCtrl,
               decimals: 2,
+              scrollStep: 0.01,
+              controller: _delayCtrl,
               onChanged: widget.onDelayChanged,
               onSubmit: (v) {
                 final d = double.tryParse(v);
@@ -181,7 +184,7 @@ class _IconBtn extends StatelessWidget {
             child: Text(label,
                 style: TextStyle(
                   color: active ? activeColor : Colors.white24,
-                  fontSize: 9, letterSpacing: 0.5,
+                  fontSize: 11, letterSpacing: 0.5,
                 )),
           ),
         ),
@@ -197,6 +200,7 @@ class _StripRow extends StatelessWidget {
   final double min, max;
   final TextEditingController controller;
   final int decimals;
+  final double scrollStep;
   final Function(double) onChanged;
   final Function(String) onSubmit;
 
@@ -204,30 +208,38 @@ class _StripRow extends StatelessWidget {
     required this.label, required this.unit,
     required this.value, required this.min, required this.max,
     required this.controller, required this.onChanged, required this.onSubmit,
-    this.decimals = 1,
+    this.decimals = 1, this.scrollStep = 0.1,
   });
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        SizedBox(width: 32,
+        SizedBox(width: 38,
             child: Text(label,
                 style: const TextStyle(
-                    color: Colors.white38, fontSize: 8, letterSpacing: 1))),
+                    color: Colors.white38, fontSize: 10, letterSpacing: 1))),
         Expanded(
-          child: SliderTheme(
-            data: SliderThemeData(
-              activeTrackColor: Colors.white,
-              inactiveTrackColor: Colors.white12,
-              thumbColor: Colors.white,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
-              trackHeight: 1,
-              overlayShape: SliderComponentShape.noOverlay,
-            ),
-            child: Slider(
-              value: ((value - min) / (max - min)).clamp(0.0, 1.0),
-              onChanged: (v) => onChanged(min + v * (max - min)),
+          child: Listener(
+            onPointerSignal: (event) {
+              if (event is PointerScrollEvent) {
+                final dir = event.scrollDelta.dy > 0 ? -1.0 : 1.0;
+                onChanged((value + dir * scrollStep).clamp(min, max));
+              }
+            },
+            child: SliderTheme(
+              data: SliderThemeData(
+                activeTrackColor: Colors.white,
+                inactiveTrackColor: Colors.white12,
+                thumbColor: Colors.white,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
+                trackHeight: 1.5,
+                overlayShape: SliderComponentShape.noOverlay,
+              ),
+              child: Slider(
+                value: ((value - min) / (max - min)).clamp(0.0, 1.0),
+                onChanged: (v) => onChanged(min + v * (max - min)),
+              ),
             ),
           ),
         ),
@@ -236,11 +248,11 @@ class _StripRow extends StatelessWidget {
           child: TextField(
             controller: controller,
             style: const TextStyle(
-                color: Colors.white, fontSize: 9, fontFamily: 'monospace'),
+                color: Colors.white, fontSize: 11, fontFamily: 'monospace'),
             decoration: InputDecoration(
               isDense: true,
               suffix: Text(unit,
-                  style: const TextStyle(color: Colors.white38, fontSize: 8)),
+                  style: const TextStyle(color: Colors.white38, fontSize: 10)),
               contentPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
               border: InputBorder.none,
             ),
@@ -275,7 +287,7 @@ class _XoChip extends StatelessWidget {
             : '$label BYP',
         style: TextStyle(
           color: active ? Colors.white54 : Colors.white24,
-          fontSize: 8, letterSpacing: 0.5,
+          fontSize: 10, letterSpacing: 0.5,
         ),
       ),
     );
@@ -341,7 +353,7 @@ class _InputChannelStripState extends State<InputChannelStrip> {
           children: [
             Text(ch.name,
                 style: const TextStyle(
-                    color: Colors.white, fontSize: 10, letterSpacing: 2)),
+                    color: Colors.white, fontSize: 13, letterSpacing: 2)),
             const SizedBox(height: 12),
             _StripRow(
               label: 'GAIN', unit: 'dB',

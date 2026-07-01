@@ -147,7 +147,57 @@ class _DriverCard extends ConsumerStatefulWidget {
 
 class _DriverCardState extends ConsumerState<_DriverCard> {
   bool _expanded = true;
+  bool _showTsInput = false;
   String _status = '';
+  final _fsCtrl   = TextEditingController();
+  final _qtsCtrl  = TextEditingController();
+  final _vasCtrl  = TextEditingController();
+  final _sensCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    final ts = widget.driver.tsParams;
+    if (ts != null) {
+      _fsCtrl.text  = ts.fs.toStringAsFixed(1);
+      _qtsCtrl.text = ts.qts.toStringAsFixed(3);
+      if (ts.vas > 0) _vasCtrl.text = ts.vas.toStringAsFixed(1);
+    }
+    if (widget.driver.sensitivity != null) {
+      _sensCtrl.text = widget.driver.sensitivity!.toStringAsFixed(1);
+    }
+  }
+
+  @override
+  void dispose() {
+    _fsCtrl.dispose(); _qtsCtrl.dispose();
+    _vasCtrl.dispose(); _sensCtrl.dispose();
+    super.dispose();
+  }
+
+  void _saveManualTs() {
+    final fs  = double.tryParse(_fsCtrl.text);
+    final qts = double.tryParse(_qtsCtrl.text);
+    if (fs == null || fs <= 0 || qts == null || qts <= 0) {
+      setState(() => _status = 'Fs와 Qts를 올바르게 입력하세요');
+      return;
+    }
+    final vas  = double.tryParse(_vasCtrl.text) ?? 0.0;
+    final sens = double.tryParse(_sensCtrl.text);
+    // Qes/Qms/Re/Zmax는 Qts에서 합리적 추정값 사용
+    final qms = qts < 0.4 ? 5.0 : qts < 0.7 ? 3.0 : 1.5;
+    final qes = 1 / (1 / qts - 1 / qms);
+    ref.read(systemConfigProvider.notifier).updateDriver(
+      widget.driver.copyWith(
+        tsParams: TsParameters(
+          fs: fs, re: 8.0, qes: qes.clamp(0.01, 99),
+          qms: qms, qts: qts, zmax: 40.0, vas: vas,
+        ),
+        sensitivity: sens,
+      ),
+    );
+    setState(() { _status = 'T/S 저장됨 — Fs=${fs.toStringAsFixed(0)}Hz Qts=${qts.toStringAsFixed(3)}'; _showTsInput = false; });
+  }
 
   Future<void> _importFrd() async {
     final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['frd', 'txt', 'csv']);
@@ -200,23 +250,80 @@ class _DriverCardState extends ConsumerState<_DriverCard> {
         if (_expanded) ...[
           const Divider(color: Colors.white12, height: 1),
           Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            // FRD / ZMA 임포트
             Row(children: [
-              Expanded(child: _ImportBtn(label: d.hasFrd ? '✓ FRD 로드됨' : 'FRD 임포트', loaded: d.hasFrd, onTap: _importFrd)),
+              Expanded(child: _ImportBtn(
+                label: d.hasFrd ? '✓ FRD 로드됨' : 'FRD 임포트',
+                loaded: d.hasFrd, onTap: _importFrd)),
               const SizedBox(width: 8),
-              Expanded(child: _ImportBtn(label: d.hasZma ? '✓ ZMA 로드됨' : 'ZMA 임포트', loaded: d.hasZma, onTap: _importZma)),
+              Expanded(child: _ImportBtn(
+                label: d.hasZma ? '✓ ZMA 로드됨' : 'ZMA 임포트 (선택)',
+                loaded: d.hasZma, onTap: _importZma)),
             ]),
-            if (_status.isNotEmpty) ...[const SizedBox(height: 8), Text(_status, style: const TextStyle(color: Colors.white38, fontSize: 10))],
-            if (d.hasTs) ...[
-              const SizedBox(height: 12),
-              const Text('T/S PARAMETERS', style: TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 2)),
+            const SizedBox(height: 6),
+            // FRD/ZMA 안내
+            const Text(
+              'FRD: 주파수 응답 파일 (.frd/.txt) — REW, ARTA, Room EQ Wizard 등\n'
+              'ZMA: 임피던스 파일 (.zma/.txt) — 선택사항, T/S 파라미터 자동 추출',
+              style: TextStyle(color: Colors.white24, fontSize: 9, height: 1.5),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'FRD/ZMA 없이 아래 T/S 파라미터만으로도 크로스오버 추천 가능합니다',
+              style: TextStyle(color: Colors.white38, fontSize: 9, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            const Divider(color: Colors.white12, height: 1),
+            const SizedBox(height: 10),
+
+            // T/S 파라미터 — 직접 입력 토글
+            GestureDetector(
+              onTap: () => setState(() => _showTsInput = !_showTsInput),
+              child: Row(children: [
+                Text(d.hasTs ? 'T/S PARAMETERS' : 'T/S 파라미터 직접 입력',
+                    style: const TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 2)),
+                const Spacer(),
+                Icon(_showTsInput ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                    color: Colors.white24, size: 14),
+              ]),
+            ),
+
+            if (d.hasTs && !_showTsInput) ...[
               const SizedBox(height: 8),
               _TsRow('Fs', '${d.tsParams!.fs.toStringAsFixed(1)} Hz'),
-              _TsRow('Re', '${d.tsParams!.re.toStringAsFixed(2)} Ω'),
               _TsRow('Qts', d.tsParams!.qts.toStringAsFixed(3)),
-              _TsRow('Qes', d.tsParams!.qes.toStringAsFixed(3)),
-              _TsRow('Qms', d.tsParams!.qms.toStringAsFixed(2)),
+              if (d.tsParams!.vas > 0) _TsRow('Vas', '${d.tsParams!.vas.toStringAsFixed(1)} L'),
               if (d.sensitivity != null) _TsRow('감도', '${d.sensitivity!.toStringAsFixed(1)} dB'),
             ],
+
+            if (_showTsInput) ...[
+              const SizedBox(height: 10),
+              _TsField('Fs (Hz) — 공진 주파수', _fsCtrl, hint: '예: 35'),
+              const SizedBox(height: 8),
+              _TsField('Qts — 총 Q팩터', _qtsCtrl, hint: '예: 0.35'),
+              const SizedBox(height: 8),
+              _TsField('Vas (L) — 등가 체적 (선택)', _vasCtrl, hint: '예: 12.5'),
+              const SizedBox(height: 8),
+              _TsField('감도 (dB/W/m) (선택)', _sensCtrl, hint: '예: 88.5'),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: _saveManualTs,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.white38),
+                    borderRadius: BorderRadius.circular(4),
+                    color: Colors.white.withValues(alpha: 0.04),
+                  ),
+                  child: const Center(child: Text(
+                    '이 T/S 파라미터로 저장 및 크로스오버 추천',
+                    style: TextStyle(color: Colors.white60, fontSize: 10, letterSpacing: 0.5),
+                  )),
+                ),
+              ),
+            ],
+
+            if (_status.isNotEmpty) ...[const SizedBox(height: 8), Text(_status, style: const TextStyle(color: Colors.white38, fontSize: 10))],
             if (d.hasFrd) ...[
               const SizedBox(height: 12),
               _FrdGraph(frdData: d.frdData),
@@ -243,6 +350,34 @@ class _ImportBtn extends StatelessWidget {
       ),
       child: Center(child: Text(label, style: TextStyle(color: loaded ? Colors.white60 : Colors.white38, fontSize: 10, letterSpacing: 1))),
     ),
+  );
+}
+
+class _TsField extends StatelessWidget {
+  final String label;
+  final TextEditingController controller;
+  final String hint;
+  const _TsField(this.label, this.controller, {this.hint = ''});
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: const TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 1)),
+      const SizedBox(height: 4),
+      TextField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.\-]'))],
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        decoration: InputDecoration(
+          isDense: true, hintText: hint,
+          hintStyle: const TextStyle(color: Colors.white12, fontSize: 11),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+          focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.white54)),
+        ),
+      ),
+    ],
   );
 }
 

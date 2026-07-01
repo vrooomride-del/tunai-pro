@@ -20,7 +20,7 @@ class DspBodePlot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final response = _computeResponse();
-    if (response.isEmpty) return const SizedBox(height: 220);
+    if (response.isEmpty) return const SizedBox(height: 330);
 
     final spots = response.map((r) {
       final logF = log(r['f']!) / log(10);
@@ -28,7 +28,7 @@ class DspBodePlot extends StatelessWidget {
     }).toList();
 
     return Container(
-      height: 220,
+      height: 330,
       padding: const EdgeInsets.fromLTRB(4, 8, 12, 4),
       child: LineChart(
         LineChartData(

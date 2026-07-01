@@ -345,7 +345,7 @@ class _Tab extends StatelessWidget {
           style: TextStyle(
             color: muted ? Colors.red.withValues(alpha: 0.5)
                 : selected ? Colors.white : Colors.white38,
-            fontSize: 9, letterSpacing: 1.5,
+            fontSize: 11, letterSpacing: 1.5,
           )),
     ),
   );
@@ -367,7 +367,7 @@ class _OutputView extends StatelessWidget {
       children: [
         // 좌측: 채널 스트립 목록
         SizedBox(
-          width: 170,
+          width: 220,
           child: ClipRect(
           child: ListView(
             padding: const EdgeInsets.all(12),
@@ -403,7 +403,7 @@ class _OutputView extends StatelessWidget {
 
               // 크로스오버
               const Text('CROSSOVER',
-                  style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+                  style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 3)),
               const SizedBox(height: 8),
               CrossoverEditor(
                 hpFilter: out.hpFilter,
@@ -417,10 +417,10 @@ class _OutputView extends StatelessWidget {
               Row(
                 children: [
                   const Text('PEQ',
-                      style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+                      style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 3)),
                   const SizedBox(width: 12),
                   const Text('20 BANDS',
-                      style: TextStyle(color: Colors.white24, fontSize: 9, letterSpacing: 1)),
+                      style: TextStyle(color: Colors.white24, fontSize: 11, letterSpacing: 1)),
                   const Spacer(),
                   GestureDetector(
                     onTap: () => ctrl.resetOutputBands(outIdx),
@@ -430,17 +430,17 @@ class _OutputView extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              // 5개씩 4행으로
-              ...List.generate(4, (row) => Padding(
+              // 4개씩 5행으로 — 밴드 카드 폭 확보
+              ...List.generate(5, (row) => Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: List.generate(5, (col) {
-                    final bandIdx = row * 5 + col;
+                  children: List.generate(4, (col) {
+                    final bandIdx = row * 4 + col;
                     if (bandIdx >= out.bands.length) return const Expanded(child: SizedBox());
                     return Expanded(
                       child: Padding(
-                        padding: EdgeInsets.only(right: col < 4 ? 5 : 0),
+                        padding: EdgeInsets.only(right: col < 3 ? 5 : 0),
                         child: PeqBandEditor(
                           band: out.bands[bandIdx],
                           index: bandIdx,
@@ -477,7 +477,7 @@ class _InputView extends StatelessWidget {
       children: [
         // 좌측: 입력 채널 스트립
         SizedBox(
-          width: 170,
+          width: 220,
           child: ClipRect(
           child: ListView(
             padding: const EdgeInsets.all(12),

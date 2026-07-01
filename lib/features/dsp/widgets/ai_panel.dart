@@ -65,21 +65,21 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
           GestureDetector(
             onTap: () => setState(() => _expanded = !_expanded),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
               child: Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       border: Border.all(color: Colors.white24, width: 0.5),
                       borderRadius: BorderRadius.circular(3),
                     ),
                     child: const Text('AI',
-                        style: TextStyle(color: Colors.white54, fontSize: 9, letterSpacing: 2)),
+                        style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 2)),
                   ),
                   const SizedBox(width: 10),
                   const Text('TUNING ASSISTANT',
-                      style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 3)),
+                      style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 3)),
                   const Spacer(),
                   Icon(_expanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
                       color: Colors.white24, size: 16),
@@ -90,7 +90,9 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
 
           if (_expanded) ...[
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 320),
               child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -189,7 +191,7 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                             const SizedBox(height: 6),
                             Text(_result!.analysis,
                                 style: const TextStyle(
-                                    color: Colors.white54, fontSize: 11, height: 1.6)),
+                                    color: Colors.white54, fontSize: 13, height: 1.6)),
                           ],
                         ),
                       ),
@@ -295,6 +297,7 @@ class _AiTuningPanelState extends ConsumerState<AiTuningPanel> {
                     ],
                   ],
                 ],
+              ),
               ),
               ),
             ),
