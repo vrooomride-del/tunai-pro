@@ -43,11 +43,6 @@ class DspScreen extends ConsumerWidget {
                     const SnackBar(content: Text('CONNECT 탭에서 DSP 연결 먼저')));
                 return;
               }
-              if (profile.isAdau1466) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('ADAU1466 — SigmaStudio 주소맵 미확정')));
-                return;
-              }
               final messenger = ScaffoldMessenger.of(context);
               final ok = await ctrl.sendToDsp();
               messenger.showSnackBar(SnackBar(
@@ -562,9 +557,6 @@ class _BoardSelector extends StatelessWidget {
             onTap: () => onSelect(p),
           )),
           const Spacer(),
-          if (profile.isAdau1466)
-            const Text('SigmaStudio 주소맵 미확정 — 전송 비활성',
-                style: TextStyle(color: Colors.orange, fontSize: 8, letterSpacing: 1)),
         ],
       ),
     );
