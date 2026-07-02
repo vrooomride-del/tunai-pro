@@ -16,7 +16,9 @@ final dspProvider = StateNotifierProvider<DspController, DspState>(
 
 class DspController extends StateNotifier<DspState> {
   final Ref _ref;
-  DspController(this._ref) : super(DspState.initial());
+  DspController(this._ref)
+      : super(DspState.initial(
+          maxPeqBands: _ref.read(systemProfileProvider).maxPeqBands));
 
   // ── 탭 전환 ──────────────────────────────────────
   void selectOutput(int i) => state = state.copyWith(selectedOutput: i, showInput: false, selectedBand: 0);
@@ -111,7 +113,7 @@ class DspController extends StateNotifier<DspState> {
 
   // ── RESET ────────────────────────────────────────
   void resetAll() {
-    state = DspState.initial();
+    state = DspState.initial(maxPeqBands: _ref.read(systemProfileProvider).maxPeqBands);
   }
 
   void resetOutputBands(int idx, {int bandCount = 20}) {

@@ -433,33 +433,30 @@ class _OutputView extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              // 4개씩 행으로 — maxBands 수만 렌더링
+              // 4개씩 행으로 — maxBands 수만 렌더링, 마지막 행 빈 슬롯으로 4칸 고정
               ...List.generate((maxBands / 4).ceil(), (row) {
-                final rowBands = <int>[];
-                for (int col = 0; col < 4; col++) {
-                  final bandIdx = row * 4 + col;
-                  if (bandIdx < maxBands) rowBands.add(bandIdx);
-                }
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: rowBands.asMap().entries.map((e) {
-                      final col = e.key;
-                      final bandIdx = e.value;
-                      return Expanded(
-                        child: Padding(
-                          padding: EdgeInsets.only(right: col < rowBands.length - 1 ? 5 : 0),
-                          child: PeqBandEditor(
-                            band: out.bands[bandIdx],
-                            index: bandIdx,
-                            selected: state.selectedBand == bandIdx,
-                            onChanged: (b) => ctrl.updateOutputBand(outIdx, bandIdx, b),
-                            onSelect: () => ctrl.selectBand(bandIdx),
+                    children: List.generate(4, (col) {
+                      final bandIdx = row * 4 + col;
+                      if (bandIdx < maxBands) {
+                        return Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(right: col < 3 ? 5 : 0),
+                            child: PeqBandEditor(
+                              band: out.bands[bandIdx],
+                              index: bandIdx,
+                              selected: state.selectedBand == bandIdx,
+                              onChanged: (b) => ctrl.updateOutputBand(outIdx, bandIdx, b),
+                              onSelect: () => ctrl.selectBand(bandIdx),
+                            ),
                           ),
-                        ),
-                      );
-                    }).toList(),
+                        );
+                      }
+                      return const Expanded(child: SizedBox());
+                    }),
                   ),
                 );
               }),

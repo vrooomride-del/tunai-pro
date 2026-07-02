@@ -158,7 +158,7 @@ class OutputChannel {
   );
 
   static List<PeqBand> defaultBands({int count = 20}) =>
-      List.generate(20, (i) => PeqBand(frequency: _logEqualFreq(i, count)));
+      List.generate(count, (i) => PeqBand(frequency: _logEqualFreq(i, count)));
 }
 
 /// 입력 채널 (2개: L/R)
@@ -203,7 +203,7 @@ class InputChannel {
   );
 
   static List<PeqBand> defaultBands({int count = 10}) =>
-      List.generate(10, (i) => PeqBand(frequency: _logEqualFreq(i, count)));
+      List.generate(count, (i) => PeqBand(frequency: _logEqualFreq(i, count)));
 }
 
 /// 전체 DSP 상태
@@ -249,26 +249,29 @@ class DspState {
     'outputs': outputs.map((o) => o.toJson()).toList(),
   });
 
-  static DspState initial() => DspState(
-    inputs: [
-      InputChannel(name: 'IN L', bands: InputChannel.defaultBands()),
-      InputChannel(name: 'IN R', bands: InputChannel.defaultBands()),
-    ],
-    outputs: [
-      OutputChannel(name: 'TWE L', bands: OutputChannel.defaultBands(),
-        hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
-      OutputChannel(name: 'TWE R', bands: OutputChannel.defaultBands(),
-        hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
-      OutputChannel(name: 'MID L', bands: OutputChannel.defaultBands(),
-        hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200),
-        lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
-      OutputChannel(name: 'MID R', bands: OutputChannel.defaultBands(),
-        hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200),
-        lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
-      OutputChannel(name: 'WOO L', bands: OutputChannel.defaultBands(),
-        lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200)),
-      OutputChannel(name: 'WOO R', bands: OutputChannel.defaultBands(),
-        lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200)),
-    ],
-  );
+  static DspState initial({int maxPeqBands = 20}) {
+    final ob = OutputChannel.defaultBands(count: maxPeqBands);
+    return DspState(
+      inputs: [
+        InputChannel(name: 'IN L', bands: InputChannel.defaultBands()),
+        InputChannel(name: 'IN R', bands: InputChannel.defaultBands()),
+      ],
+      outputs: [
+        OutputChannel(name: 'TWE L', bands: ob,
+          hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
+        OutputChannel(name: 'TWE R', bands: ob,
+          hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
+        OutputChannel(name: 'MID L', bands: ob,
+          hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200),
+          lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
+        OutputChannel(name: 'MID R', bands: ob,
+          hpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200),
+          lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 2500)),
+        OutputChannel(name: 'WOO L', bands: ob,
+          lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200)),
+        OutputChannel(name: 'WOO R', bands: ob,
+          lpFilter: const CrossoverFilter(type: CrossoverType.lr24, frequency: 200)),
+      ],
+    );
+  }
 }
