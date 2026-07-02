@@ -433,49 +433,36 @@ class _OutputView extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              // 4개씩 5행으로 — 밴드 카드 폭 확보
-              ...List.generate(5, (row) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: List.generate(4, (col) {
-                    final bandIdx = row * 4 + col;
-                    if (bandIdx >= out.bands.length) return const Expanded(child: SizedBox());
-                    final locked = bandIdx >= maxBands;
-                    return Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(right: col < 3 ? 5 : 0),
-                        child: locked
-                            ? Tooltip(
-                                message: '이 보드는 $maxBands밴드까지 지원합니다',
-                                child: Opacity(
-                                  opacity: 0.35,
-                                  child: Stack(children: [
-                                    PeqBandEditor(
-                                      band: out.bands[bandIdx],
-                                      index: bandIdx,
-                                      selected: false,
-                                      onChanged: (_) {},
-                                      onSelect: () {},
-                                    ),
-                                    const Positioned.fill(child: ColoredBox(color: Colors.transparent)),
-                                    const Positioned(right: 4, top: 4,
-                                        child: Icon(Icons.lock_outline, color: Colors.white38, size: 10)),
-                                  ]),
-                                ),
-                              )
-                            : PeqBandEditor(
-                                band: out.bands[bandIdx],
-                                index: bandIdx,
-                                selected: state.selectedBand == bandIdx,
-                                onChanged: (b) => ctrl.updateOutputBand(outIdx, bandIdx, b),
-                                onSelect: () => ctrl.selectBand(bandIdx),
-                              ),
-                      ),
-                    );
-                  }),
-                ),
-              )),
+              // 4개씩 행으로 — maxBands 수만 렌더링
+              ...List.generate((maxBands / 4).ceil(), (row) {
+                final rowBands = <int>[];
+                for (int col = 0; col < 4; col++) {
+                  final bandIdx = row * 4 + col;
+                  if (bandIdx < maxBands) rowBands.add(bandIdx);
+                }
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: rowBands.asMap().entries.map((e) {
+                      final col = e.key;
+                      final bandIdx = e.value;
+                      return Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.only(right: col < rowBands.length - 1 ? 5 : 0),
+                          child: PeqBandEditor(
+                            band: out.bands[bandIdx],
+                            index: bandIdx,
+                            selected: state.selectedBand == bandIdx,
+                            onChanged: (b) => ctrl.updateOutputBand(outIdx, bandIdx, b),
+                            onSelect: () => ctrl.selectBand(bandIdx),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                );
+              }),
             ],
           ),
         ),
