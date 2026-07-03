@@ -3,7 +3,7 @@
 > 이 표는 매 세션 시작/종료 시 갱신한다.
 > 새 작업으로 새기 전에 반드시 먼저 읽고, 세션 끝나면 변경된 항목만 갱신해서 다음 HANDOFF.md에 그대로 옮긴다.
 
-**업데이트: 2026-07-04 (ADAU1701 XO 블록 라벨/오프셋 확인 시도 — SigmaStudio GUI 필요, 코드 변경 없음)**
+**업데이트: 2026-07-04 (ADAU1701 writeCrossover 실제 구현 — 실험적 기능 플래그로 기본 OFF, 실기기 검증 전 필수)**
 
 ---
 
@@ -227,3 +227,52 @@ JAB4_DSP_Firmware_Hardware_SouceCode_V112_2021.01.12.dspproj`
 
 ### 코드 변경
 없음 (순수 조사)
+
+---
+
+## 이번 세션 추가 — writeCrossover 실제 구현 (`adau1701_adapter.dart`)
+
+### 배경
+사용자가 SigmaStudio 스키매틱을 직접 확인(2026-07-04)해서 구조를 확정했음:
+2웨이 크로스오버, 물리 DAC 4채널(각각 HPF 블록 → LPF 블록 캐스케이드):
+
+| DAC | 역할 | HPF 블록 | LPF 블록 |
+|---|---|---|---|
+| DAC0 | Tweeter A | Filter1_4 (14~111) | Filter1_11 (310~407, @20kHz≈통과) |
+| DAC1 | Tweeter B | Filter1_9 (112~209) | Filter1_10 (212~309, @20kHz≈통과) |
+| DAC2 | Woofer A | Filter1_5 (408~505, @150Hz≈무시) | Filter1_6 (604~701) |
+| DAC3 | Woofer B | Filter1_8 (506~603, @150Hz≈무시) | Filter1_7 (702~799) |
+
+트위터 체인은 HPF가, 우퍼 체인은 LPF가 실질적 크로스오버 지점 — 반대쪽 블록은 스키매틱
+기본값이 사실상 통과/무시로 설정돼 있을 뿐 실제 쓸 수 있는 필터임. 각 98워드 블록 내부의
+정확한 스테이지 오프셋과 fixed-point 포맷은 아직 실측 검증되지 않음.
+
+Pro는 채널 인덱스가 모바일과 달리 2개뿐(ch0=Woofer, ch1=Tweeter, 스테레오 링크 — Gain/Mute와
+동일 모델)이라, 채널당 L/R 두 DAC 블록 모두에 동일 설정을 write하도록 구현.
+
+### 수정 내용
+- `writeCrossover` 실제 구현: `_xoBlockBase`(채널→L/R DAC 블록 주소 리스트) 기반으로 표준
+  크로스오버 biquad(`DspEngine.calculateCrossoverBiquads`, Butterworth/LR bw2~lr8) 계산 후
+  L/R 두 주소 모두에 write. 계수 순서는 SigmaStudio 표준(B2,B1,B0,A2,A1)으로 재배열 — 기존
+  (제거됐던) 구현은 b0,b1,b2,a1,a2 순서였는데 이게 틀렸을 가능성이 있어 이번에 수정
+- **안전장치**: `Adau1701Adapter.experimentalXoWriteEnabled` 정적 플래그, 기본 `false`. 블록
+  내부 오프셋/계수 포맷이 실측 검증되지 않았기 때문에, 이 플래그가 꺼져 있으면 `writeCrossover`는
+  계산만 하고 실제 전송은 하지 않음. UI 쪽 "실험적 기능 동의" 토글 연결은 이번 세션 스코프 밖 —
+  상위 레이어에서 명시적으로 옵트인해야 함
+- `writeSubsonicFilter`는 계속 no-op — 이 구조엔 별도 subsonic 개념이 없음(Woofer HPF 블록이
+  유사한 역할을 할 수 있으나 오프셋/기본값 미검증이라 보류), 사유를 주석으로 남김
+- `writeBiquad`(PEQ)/`writeDelay`는 계속 no-op — 각각 "Miumax UI엔 EQ/Delay가 보였으나 이
+  스키매틱엔 없음, 별도 확인 필요"로 주석 갱신
+- Mute/Vol/Gain/Inv 로직은 변경 없음
+
+### 확인
+`flutter analyze` — 0 issues (기존 무관 info 1건 `connect_controller.dart` unnecessary_import 제외)
+
+### 다음 세션 필수 선행 작업
+`experimentalXoWriteEnabled=true`로 켜기 전에 반드시 이전 세션에서 설계한 BLE/UART 트래픽 캡처로
+블록 내부 오프셋과 계수 포맷을 실측 검증할 것. 검증 없이 실기기에 쏘면 크로스오버가 의도와 다르게
+동작하거나 무음/왜곡이 발생할 수 있음 — 실기기 테스트 시 반드시 낮은 볼륨에서 시작하고 이상 있으면
+즉시 전원 차단.
+
+### 커밋
+(다음 커밋 예정)
