@@ -208,7 +208,8 @@ class DspController extends StateNotifier<DspState> {
         );
       }
 
-      // PEQ 밴드
+      // PEQ 밴드 — ADAU1701에는 PEQ 모듈이 없어 writeBiquad가 no-op으로 처리함
+      // (SystemProfile.maxPeqBands 주석 참고). ADAU1466에서만 실제로 적용됨.
       for (var bandIdx = 0; bandIdx < out.bands.length; bandIdx++) {
         final band = out.bands[bandIdx];
         if (!band.enabled) continue;
