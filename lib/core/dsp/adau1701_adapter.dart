@@ -6,23 +6,26 @@ import '../dsp_engine.dart';
 ///
 /// 프레임: [0xAA][Addr 2B][Data 20B = 5×4B][XOR][0x55] = 27바이트
 ///
-/// ▼ PRAM 주소 — SigmaStudio IC Memory Map (WONDOM 기본 데모, 2025-06-20 확인)
+/// ▼ PRAM 주소 — SigmaStudio export 주소 확정 (2026-07)
 ///   GAIN : ExtSWGainDB 셀, 5.23 선형값 1워드
 ///     ch0 Woofer  = 7  (ExtSWGainDB2step_20, "Vol")
 ///     ch1 Tweeter = 6  (ExtSWGainDB3step_19, "Vol_2")
 ///   DELAY: 현 펌웨어에 Delay 블록 없음 — 추가+재컴파일 필요, 현재 미지원
-///   PEQ  : 채널별 20밴드 × 5 워드 (주소 미확정, 별도 확인 필요)
-///   XO   : PEQ 직후 HP/LP 각 최대 4 슬롯
+///   PEQ  : peqBase=14, 채널당 10밴드×5계수=50워드 연속 배치 (20밴드 총합, 14~113)
+///     ch0 Woofer  PEQ: 14~63,  ch1 Tweeter PEQ: 64~113
+///   XO   : 주소 미확정 (SigmaStudio Filter 블록 주소 확인 전까지 no-op)
+///   MUTE : 채널(밴드) 뮤트 — Woofer=11, Tweeter=12
+///          출력 뮤트 — 물리 출력 채널별 개별: out0=805, out1=806, out2=807, out3=808
 class Adau1701Adapter implements DspAdapter {
   final RawWriteFn _send;
 
   // ── PRAM 레이아웃 ──────────────────────────────────────────────
-  static const int _peqBase         = 0x0010; // PEQ 밴드 시작 (미확정)
-  static const int _peqBands        = 20;
-  static const int _peqChStride     = _peqBands * 5; // ch당 100 워드
+  static const int _peqBase         = 14; // PEQ 밴드 시작 (확정)
+  static const int _peqBands        = 10; // 채널당 PEQ 슬롯 수 (maxPeqBands 기준)
+  static const int _peqChStride     = _peqBands * 5; // ch당 50 워드
 
-  // XO: PEQ(6ch × 100워드) 뒤에 채널당 [HP×4슬롯][LP×4슬롯] = 8슬롯 × 5워드
-  static const int _xoBase          = _peqBase + 6 * _peqChStride;
+  // XO: 주소 미확정 — SigmaStudio Filter 블록 주소 확인 전까지 no-op
+  static const int? _xoBase         = null; // TODO: 주소 미확정
   static const int _xoSlotsPerSide  = 4; // LR48 최대 4 biquad
   static const int _xoChStride      = _xoSlotsPerSide * 2 * 5; // (HP+LP) × 5워드
 
@@ -32,6 +35,12 @@ class Adau1701Adapter implements DspAdapter {
 
   // Delay: 현 펌웨어에 블록 없음 → 미지원
   static const int _delayBase       = 0x0000; // Delay 블록 추가+재컴파일 전까지 미사용
+
+  // 채널(밴드) 뮤트 주소 — Woofer=11, Tweeter=12 (확정)
+  static const List<int> _channelMuteAddresses = [11, 12];
+
+  // 출력 뮤트 주소 — 물리 출력 채널별 개별 (확정)
+  static const List<int> _outputMuteAddresses = [805, 806, 807, 808];
 
   Adau1701Adapter({required RawWriteFn send}) : _send = send;
 
@@ -50,6 +59,9 @@ class Adau1701Adapter implements DspAdapter {
   // ── 크로스오버 ───────────────────────────────────────────────
   @override
   Future<void> writeCrossover(int channelIndex, CrossoverConfig config) async {
+    const xoBase = _xoBase;
+    if (xoBase == null) return; // TODO: XO 주소 미확정
+
     final xoType = _mapXoType(config.slope);
     if (xoType == null) return; // bypass
 
@@ -58,7 +70,7 @@ class Adau1701Adapter implements DspAdapter {
 
     // HP = 슬롯 0..3, LP = 슬롯 4..7 (채널 내)
     final slotBase = isHpf ? 0 : _xoSlotsPerSide;
-    final chBase   = _xoBase + channelIndex * _xoChStride;
+    final chBase   = xoBase + channelIndex * _xoChStride;
 
     for (var i = 0; i < biquads.length; i++) {
       await _send(DspEngine.buildBleFrame(biquads[i], chBase + (slotBase + i) * 5));
@@ -78,6 +90,21 @@ class Adau1701Adapter implements DspAdapter {
     await _send(DspEngine.buildGainFrame(linear, _gainAddresses[channelIndex]));
   }
 
+  // ── Mute (확정 주소, DspAdapter 인터페이스 밖 — Adau1701 전용 부가 기능) ──
+  /// 채널(밴드) 단위 뮤트 — Woofer=11, Tweeter=12
+  Future<void> writeChannelMute(int channelIndex, bool muted) async {
+    if (channelIndex >= _channelMuteAddresses.length) return;
+    await _send(DspEngine.buildGainFrame(
+        muted ? 0.0 : 1.0, _channelMuteAddresses[channelIndex]));
+  }
+
+  /// 출력 단위 뮤트 — 물리 출력 채널 개별 (0~3)
+  Future<void> writeOutputMute(int outputIndex, bool muted) async {
+    if (outputIndex >= _outputMuteAddresses.length) return;
+    await _send(DspEngine.buildGainFrame(
+        muted ? 0.0 : 1.0, _outputMuteAddresses[outputIndex]));
+  }
+
   // ── Delay ────────────────────────────────────────────────────
   // 현 펌웨어에 Delay 블록 없음 — SigmaStudio에서 블록 추가+재컴파일 필요
   @override
@@ -89,9 +116,11 @@ class Adau1701Adapter implements DspAdapter {
   // ── 서브소닉 HPF ─────────────────────────────────────────────
   @override
   Future<void> writeSubsonicFilter(int channelIndex, double freqHz) async {
+    const xoBase = _xoBase;
+    if (xoBase == null) return; // TODO: XO 주소 미확정
     final biquads = DspEngine.calculateCrossoverBiquads(freqHz, true, XoType.bw2);
     // XO HP 슬롯의 마지막 슬롯(슬롯 3)을 서브소닉 전용으로 사용
-    final addr = _xoBase + channelIndex * _xoChStride + (_xoSlotsPerSide - 1) * 5;
+    final addr = xoBase + channelIndex * _xoChStride + (_xoSlotsPerSide - 1) * 5;
     await _send(DspEngine.buildBleFrame(biquads[0], addr));
   }
 

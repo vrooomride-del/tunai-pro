@@ -3,7 +3,7 @@
 > 이 표는 매 세션 시작/종료 시 갱신한다.
 > 새 작업으로 새기 전에 반드시 먼저 읽고, 세션 끝나면 변경된 항목만 갱신해서 다음 HANDOFF.md에 그대로 옮긴다.
 
-**업데이트: 2026-06-21 (1단계 완전 마무리 — UART VID/PID 탐지, 감도매칭 DSP 연결)**
+**업데이트: 2026-07-03 (ADAU1701 PRAM 주소 확정 반영 — PEQ 레이아웃/Mute, adau1701_adapter.dart)**
 
 ---
 
@@ -112,3 +112,30 @@ SigmaStudio export (`.h` 또는 `param_data.dat`) — 딜레이/게인 셀 PRAM 
 
 ### 커밋
 `6153212` — feat: 1단계 보드 자동탐지 — UART VID/PID 기반 식별 추가
+
+---
+
+## 이번 세션 추가 — ADAU1701 PRAM 주소 확정 반영 (`adau1701_adapter.dart`)
+
+### 배경
+Vol/Vol_2/Mute 주소는 이미 확정돼 있었으나 PEQ `_peqBase`(0x0010, 미확정)와 `_peqBands`(20)가
+`SystemProfile.maxPeqBands`(ADAU1701=10)와 어긋나 있었고, XO 베이스가 ADAU1466(6채널) 패턴을
+그대로 복사해 6채널분 스트라이드를 곱하는 잘못된 추정식이었다.
+
+### 수정 내용
+- **PEQ**: `peqBase=14`, 채널당 10밴드×5계수=50워드 연속 배치 (ch0 Woofer 14~63, ch1 Tweeter
+  64~113, 20밴드 총합 14~113 — `maxPeqBands=10`과 일치)
+- **XO**: 주소 미확정으로 되돌림 (`_xoBase=null`) — SigmaStudio Filter 블록 주소 확인 전까지
+  `writeCrossover`/`writeSubsonicFilter` no-op. 기존 "peqBase + 6채널 스트라이드" 추정식은
+  근거 없는 값이라 제거
+- **Mute 신규 반영**: 채널(밴드) 뮤트 Woofer=11/Tweeter=12, 출력 뮤트 물리 채널별
+  805~808 — `writeChannelMute`/`writeOutputMute`로 어댑터에 추가 (DspAdapter 공용 인터페이스
+  밖, 아직 UI 미연결 — 현재 `dsp_controller.dart`는 gain을 -96dB로 낮추는 방식으로 뮤트 처리 중)
+- Gain(Vol=7/Vol_2=6)과 Delay(펌웨어 미구현, no-op)는 이미 정확해 변경 없음
+- ADAU1466 어댑터는 이번 세션 범위 밖 — 변경 없음
+
+### 확인
+`flutter analyze` — 0 issues (기존 무관 info 1건 `connect_controller.dart` unnecessary_import 제외)
+
+### 커밋
+(다음 커밋 예정)
