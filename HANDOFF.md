@@ -3,7 +3,7 @@
 > 이 표는 매 세션 시작/종료 시 갱신한다.
 > 새 작업으로 새기 전에 반드시 먼저 읽고, 세션 끝나면 변경된 항목만 갱신해서 다음 HANDOFF.md에 그대로 옮긴다.
 
-**업데이트: 2026-07-04 (ADAU1701 writeCrossover 실제 구현 — 실험적 기능 플래그로 기본 OFF, 실기기 검증 전 필수)**
+**업데이트: 2026-07-04 (ADAU1701 신 펌웨어 반영 — 표준 5워드 biquad, writeCrossover 활성화. ⚠️ 실기기 신 펌웨어 플래시 필수)**
 
 ---
 
@@ -273,6 +273,70 @@ Pro는 채널 인덱스가 모바일과 달리 2개뿐(ch0=Woofer, ch1=Tweeter, 
 블록 내부 오프셋과 계수 포맷을 실측 검증할 것. 검증 없이 실기기에 쏘면 크로스오버가 의도와 다르게
 동작하거나 무음/왜곡이 발생할 수 있음 — 실기기 테스트 시 반드시 낮은 볼륨에서 시작하고 이상 있으면
 즉시 전원 차단.
+
+### 커밋
+`c08e2a6` — feat(pro): ADAU1701 writeCrossover 실제 구현 — 실험적 기능 플래그로 기본 OFF (adau1701_adapter.dart)
+
+---
+
+## 이번 세션 추가 — 신 펌웨어 반영: 표준 5워드 biquad (`adau1701_adapter.dart`)
+
+### ⚠️ 실기기 테스트 전 필수 확인 사항
+**이 세션의 주소맵은 SigmaStudio에서 필터 셀을 "General 2nd Order w var Param/Lookup/Slew"
+(96워드 lookup)에서 표준 "General (2nd order)"(5워드 biquad)로 교체하고 재컴파일한 신
+펌웨어 기준이다. 이 신 펌웨어가 아직 실기기(TUNAI ONE 보드)에 플래시되지 않았을 수 있다.**
+`experimentalXoWriteEnabled`를 켠 채로 구 펌웨어가 올라간 보드에 연결하면 완전히 엉뚱한
+주소에 값을 쓰게 된다. **실기기 테스트 전 반드시 SigmaStudio로 이 신 펌웨어를 보드에
+플래시할 것.**
+
+### 배경
+실제 export .h 파일 기준으로 확정된 신 주소맵(필터 블록당 5워드, addr 16~55):
+
+| 블록 | B0 | B1 | B2 | A0 | A1 | 역할 |
+|---|---|---|---|---|---|---|
+| GenFilter1   | 41 | 42 | 43 | 44 | 45 | Tweeter A HPF |
+| GenFilter1_5 | 46 | 47 | 48 | 49 | 50 | Tweeter A LPF |
+| GenFilter1_2 | 16 | 17 | 18 | 19 | 20 | Tweeter B HPF |
+| GenFilter1_6 | 26 | 27 | 28 | 29 | 30 | Tweeter B LPF |
+| GenFilter1_3 | 21 | 22 | 23 | 24 | 25 | Woofer A HPF |
+| GenFilter1_7 | 31 | 32 | 33 | 34 | 35 | Woofer A LPF |
+| GenFilter1_4 | 36 | 37 | 38 | 39 | 40 | Woofer B HPF |
+| GenFilter1_8 | 51 | 52 | 53 | 54 | 55 | Woofer B LPF |
+
+DAC 매핑: DAC0=Tweeter A, DAC1=Tweeter B, DAC2=Woofer A, DAC3=Woofer B.
+다른 주소(Vol_2=6, Vol=7, Mute0_2 on/off=11/step=12, Mute1=805~806, Mute0=807~808,
+Inv=810~811, I2C=0x34)는 변경 없음.
+
+### 중요 발견 — 슬로프 제한
+이전 펌웨어는 채널당 98워드 cascade라 여러 biquad를 이어붙일 수 있다고 가정했었지만,
+신 펌웨어는 **필터 블록당 정확히 5워드(2차 biquad 1스테이지)뿐이다.** 즉 bw4/lr4/lr8처럼
+2스테이지 이상을 요구하는 슬로프(24dB/oct 이상)는 이 하드웨어로 구현이 불가능하다.
+지원 가능한 최대는 bw2/lr2(12dB/oct, 1스테이지)뿐 — `writeCrossover`는 슬로프가 2스테이지
+이상을 요구하면 얕은(잘못된) 응답을 보내는 대신 아무 것도 쓰지 않도록 구현했다.
+
+### 수정 내용
+- Pro는 채널이 2개뿐(ch0=Woofer, ch1=Tweeter, 스테레오 링크)이라 채널당 L/R 두 DAC 블록
+  모두에 동일 설정을 write — 필터 주소 상수/매핑을 위 표대로 전면 재작성 (기존 addr 14~799,
+  98워드/블록 → addr 16~55, 5워드/블록)
+- 계수 write 순서를 B0,B1,B2,A0,A1로 정정 — SigmaStudio "General 2nd order filter"의
+  A0/A1은 `BiquadCoefficients`의 a1/a2와 동일한 자리(0-index 명명 차이일 뿐)라서, 재배열
+  없이 그대로 write하면 됨. 이전 세션의 B2,B1,B0,A2,A1 가정은 틀렸었음(구 96워드 lookup
+  필터 기준으로 추정한 값)
+- `experimentalXoWriteEnabled` 기본값을 `true`로 전환 — 신 주소/포맷이 실측 export .h
+  기준으로 확정됐다고 판단
+- Fixed-point는 ADAU1701 표준 5.23 가정 유지(이번 세션에서 재확인은 안 됨)
+- `writeBiquad`(PEQ)/`writeDelay`는 계속 no-op(이 신 펌웨어에도 PEQ/Delay 모듈 없음),
+  `writeSubsonicFilter`도 계속 no-op(subsonic 개념 없음)
+- Mute/Vol/Gain/Inv 로직 변경 없음
+
+### 확인
+`flutter analyze` — 0 issues (기존 무관 info 1건 `connect_controller.dart` unnecessary_import 제외)
+
+### 다음 세션
+1. **신 펌웨어를 실기기에 플래시** (SigmaStudio, .dspproj → Link Compile → Write Latest
+   Compilation to E2PROM 등)
+2. 저볼륨으로 앱에서 크로스오버 슬라이더 조작 → 실제 필터 반응 확인
+3. 이상 있으면 즉시 전원 차단, `experimentalXoWriteEnabled`를 다시 `false`로
 
 ### 커밋
 (다음 커밋 예정)
