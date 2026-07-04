@@ -3,7 +3,7 @@
 > 이 표는 매 세션 시작/종료 시 갱신한다.
 > 새 작업으로 새기 전에 반드시 먼저 읽고, 세션 끝나면 변경된 항목만 갱신해서 다음 HANDOFF.md에 그대로 옮긴다.
 
-**업데이트: 2026-07-04 (ADAU1701 신 펌웨어 반영 — 표준 5워드 biquad, writeCrossover 활성화. ⚠️ 실기기 신 펌웨어 플래시 필수)**
+**업데이트: 2026-07-04 (ADAU1466 주소 전면 반영 — PEQ/Delay 확정, XO는 SafeLoad 구조라 별도 검증 필요)**
 
 ---
 
@@ -337,6 +337,44 @@ Inv=810~811, I2C=0x34)는 변경 없음.
    Compilation to E2PROM 등)
 2. 저볼륨으로 앱에서 크로스오버 슬라이더 조작 → 실제 필터 반응 확인
 3. 이상 있으면 즉시 전원 차단, `experimentalXoWriteEnabled`를 다시 `false`로
+
+### 커밋
+`432d08c` — feat(pro): ADAU1701 신 펌웨어 반영 — 표준 5워드 biquad, writeCrossover 활성화 (adau1701_adapter.dart)
+
+---
+
+## 이번 세션 추가 — ADAU1466 주소 전면 반영 (`adau1466_adapter.dart`)
+
+### 배경
+`1466_cs42448_18out_eng` 실제 export 대조로 확정된 주소맵 반영. Volume은 기존 검증값과
+일치(변경 없음), Delay/PEQ는 신규 확정, HPF/LPF는 구조 자체가 PEQ/Delay와 다르다는 게
+새로 발견됨(SafeLoad 방식).
+
+- **Delay** (신규 확정): ch0~5 = 562, 567, 563, 566, 564, 565 — 채널 순서는 Volume과
+  동일 CH0~5로 가정(실기기에서 채널별 소리로 확인 필요)
+- **PEQ** (신규 확정, 15밴드): base=410, 밴드n(0~14)=410+n×5, addr 410~484. 계수 순서
+  B2,B1,B0,A2,A1(ADAU1701 신 펌웨어의 B0,B1,B2,A0,A1과 다름). **채널별 스트라이드는
+  이번 export에 없어서, 현재 모든 채널이 410 기준 단일 15밴드를 공유하는 것으로
+  구현했다** — 채널별 개별 PEQ가 필요하면 추가 확인 필요
+- **HPF/LPF 크로스오버** (신규 발견, 구조 다름): HPF target=24873~24877(slewMode=401),
+  LPF target=24878~24882(slewMode=407). SafeLoad 레지스터 영역(24576~24583)과 인접 —
+  일반 write가 아니라 SigmaStudio SafeLoad 프로토콜(데이터→ADDRESS→NUM 순서로 써서
+  트리거) 필요할 가능성이 높음. **불확실 — 표준 ADI SafeLoad 레지스터 배치를 가정한
+  스텁만 작성**하고 `experimentalXoWriteEnabled=false`로 잠금(1701과 동일 패턴). Pro는
+  DspEngine에 정수 워드용 프레임 빌더가 없어서 어댑터 내부에 `_buildRawIntFrame`
+  로컬 헬퍼를 새로 추가(고정소수점 변환 없이 정수 1워드를 그대로 싣는 프레임)
+- Mute 16채널(1081~1096), Compressor(489~542, 범위만) 참고용으로 클래스 doc에 추가
+- Volume 로직/주소는 변경 없음
+
+### 확인
+`flutter analyze` — 0 issues (기존 무관 info 1건 `connect_controller.dart` unnecessary_import 제외)
+
+### 다음 세션
+1. 실기기에서 PEQ/Delay 저볼륨 테스트 — Delay는 채널 순서(562,567,563,566,564,565)가
+   실제로 CH0~5와 맞는지 소리로 확인
+2. XO(HPF/LPF)는 SafeLoad 프로토콜 자체를 조사(ADI 문서 또는 실측 캡처)한 뒤에만
+   `experimentalXoWriteEnabled`를 켤 것 — 지금 스텁은 레지스터 배치를 가정한 것일 뿐
+   검증되지 않음
 
 ### 커밋
 (다음 커밋 예정)
