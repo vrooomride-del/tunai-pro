@@ -3,7 +3,7 @@
 > 이 표는 매 세션 시작/종료 시 갱신한다.
 > 새 작업으로 새기 전에 반드시 먼저 읽고, 세션 끝나면 변경된 항목만 갱신해서 다음 HANDOFF.md에 그대로 옮긴다.
 
-**업데이트: 2026-07-04 (ADAU1466 주소 전면 반영 — PEQ/Delay 확정, XO는 SafeLoad 구조라 별도 검증 필요)**
+**업데이트: 2026-07-04 ("Living Speaker" 아키텍처 브리프 기준 현황 점검 — 진단만, 코드 변경 없음)**
 
 ---
 
@@ -377,4 +377,61 @@ Inv=810~811, I2C=0x34)는 변경 없음.
    검증되지 않음
 
 ### 커밋
-(다음 커밋 예정)
+`3019267` — feat(pro): ADAU1466 주소 전면 반영 — PEQ/Delay 확정, XO는 SafeLoad 구조 (adau1466_adapter.dart)
+
+---
+
+## "Living Speaker" 아키텍처 브리프 — Gap Analysis (진단 전용, 코드 변경 없음, 2026-07-04)
+
+### 배경
+새 5계층 아키텍처 브리프(AIP/AOS/AIE/AKG/ACM) 도착. tunai(모바일)+tunai_pro 코드베이스
+전체를 훑어 이 구조와 얼마나 부합하는지 순수 진단만 수행 — 리팩토링/신규 구현 없음.
+**이 보고서는 mobile의 HANDOFF.md와 동일 내용**(두 repo를 함께 조사했기 때문) — 최신
+내용은 항상 mobile 쪽 HANDOFF.md 기준으로 볼 것.
+
+### 5계층 매핑
+
+| 계층 | 매핑된 모듈 | 상태 | 격차 |
+|---|---|---|---|
+| **AIP** (플랫폼) | Firebase(Analytics/Crashlytics/Functions만, Firestore 미사용) + 별도 커스텀 REST API(`api.tunai.kr`, `lib/core/api_service.dart`) | 부분있음 | tunai_pro는 **Firebase 의존성 자체가 없음**(pubspec.yaml에 미포함, `Firebase.initializeApp()` 호출 없음) — AIP는 사실상 모바일에만 걸쳐 있고 Pro는 REST API(auth/community)로만 연결됨 |
+| **AOS** (운영체제) | `dsp_controller.dart`(Pro, 프리셋 저장/로드 CRUD, `DspState`) | 부분있음(보호 로직 없음) | 상태머신 아님(단순 CRUD). Factory/User 레이어 분리 없음(`dsp_presets`/`dsp_preset_$name`이 전부 같은 네임스페이스). 트위터 보호 클램프 전무 |
+| **AIE** (지능엔진) | `functions/index.js`의 `aiTunePro`(HTTP), `ai_tuning_service.dart`(Pro) | 부분있음 | 타겟커브 개념 없음, LLM 1회 호출 결과 그대로 사용, 서버측 스키마 검증 없음. Pro는 `soundScore` 필드조차 없음(모바일 전용) |
+| **AKG** (지식그래프) | `driver_profile.dart`의 `SystemConfig`(DriverProfile 리스트+EnclosureConfig 중첩) | 거의 없음 | `SystemConfig`는 진짜 객체 합성이지만 ID 참조가 없고 측정/튜닝/선호는 포함 안 함, 영속화도 안 됨(메모리에만 존재) |
+| **ACM** (실행계층) | `dsp_adapter.dart` 인터페이스 + `adau1701_adapter.dart`/`adau1466_adapter.dart`, `connect_controller.dart`(UART+BLE) | 있음(단, 중복) | 인터페이스는 깔끔하지만 mobile과 완전히 독립된 복사본 — `RawWriteFn` 시그니처가 이미 다름(`Future<bool> Function(List<int>)` vs mobile `Future<void> Function(Uint8List)`) |
+
+### 8개 구조 항목 체크 (요약 — 전체 표는 mobile HANDOFF.md 참고)
+
+| # | 항목 | 상태 |
+|---|---|---|
+| A | Tuning Package abstraction | 부분있음 — Pro `DspState`는 gain/delay/PEQ/XO 다 포함하지만 mobile My Tune과 공유 모델 없음 |
+| B | DSP Platform abstraction | **있음** — `dsp_adapter.dart` |
+| C | Factory / User Layer separation | **없음** — "Factory"란 이름도 그냥 덮어쓸 수 있는 프리셋 중 하나일 뿐 |
+| D | Safety Validation Layer | **부분있음(핵심 경로엔 없음)** — `dsp_controller.dart:updateOutputBand`가 클램프 없이 저장, `sendToDsp()`까지 검증 전무 |
+| E | Measurement History | **없음** |
+| F | Target Curve Versioning | **없음** |
+| G | Preset and Rollback Structure | 부분있음 — 저장/로드는 가능, undo/rollback 없음 |
+| H | AIP-ready Profile Model | **없음** |
+
+### 핵심 안전원칙 점검 — 트위터 보호 우회 가능 여부
+
+**결론: 우회 가능 — 사실상 보호 장치 없음.**
+
+Pro 수동 슬라이더 write-path: `peq_band.dart` 게인 슬라이더(-24~24dB, 트위터/우퍼 동일 위젯)
+→ `dsp_controller.dart:updateOutputBand`(클램프 없음) → `sendToDsp()` → `Adau1701Adapter.writeBiquad`
+(이 펌웨어엔 PEQ 자체가 없어 no-op — 다른 이유) / `writeGain`(클램프 없음) →
+`ConnectController.sendBytes`(값 검증 전혀 없이 raw bytes 전송).
+
+유일한 실제 안전 클램프인 `SafetyProfile.clampBassBoost`(`dsp_engine.dart:294-321`)는
+**우퍼(<200Hz) 전용**이고, 그마저 측정 후 1회성 자동튠에만 호출됨. 트위터 보호는
+`measurement_mic_screen.dart:388-389`의 **UI 경고 문구로만 존재** — 검증/차단 로직 없음.
+
+Factory preset 보호: **안 됨** — `dsp_presets`/`dsp_preset_$name`이 이름 기반 저장이라
+"Factory"라는 이름도 사용자가 그대로 덮어쓸 수 있음.
+
+### 다음 세션
+어느 격차부터 메울지는 사용자 판단 필요 — 후보: D(Safety Validation, 트위터 클램프)
+/ C(Factory·User 레이어 분리) / H·AKG(통합 프로필 모델). 전체 상세 표는 mobile
+HANDOFF.md 참고.
+
+### 커밋
+(다음 커밋 예정 — 이번 세션은 진단만, 코드 변경 없음)
