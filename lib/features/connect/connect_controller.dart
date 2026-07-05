@@ -6,6 +6,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/profiles/system_profile.dart';
+import 'usbi_detector.dart';
 
 // ICP5(WONDOM) BLE GATT UUID — GATT 덤프로 확인된 실제 값
 class _ICP5UUID {
@@ -13,7 +14,7 @@ class _ICP5UUID {
   static const String dspWrite = 'fff2'; // WRITE|WRITE_NO_RSP
 }
 
-enum ConnectMode { uart, ble }
+enum ConnectMode { uart, ble, usbi }
 
 enum ConnectionStatus { disconnected, scanning, connecting, connected, error, bluetoothOff }
 
@@ -32,6 +33,8 @@ class ConnectState {
   final String status;
   final String? deviceName;
   final DetectedBoard? detectedBoard;
+  final List<UsbiDeviceInfo> usbiDevices;
+  final String? selectedUsbiInstanceId;
 
   const ConnectState({
     this.mode = ConnectMode.uart,
@@ -41,6 +44,8 @@ class ConnectState {
     this.status = 'READY',
     this.deviceName,
     this.detectedBoard,
+    this.usbiDevices = const [],
+    this.selectedUsbiInstanceId,
   });
 
   bool get connected => connection == ConnectionStatus.connected;
@@ -53,6 +58,8 @@ class ConnectState {
     String? status,
     String? deviceName,
     DetectedBoard? detectedBoard,
+    List<UsbiDeviceInfo>? usbiDevices,
+    String? selectedUsbiInstanceId,
   }) => ConnectState(
     mode: mode ?? this.mode,
     ports: ports ?? this.ports,
@@ -61,6 +68,8 @@ class ConnectState {
     status: status ?? this.status,
     deviceName: deviceName ?? this.deviceName,
     detectedBoard: detectedBoard ?? this.detectedBoard,
+    usbiDevices: usbiDevices ?? this.usbiDevices,
+    selectedUsbiInstanceId: selectedUsbiInstanceId ?? this.selectedUsbiInstanceId,
   );
 }
 
@@ -73,6 +82,7 @@ class ConnectController extends StateNotifier<ConnectState> {
   ConnectController(this._ref)
       : super(ConnectState(mode: Platform.isMacOS ? ConnectMode.ble : ConnectMode.uart)) {
     if (!Platform.isMacOS) scanPorts();
+    if (Platform.isWindows) scanUsbi();
   }
 
   // UART
@@ -94,6 +104,57 @@ class ConnectController extends StateNotifier<ConnectState> {
   void setMode(ConnectMode mode) {
     if (state.connected) return;
     state = state.copyWith(mode: mode, status: 'READY');
+    if (mode == ConnectMode.usbi) scanUsbi();
+  }
+
+  // ── USBi (ADAU1466, Windows 전용) ───────────────────────────────────────
+  //
+  // Analog Devices USBi(VID 0x0456)를 SetupAPI로 감지만 한다. SigmaStudio가
+  // USBi와 주고받는 실제 SPI 커맨드 프로토콜은 공개 문서가 없어 이번 세션에서
+  // 구현하지 않았다 — 추측으로 구현하면 실기기에 잘못된 데이터를 보낼 위험이
+  // 있기 때문(HANDOFF.md 참고). 따라서 "연결"은 장치 존재 확인까지만 하고,
+  // sendBytes()는 이 모드에서 항상 false를 반환한다(DSP write 안 됨).
+
+  void scanUsbi() {
+    if (!Platform.isWindows) return;
+    final devices = detectUsbiDevices();
+    state = state.copyWith(
+      usbiDevices: devices,
+      selectedUsbiInstanceId: devices.isNotEmpty ? devices.first.instanceId : null,
+    );
+  }
+
+  void selectUsbiDevice(String instanceId) {
+    state = state.copyWith(selectedUsbiInstanceId: instanceId);
+  }
+
+  Future<void> connectUsbi() async {
+    if (!Platform.isWindows) return;
+    scanUsbi(); // 최신 상태로 재확인 후 연결 시도
+    if (state.usbiDevices.isEmpty) {
+      state = state.copyWith(
+        connection: ConnectionStatus.error,
+        status: 'ERROR: USBi 장치를 찾을 수 없습니다 (VID 0x0456)',
+      );
+      return;
+    }
+    final device = state.usbiDevices.firstWhere(
+      (d) => d.instanceId == state.selectedUsbiInstanceId,
+      orElse: () => state.usbiDevices.first,
+    );
+    state = state.copyWith(
+      connection: ConnectionStatus.connected,
+      status: 'CONNECTED (USBi 감지됨 — SPI 프로토콜 미구현, DSP 전송 불가)',
+      deviceName: device.friendlyName,
+    );
+  }
+
+  void disconnectUsbi() {
+    state = state.copyWith(
+      connection: ConnectionStatus.disconnected,
+      status: 'READY',
+      deviceName: null,
+    );
   }
 
   // ── UART ─────────────────────────────────────────────────────────────────
@@ -388,7 +449,9 @@ class ConnectController extends StateNotifier<ConnectState> {
   // ── 공통 인터페이스 (dsp_controller가 사용) ───────────────────────────────
 
   Future<void> connect() async {
-    if (state.mode == ConnectMode.ble && !Platform.isWindows) {
+    if (state.mode == ConnectMode.usbi) {
+      await connectUsbi();
+    } else if (state.mode == ConnectMode.ble && !Platform.isWindows) {
       await scanAndConnectBle();
     } else {
       await connectUart();
@@ -396,7 +459,9 @@ class ConnectController extends StateNotifier<ConnectState> {
   }
 
   void disconnect() {
-    if (state.mode == ConnectMode.ble) {
+    if (state.mode == ConnectMode.usbi) {
+      disconnectUsbi();
+    } else if (state.mode == ConnectMode.ble) {
       disconnectBle();
     } else {
       disconnectUart();
@@ -405,6 +470,11 @@ class ConnectController extends StateNotifier<ConnectState> {
 
   Future<bool> sendBytes(List<int> bytes) async {
     if (!state.connected) return false;
+    if (state.mode == ConnectMode.usbi) {
+      // SPI 프로토콜 미구현 — 감지/연결 확인까지만 지원(파일 상단 주석 참고)
+      debugPrint('[USBi] SPI write 미구현 — ${bytes.length}바이트 전송 안 됨');
+      return false;
+    }
     try {
       if (state.mode == ConnectMode.ble && _bleWriteChar != null) {
         await _bleWriteChar!.write(

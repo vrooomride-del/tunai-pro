@@ -107,6 +107,14 @@ class ConnectScreen extends ConsumerWidget {
                     onTap: connected ? null : () => ctrl.setMode(ConnectMode.ble),
                   ),
                 ],
+                if (Platform.isWindows) ...[
+                  const SizedBox(width: 8),
+                  _ModeTab(
+                    label: 'USBi (ADAU1466)',
+                    active: state.mode == ConnectMode.usbi,
+                    onTap: connected ? null : () => ctrl.setMode(ConnectMode.usbi),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 20),
@@ -212,6 +220,61 @@ class ConnectScreen extends ConsumerWidget {
               const SizedBox(height: 12),
             ],
 
+            // ── USBi 장치 선택 (ADAU1466) ─────────────────────────────────
+            if (state.mode == ConnectMode.usbi) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white24),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: DropdownButton<String>(
+                  value: state.selectedUsbiInstanceId,
+                  hint: Text(
+                    state.usbiDevices.isEmpty ? 'NO USBi DETECTED (VID 0x0456)' : 'SELECT USBi DEVICE',
+                    style: const TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 1),
+                  ),
+                  dropdownColor: const Color(0xFF111111),
+                  underline: const SizedBox(),
+                  isExpanded: true,
+                  items: state.usbiDevices.map((d) => DropdownMenuItem(
+                    value: d.instanceId,
+                    child: Text(d.friendlyName,
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        overflow: TextOverflow.ellipsis),
+                  )).toList(),
+                  onChanged: connected ? null : (v) => v == null ? null : ctrl.selectUsbiDevice(v),
+                ),
+              ),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: connected ? null : ctrl.scanUsbi,
+                child: const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Row(children: [
+                    Icon(Icons.refresh, color: Colors.white38, size: 12),
+                    SizedBox(width: 6),
+                    Text('다시 스캔', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                  ]),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                  borderRadius: BorderRadius.circular(6),
+                  color: Colors.amber.withValues(alpha: 0.05),
+                ),
+                child: const Text(
+                  'USBi 장치 감지/연결 확인만 지원합니다. ADI USBi가 SigmaStudio와 주고받는 '
+                  'SPI 커맨드 프로토콜은 공개 문서가 없어 아직 구현하지 않았습니다 — '
+                  '연결에 성공해도 DSP로 실제 데이터가 전송되지 않습니다.',
+                  style: TextStyle(color: Colors.amber, fontSize: 11, height: 1.6),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
             // ── CONNECT / SCAN / DISCONNECT 버튼 ─────────────────────────
             GestureDetector(
               onTap: scanning ? null : (connected ? ctrl.disconnect : ctrl.connect),
@@ -299,9 +362,13 @@ class ConnectScreen extends ConsumerWidget {
                   const Text('STATUS',
                       style: TextStyle(color: Colors.white60, fontSize: 12, letterSpacing: 2)),
                   const SizedBox(height: 12),
-                  _infoRow('MODE', state.mode == ConnectMode.ble ? 'BLE' : 'UART'),
+                  _infoRow('MODE', switch (state.mode) {
+                    ConnectMode.ble => 'BLE',
+                    ConnectMode.usbi => 'USBi',
+                    ConnectMode.uart => 'UART',
+                  }),
                   _infoRow(
-                    state.mode == ConnectMode.ble ? 'DEVICE' : 'PORT',
+                    state.mode == ConnectMode.uart ? 'PORT' : 'DEVICE',
                     state.deviceName ?? state.selectedPort ?? '-',
                   ),
                   if (state.mode == ConnectMode.uart) _infoRow('BAUD', '38400'),

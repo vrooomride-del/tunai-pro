@@ -23,6 +23,11 @@ dependencies:
   # BLE 통신 (ICP5 BLE — macOS/Android)
   flutter_blue_plus: ^1.31.15
 
+  # ADAU1466 USBi 감지 (Windows 전용, SetupAPI FFI — 다른 플러그인의 전이
+  # 의존성으로 이미 존재하던 버전을 직접 의존성으로 승격)
+  win32: ^5.13.0
+  ffi: ^2.1.0
+
   # 차트 (Bode plot, 주파수 응답)
   fl_chart: ^0.68.0
 

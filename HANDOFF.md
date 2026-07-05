@@ -3,7 +3,7 @@
 > 이 표는 매 세션 시작/종료 시 갱신한다.
 > 새 작업으로 새기 전에 반드시 먼저 읽고, 세션 끝나면 변경된 항목만 갱신해서 다음 HANDOFF.md에 그대로 옮긴다.
 
-**업데이트: 2026-07-05 (Pro CONNECT 화면 — TARGET 수동 선택 추가, ADAU1466/Windows BLE 한계 명시)**
+**업데이트: 2026-07-05 (ADAU1466 USBi 감지 구현 — SPI 프로토콜은 미구현, 장치 감지/연결 확인까지)**
 
 ---
 
@@ -667,6 +667,64 @@ UI와 `systemProfileProvider` 갱신(기존에도 자동탐지가 하던 것과 
    `win_ble`) — 별도 세션 스코프, 플랫폼 채널 작업 필요해 리스크 있음
 3. UART 대안이 있다면: 실제 VID/PID 확인 후 `_kIcp5Vids`/`_adau1466Names`
    패턴 보강
+
+### 커밋
+`62ad0a6` — fix(pro): CONNECT 화면에 TARGET 보드 수동 선택 추가, ADAU1466/Windows BLE 한계 명시
+
+---
+
+## ADAU1466 USBi 연결 구현 (2026-07-05)
+
+### 배경
+장치관리자에서 "Analog Devices USBi (programmed)"가 정상 인식됨을 확인 — 지난 세션의
+"BLE 전용일 가능성" 추정과 달리, ADAU1466은 Analog Devices의 공식 USBi 프로그래머
+(VID 0x0456)로 SPI 직접 연결되는 방식이었다. ICP5/UART와는 완전히 다른 하드웨어 경로.
+
+### 구현 범위 — 감지/연결 확인까지 (SPI 프로토콜은 미구현)
+**ADI USBi가 SigmaStudio와 주고받는 실제 SPI 커맨드 프로토콜은 공개 문서가 없다.**
+추측으로 구현하면 실기기에 잘못된 데이터를 보낼 위험이 있어(이번 주 내내 지켜온
+"검증 안 된 하드웨어 프로토콜은 추측하지 않는다" 원칙과 동일선상), 이번 세션은
+사용자가 미리 안내한 대로 **"USBi 감지됨 UI 표시 + 연결 시도까지만" 구현하고 여기서
+멈췄다.**
+
+### 수정 내용
+- **`pubspec.yaml`**: `win32`(이미 다른 플러그인의 전이 의존성으로 존재하던 5.13.0을
+  직접 의존성으로 승격) + `ffi` 추가. 실제 win32 패키지 소스(pub-cache)를 직접 읽어
+  `SetupDiGetClassDevs`/`SetupDiEnumDeviceInfo`/`SetupDiGetDeviceInstanceId`/
+  `SetupDiGetDeviceRegistryProperty` 시그니처를 확인한 뒤 작성 — 기억에 의존한 추측
+  코드가 아님
+- **`lib/features/connect/usbi_detector.dart`**(신규, Windows 전용): SetupAPI로 VID
+  0x0456 USB 장치를 열거해서 인스턴스ID/친숙한 이름을 반환. 실패해도 예외를 던지지
+  않고 빈 리스트 반환(감지 실패가 앱을 죽이면 안 됨)
+- **`connect_controller.dart`**: `ConnectMode.usbi` 추가. `scanUsbi()`(SetupAPI 재스캔),
+  `connectUsbi()`(장치 존재 확인 후 "연결됨"으로 표시하되 상태 문구에 SPI 미구현임을
+  항상 명시), `disconnectUsbi()`. 공용 `connect()`/`disconnect()`/`sendBytes()`에
+  분기 추가 — **`sendBytes()`는 usbi 모드에서 항상 `false`를 반환**(DSP write가
+  실제로는 나가지 않음을 보장). 생성자에서 Windows일 때 자동 스캔(기존 UART
+  포트 자동스캔과 동일 패턴)
+- **`connect_screen.dart`**: Windows 전용 "USBi (ADAU1466)" 모드 탭 추가, 감지된
+  장치 드롭다운 + 재스캔 버튼 + "SPI 프로토콜 미구현" 경고 배너(amber, 상시 노출—
+  연결 성공해도 사라지지 않음). STATUS 패널의 MODE 표시도 3분기로 확장
+
+### Do not 준수
+BLE/ICP5 관련 코드는 전혀 건드리지 않음(UART/BLE 경로 무변경). DSP 주소/Safety
+로직도 무변경 — `sendBytes()`가 usbi 모드에서 무조건 실패 처리되므로 애초에
+DspAdapter까지 도달하는 값 자체가 없음.
+
+### 확인
+`flutter analyze` — 0 issues (기존 무관 info 1건 제외). **실제 Windows 하드웨어에서
+테스트 못 함** — SetupAPI 호출 자체가 macOS에서 실행 불가능해서(win32 DLL 바인딩이
+Windows 전용) 이 환경에서 런타임 검증이 원천적으로 불가능했다. 시그니처는 실제
+win32 패키지 소스와 대조해 맞췄지만, 실제 USBi 장치가 SetupAPI 열거에서 어떤
+정확한 hardware ID 문자열로 나타나는지는 실기기로 확인 필요.
+
+### 다음 세션 (실기기 확인 필요)
+1. Windows에서 USBi 탭 열어 장치가 실제로 감지되는지, 친숙한 이름이 올바르게
+   나오는지 확인
+2. SPI 프로토콜 구현이 필요하면: SigmaStudio+USBi 통신을 USB 패킷 캡처(Wireshark
+   +USBPcap, 이전 세션에 ADAU1701용으로 설계했던 것과 동일한 접근)로 실측해서
+   실제 커맨드 포맷을 확인한 뒤 진행할 것 — 절대 추측으로 구현하지 말 것
+3. ICP5+1466 조합(별도 작업 예정, 이번 세션 스코프 아님)
 
 ### 커밋
 (다음 커밋 예정)
