@@ -262,22 +262,50 @@ class ConnectController extends StateNotifier<ConnectState> {
   }
 
   Future<void> connectUart() async {
-    if (state.selectedPort == null) return;
+    final port = state.selectedPort;
+    if (port == null) {
+      state = state.copyWith(
+        connection: ConnectionStatus.error,
+        status: 'ERROR: 포트가 선택되지 않았습니다. 드롭다운에서 COM 포트를 선택하세요.',
+      );
+      return;
+    }
+
+    // 즉시 connecting 상태로 전환 — 버튼이 "CONNECTING..."으로 바뀌어야 클릭이 됐음을 알 수 있음
+    state = state.copyWith(
+      connection: ConnectionStatus.connecting,
+      status: '$port 연결 중...',
+    );
+
+    debugPrint('[UART] connectUart() 시작 — port=$port');
+
     try {
       _port?.close();
-      _port = SerialPort(state.selectedPort!);
+      _port = SerialPort(port);
 
       // VID/PID는 포트를 열기 전에 조회 가능 (libserialport가 OS USB 트리에서 읽음)
-      final board = _detectBoardFromUart(_port!, state.selectedPort!);
-      debugPrint('[BOARD] UART 탐지: $board  VID=${_port!.vendorId?.toRadixString(16)}  PID=${_port!.productId?.toRadixString(16)}  port=${state.selectedPort}');
+      final vid = _port!.vendorId;
+      final pid = _port!.productId;
+      final board = _detectBoardFromUart(_port!, port);
+      debugPrint('[UART] 보드 탐지: $board  VID=0x${vid?.toRadixString(16) ?? '?'}  PID=0x${pid?.toRadixString(16) ?? '?'}  port=$port');
+
+      debugPrint('[UART] openReadWrite() 시도...');
+      final opened = _port!.openReadWrite();
+      if (!opened) {
+        final err = SerialPort.lastError;
+        final errMsg = err != null ? '${err.message} (code ${err.errorCode})' : '이유 불명';
+        debugPrint('[UART] openReadWrite() 실패 — $errMsg');
+        throw Exception('포트 열기 실패: $errMsg');
+      }
+      debugPrint('[UART] openReadWrite() 성공');
 
       final config = SerialPortConfig();
       config.baudRate = 38400;
       config.bits = 8;
       config.stopBits = 1;
       config.parity = SerialPortParity.none;
-      if (!_port!.openReadWrite()) throw Exception('포트 열기 실패');
       _port!.config = config;
+      debugPrint('[UART] 설정 완료 — baud=38400 8N1');
 
       String connStatus;
       switch (board) {
@@ -285,21 +313,29 @@ class ConnectController extends StateNotifier<ConnectState> {
           _ref.read(systemProfileProvider.notifier).state = kTunaiOneSystemProfile;
           connStatus = 'CONNECTED (UART · ADAU1701 자동 선택됨)';
         case DetectedBoard.adau1466:
-          connStatus = 'CONNECTED (UART · ADAU1466 — 지원 준비 중)';
+          connStatus = 'CONNECTED (UART · ADAU1466 감지됨)';
         case DetectedBoard.unknown:
-          connStatus = 'CONNECTED (UART · 보드 미식별 — 수동 선택 필요)';
+          connStatus = 'CONNECTED (UART · 보드 미식별 — 수동 TARGET 선택 필요)';
       }
+      debugPrint('[UART] 연결 완료 — $connStatus');
 
       state = state.copyWith(
         connection: ConnectionStatus.connected,
         status: connStatus,
-        deviceName: state.selectedPort,
+        deviceName: port,
         detectedBoard: board,
       );
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('[UART] 연결 오류: $e\n$st');
+      final msg = e.toString();
+      // SigmaStudio 등 다른 프로그램이 포트를 열고 있으면 Access Denied 류 에러가 남
+      final hint = (msg.contains('Access') || msg.contains('access') ||
+              msg.contains('denied') || msg.contains('5)'))
+          ? ' — 다른 프로그램(SigmaStudio 등)이 포트를 점유 중일 수 있습니다. 닫고 재시도하세요.'
+          : '';
       state = state.copyWith(
         connection: ConnectionStatus.error,
-        status: 'ERROR: $e',
+        status: 'ERROR: $msg$hint',
       );
     }
   }
