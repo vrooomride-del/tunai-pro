@@ -7,6 +7,7 @@ import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/profiles/system_profile.dart';
 import 'usbi_detector.dart';
+import 'usbi_transport.dart';
 
 // ICP5(WONDOM) BLE GATT UUID — GATT 덤프로 확인된 실제 값
 class _ICP5UUID {
@@ -109,11 +110,16 @@ class ConnectController extends StateNotifier<ConnectState> {
 
   // ── USBi (ADAU1466, Windows 전용) ───────────────────────────────────────
   //
-  // Analog Devices USBi(VID 0x0456)를 SetupAPI로 감지만 한다. SigmaStudio가
-  // USBi와 주고받는 실제 SPI 커맨드 프로토콜은 공개 문서가 없어 이번 세션에서
-  // 구현하지 않았다 — 추측으로 구현하면 실기기에 잘못된 데이터를 보낼 위험이
-  // 있기 때문(HANDOFF.md 참고). 따라서 "연결"은 장치 존재 확인까지만 하고,
-  // sendBytes()는 이 모드에서 항상 false를 반환한다(DSP write 안 됨).
+  // Analog Devices USBi(VID 0x0456) 프로토콜(Setup+Body 컨트롤 전송, SafeLoad
+  // 3단계 write)은 GPT + Wireshark 캡처 역산으로 확정되어 usbi_protocol.dart/
+  // usbi_transport.dart에 구현되어 있다. 다만 WinUSB로 장치를 CreateFile 열려면
+  // ADI USBi 드라이버가 등록한 디바이스 인터페이스 GUID가 필요한데, 이 GUID를
+  // 확인할 방법이 없어(UsbiTransport.kUsbiDeviceInterfaceGuid == null) 아래
+  // connectUsbi()의 실제 open() 시도는 항상 안전하게 실패한다 — 짐작한 GUID를
+  // 채워 넣지 않았다(HANDOFF.md 참고). GUID가 채워지면 이 파일의 나머지 로직은
+  // 수정 없이 그대로 동작하도록 작성했다.
+
+  UsbiTransport? _usbiTransport;
 
   void scanUsbi() {
     if (!Platform.isWindows) return;
@@ -142,19 +148,58 @@ class ConnectController extends StateNotifier<ConnectState> {
       (d) => d.instanceId == state.selectedUsbiInstanceId,
       orElse: () => state.usbiDevices.first,
     );
+
+    // GUID가 확인되기 전까지 devicePath는 항상 null → open()까지 안 가고
+    // 아래에서 안전하게 "감지됨/전송 불가" 상태로 표시한다.
+    final devicePath = findUsbiDevicePath(
+      device.instanceId,
+      interfaceGuid: UsbiTransport.kUsbiDeviceInterfaceGuid,
+    );
+
+    if (devicePath == null) {
+      state = state.copyWith(
+        connection: ConnectionStatus.connected,
+        status: 'CONNECTED (USBi 감지됨 — 디바이스 인터페이스 GUID 미확인으로 SPI 전송 불가)',
+        deviceName: device.friendlyName,
+      );
+      return;
+    }
+
+    final transport = UsbiTransport();
+    if (!transport.open(devicePath)) {
+      state = state.copyWith(
+        connection: ConnectionStatus.connected,
+        status: 'CONNECTED (USBi 감지됨 — WinUSB open 실패, SPI 전송 불가)',
+        deviceName: device.friendlyName,
+      );
+      return;
+    }
+
+    _usbiTransport = transport;
     state = state.copyWith(
       connection: ConnectionStatus.connected,
-      status: 'CONNECTED (USBi 감지됨 — SPI 프로토콜 미구현, DSP 전송 불가)',
+      status: 'CONNECTED (USBi · SPI 전송 준비됨)',
       deviceName: device.friendlyName,
     );
   }
 
   void disconnectUsbi() {
+    _usbiTransport?.close();
+    _usbiTransport = null;
     state = state.copyWith(
       connection: ConnectionStatus.disconnected,
       status: 'READY',
       deviceName: null,
     );
+  }
+
+  /// 6개 알려진 Volume 채널(kAdau1466VolumeAddresses)에 동일 게인을 적용해보는
+  /// 테스트 유틸리티. `_usbiTransport`가 열려있지 않으면(= GUID 미확인 또는
+  /// WinUSB open 실패) null을 반환 — 실기기 없이 호출해도 안전하다.
+  Map<int, bool>? testUsbiVolumeWrite(double gainDb) {
+    final transport = _usbiTransport;
+    if (transport == null || !transport.isOpen) return null;
+    return testWriteAllVolumeChannelsUsbi(transport, gainDb);
   }
 
   // ── UART ─────────────────────────────────────────────────────────────────
@@ -471,8 +516,15 @@ class ConnectController extends StateNotifier<ConnectState> {
   Future<bool> sendBytes(List<int> bytes) async {
     if (!state.connected) return false;
     if (state.mode == ConnectMode.usbi) {
-      // SPI 프로토콜 미구현 — 감지/연결 확인까지만 지원(파일 상단 주석 참고)
-      debugPrint('[USBi] SPI write 미구현 — ${bytes.length}바이트 전송 안 됨');
+      // 의도적으로 항상 false: 이 27바이트 UART/BLE 프레임
+      // ([0xAA][addr 2B][data 20B][XOR][0x55])은 USBi와 무관하다.
+      // USBi는 완전히 다른 패킷 구조(컨트롤 전송 setup+body, SafeLoad
+      // 3단계)를 쓰므로 DspAdapter의 공용 sendBytes 경로를 타지 않고
+      // usbi_protocol.dart/usbi_transport.dart의 전용 함수
+      // (writeVolumeUsbi 등)를 직접 호출해야 한다 — 아래 testUsbiVolumeWrite
+      // 참고. 따라서 DspAdapter를 통한 실시간 슬라이더 조작은 USBi 모드에서
+      // 아직 지원하지 않으며, 이는 미구현이 아니라 설계상 별도 경로다.
+      debugPrint('[USBi] 공용 sendBytes 경로 미지원(설계상 별도 경로) — ${bytes.length}바이트 전송 안 됨');
       return false;
     }
     try {
@@ -505,6 +557,7 @@ class ConnectController extends StateNotifier<ConnectState> {
   void dispose() {
     _port?.close();
     _bleDevice?.disconnect();
+    _usbiTransport?.close();
     super.dispose();
   }
 }

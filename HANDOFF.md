@@ -728,3 +728,82 @@ win32 패키지 소스와 대조해 맞췄지만, 실제 USBi 장치가 SetupAPI
 
 ### 커밋
 (다음 커밋 예정)
+
+---
+
+## ADAU1466 USBi SPI write 구현 (2026-07-05)
+
+### 배경
+사용자가 GPT + Wireshark 캡처 역산으로 USBi 패킷 구조를 확정해서 전달함:
+- Setup 8바이트: `40 B2 00 00 01 01 [NN] 00` (NN=body 길이) — 표준 `WINUSB_SETUP_PACKET`
+  레이아웃(bmRequestType/bRequest/wValue/wIndex/wLength)과 정확히 일치
+- Body: `[addr 2B BE] + [data 4B BE]`
+- ACK: `C0 B5 00 00 00 00 01 00` 요청 → 응답 1바이트가 `0x01`
+- 실시간 파라미터(Volume 등) write는 SafeLoad 경유 3단계: `0x6000`에 데이터 write →
+  `0x6000`에 0(Q5.23 unity) write → `0x6005` 트리거
+
+### 수정 내용
+- **`lib/features/connect/usbi_protocol.dart`**(신규): 순수 Dart 패킷 조립 로직만
+  분리(win32 의존성 없음 — 유닛 테스트 가능). Setup 패킷 빌더, ACK 상수, write body
+  빌더(단일워드/다중워드), SafeLoad 3단계 시퀀스 빌더, dB→Q8.24 변환
+  (`linear=10^(dB/20)`, `value=round(linear*2^24)`) 포함
+- **`lib/features/connect/usbi_transport.dart`**(신규): `winusb.dll` FFI 바인딩
+  (`WinUsb_Initialize`/`WinUsb_Free`/`WinUsb_ControlTransfer`, `WINUSB_SETUP_PACKET`
+  구조체) — win32 패키지에 WinUSB 바인딩이 없어(직접 확인함, SetupAPI/kernel32만
+  제공) 직접 작성. `UsbiTransport` 클래스(`open`/`close`/`controlWrite`/`readAck`/
+  `sendSequence`), `writeVolumeUsbi`, 6채널 테스트용 `testWriteAllVolumeChannelsUsbi`,
+  PEQ/Delay 등 다른 SafeLoad 파라미터로 확장 가능한 범용 진입점
+  `writeSafeLoadParamUsbi(transport, targetAddr, fixedPointValue)` 추가
+- **`lib/features/connect/usbi_detector.dart`**: `findUsbiDevicePath(instanceId,
+  {interfaceGuid})` 추가 — SetupAPI로 디바이스 인터페이스 GUID 기준 `CreateFile`용
+  경로를 찾는 표준 2단계 크기조회 패턴(`SetupDiEnumDeviceInterfaces` →
+  `SetupDiGetDeviceInterfaceDetail`). `interfaceGuid`가 null이면 항상 null 반환
+- **`connect_controller.dart`**: `connectUsbi()`가 이제 실제로 `findUsbiDevicePath` →
+  `UsbiTransport.open()`을 시도한다. `testUsbiVolumeWrite(gainDb)` 추가(6채널
+  테스트 유틸리티 호출용). `sendBytes()`의 usbi 분기는 여전히 항상 `false` —
+  이는 미구현이 아니라 **설계상 의도**: 기존 27바이트 UART/BLE 프레임
+  (`[0xAA][addr][data][XOR][0x55]`)은 USBi 패킷 구조와 근본적으로 다르므로,
+  USBi는 `DspAdapter`의 공용 경로를 타지 않고 `usbi_protocol.dart`/
+  `usbi_transport.dart`의 전용 함수를 직접 호출하는 별도 경로로 설계함
+  (dsp_controller.dart의 `rawWrite`/`sendBytes` 체인은 확인 결과 UART/BLE
+  전용 프레이밍이라 USBi에 재사용할 수 없었음)
+
+### ⚠️ 확정 아님 — 검증 필요한 부분
+1. **가장 큰 미해결 지점**: WinUSB로 장치를 열려면 ADI USBi 드라이버가 등록한
+   디바이스 인터페이스 GUID가 필요한데, 이 GUID를 확인할 방법이 없었다.
+   `UsbiTransport.kUsbiDeviceInterfaceGuid = null`로 비워뒀고, `findUsbiDevicePath`도
+   이 값이 null이면 항상 null을 반환하도록 만들어서 **`connectUsbi()`의 실제 open
+   시도는 현재 상태에서 항상 안전하게 실패한다.** Windows 장치관리자에서 USBi 장치
+   → 속성 → 세부정보 → "디바이스 인터페이스 클래스"(또는 드라이버 INF에서
+   `AddInterface`로 등록된 GUID)로 확인 가능
+2. SafeLoad 3단계의 바이트 **구조**는 사용자가 준 실측 예시와 100% 일치하게
+   구현했지만, 각 단계가 "왜" 그 주소를 쓰는지의 **의미 해석**(1단계가
+   `targetAddr+1`에 쓰고 3단계 트리거가 `targetAddr` 자체를 참조한다는 것)은
+   예시 하나에서 역으로 추론한 것이다 — 실기기로 여러 채널/여러 값을 검증하기
+   전까지 "구조는 맞다"이지 "의미까지 100% 확정"은 아님(`usbi_protocol.dart`
+   상단 docstring에도 명시)
+3. `WINUSB_SETUP_PACKET`/`WinUsb_*` FFI 시그니처는 마이크로소프트 공식 문서 기준으로
+   작성했지만(15년 이상 안정된 표준 API), 지난 SetupAPI 작업처럼 실제 win32 패키지
+   소스와 대조할 참조가 없어(win32 패키지 자체에 WinUSB 바인딩이 없음) 검증 수준이
+   상대적으로 낮음
+
+### Do not 준수
+BLE/UART 코드 무변경. Safety Validation 로직 무변경(USBi는 DspAdapter/
+ValidatingDspAdapter 경로를 아예 타지 않으므로 애초에 접점 없음). 스피커 없이는
+테스트 불가 — 이번 세션은 코드 구현만, 실기기 테스트는 다음 세션으로 명시 이관.
+
+### 확인
+`flutter analyze` — 0 issues (기존 무관 info 1건 제외). **macOS 환경이라 win32/WinUSB
+FFI 자체가 로드 안 되므로 런타임 테스트 원천 불가** — 정적 분석과 코드 리뷰까지만
+가능했음.
+
+### 다음 세션 (실기기 필요)
+1. 위 GUID를 확인해서 `kUsbiDeviceInterfaceGuid`를 채운 뒤, `connectUsbi()` →
+   `testUsbiVolumeWrite()` 순으로 실기기 연결 테스트
+2. SafeLoad 3단계의 의미 해석(targetAddr+1 vs targetAddr)을 실측 재검증 — 다른
+   채널/다른 dB 값으로 캡처해서 대조
+3. PEQ(15밴드 biquad)/Delay를 USBi로 확장할 때는 각 파라미터의 고정소수점 변환만
+   추가하고 `writeSafeLoadParamUsbi`를 그대로 재사용
+
+### 커밋
+(다음 커밋 예정)

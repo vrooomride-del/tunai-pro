@@ -81,6 +81,83 @@ void _readDeviceIfAnalogDevices(
   }
 }
 
+/// [instanceId]에 해당하는 장치의 `CreateFile`용 심볼릭 링크 경로를 찾는다.
+///
+/// **현재 항상 null을 반환한다** — ADI USBi 드라이버가 등록하는 정확한
+/// 디바이스 인터페이스 GUID를 확인할 방법이 없어서다(usbi_transport.dart의
+/// `UsbiTransport.kUsbiDeviceInterfaceGuid` 참고). 그 상수를 실제 값으로
+/// 채우면 이 함수의 나머지 로직(SetupDiEnumDeviceInterfaces →
+/// SetupDiGetDeviceInterfaceDetail의 표준 2단계 크기조회 패턴)이 그대로
+/// 동작하도록 미리 작성해뒀다 — 짐작한 값을 넣느니 막아두는 쪽을 택함.
+String? findUsbiDevicePath(String instanceId, {String? interfaceGuid}) {
+  if (interfaceGuid == null) return null; // GUID 미확인 — 항상 안전하게 실패
+
+  final guidPtr = GUIDFromString(interfaceGuid);
+  var deviceInfoSet = -1;
+  Pointer<SP_DEVICE_INTERFACE_DATA> ifaceData = nullptr;
+  Pointer<SP_DEVICE_INTERFACE_DETAIL_DATA_> detailData = nullptr;
+
+  try {
+    deviceInfoSet = SetupDiGetClassDevs(
+      guidPtr, nullptr, 0, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE,
+    );
+    if (deviceInfoSet == -1) return null;
+
+    ifaceData = calloc<SP_DEVICE_INTERFACE_DATA>();
+    ifaceData.ref.cbSize = sizeOf<SP_DEVICE_INTERFACE_DATA>();
+
+    var index = 0;
+    while (SetupDiEnumDeviceInterfaces(deviceInfoSet, nullptr, guidPtr, index, ifaceData) != 0) {
+      index++;
+
+      final requiredSize = calloc<Uint32>();
+      try {
+        // 1단계: 필요한 버퍼 크기 조회(항상 실패하지만 requiredSize는 채워짐)
+        SetupDiGetDeviceInterfaceDetail(deviceInfoSet, ifaceData, nullptr, 0, requiredSize, nullptr);
+        if (requiredSize.value == 0) continue;
+
+        detailData = calloc<Uint8>(requiredSize.value).cast<SP_DEVICE_INTERFACE_DETAIL_DATA_>();
+        // 64비트 기준 고정 헤더 크기(Win32 표준 관용구 — 가변 배열 부분은 제외)
+        detailData.ref.cbSize = sizeOf<Uint32>() + sizeOf<IntPtr>();
+
+        final devInfo = calloc<SP_DEVINFO_DATA>();
+        devInfo.ref.cbSize = sizeOf<SP_DEVINFO_DATA>();
+        try {
+          final ok = SetupDiGetDeviceInterfaceDetail(
+            deviceInfoSet, ifaceData, detailData, requiredSize.value, nullptr, devInfo,
+          );
+          if (ok == 0) continue;
+
+          final idBuf = calloc<Uint16>(512).cast<Utf16>();
+          try {
+            final gotId = SetupDiGetDeviceInstanceId(deviceInfoSet, devInfo, idBuf, 512, nullptr);
+            if (gotId != 0 && idBuf.toDartString() == instanceId) {
+              return detailData.ref.DevicePath;
+            }
+          } finally {
+            calloc.free(idBuf);
+          }
+        } finally {
+          calloc.free(devInfo);
+        }
+      } finally {
+        calloc.free(requiredSize);
+        if (detailData != nullptr) {
+          calloc.free(detailData);
+          detailData = nullptr;
+        }
+      }
+    }
+  } catch (_) {
+    // 실패 시 조용히 null 반환
+  } finally {
+    if (ifaceData != nullptr) calloc.free(ifaceData);
+    calloc.free(guidPtr);
+    if (deviceInfoSet != -1) SetupDiDestroyDeviceInfoList(deviceInfoSet);
+  }
+  return null;
+}
+
 String? _friendlyName(int deviceInfoSet, Pointer<SP_DEVINFO_DATA> devInfo) {
   const bufBytes = 512;
   final buf = calloc<Uint8>(bufBytes);
