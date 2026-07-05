@@ -9,6 +9,8 @@ import 'package:record/record.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:fftea/fftea.dart';
+import '../auth/auth_controller.dart' show authProvider;
+import '../../core/akg/measurement_session.dart';
 
 enum MeasurementStatus { idle, playing, recording, analyzing, done, error }
 
@@ -47,11 +49,12 @@ class MicMeasurementState {
 }
 
 final micMeasurementProvider = StateNotifierProvider<MicMeasurementController, MicMeasurementState>(
-  (ref) => MicMeasurementController(),
+  (ref) => MicMeasurementController(ref),
 );
 
 class MicMeasurementController extends StateNotifier<MicMeasurementState> {
-  MicMeasurementController() : super(const MicMeasurementState());
+  final Ref _ref;
+  MicMeasurementController(this._ref) : super(const MicMeasurementState());
 
   final _recorder = AudioRecorder();
   final _player = AudioPlayer();
@@ -125,6 +128,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         message: '측정 완료',
         frequencyResponse: response,
       );
+      _recordSession(channelCount: 1);
     } catch (e) {
       state = state.copyWith(
         status: MeasurementStatus.error,
@@ -202,6 +206,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         channelResponses: channelResponses,
         recommendedCrossovers: crossovers,
       );
+      _recordSession(channelCount: channelResponses.length);
     } catch (e) {
       await unmuteAll();
       state = state.copyWith(status: MeasurementStatus.error, error: e.toString());
@@ -393,6 +398,27 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     wavBytes.add(pcm.buffer.asUint8List());
     await file.writeAsBytes(wavBytes.toBytes());
     return file;
+  }
+
+  /// 측정 1회 완료 시 AKG-ready 이력에 기록(fire-and-forget) — 지금 당장 아무도
+  /// 이 데이터를 읽지 않지만, 나중에 AIE/Measurement History가 참조할 수 있도록
+  /// 저장만 해둔다. 실패해도 측정 자체 흐름에는 영향 없음.
+  void _recordSession({required int channelCount}) {
+    () async {
+      try {
+        final profile = _ref.read(systemProfileProvider);
+        final session = MeasurementSession(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          timestamp: DateTime.now(),
+          userId: _ref.read(authProvider).userId,
+          systemProfileId: profile.id.name,
+          channelCount: channelCount,
+        );
+        await MeasurementSessionStore.append(session);
+      } catch (_) {
+        // 이력 저장 실패는 무시 — 측정 기능 자체를 막지 않음
+      }
+    }();
   }
 
   @override

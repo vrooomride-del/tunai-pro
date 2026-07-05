@@ -7,6 +7,8 @@ import '../../core/dsp/dsp_adapter.dart';
 import '../../core/profiles/system_profile.dart';
 import '../../core/factory_preset.dart';
 import '../../core/dsp_safety_notice.dart';
+import '../../core/akg/user_preference_signal.dart';
+import '../auth/auth_controller.dart' show authProvider;
 import '../connect/connect_controller.dart';
 import '../../core/channel_link_provider.dart';
 
@@ -120,6 +122,7 @@ class DspController extends StateNotifier<DspState> {
   // 서로 다른 값으로 드리프트하지 않도록 단일 소스로 유지(AOS 항목 C).
   void resetAll() {
     state = kFactoryPresetFlat.build(_ref.read(systemProfileProvider).maxPeqBands);
+    _recordPreferenceSignal(PreferenceAction.rollback, kFactoryPresetFlat.name);
   }
 
   void resetOutputBands(int idx, {int bandCount = 20}) {
@@ -139,6 +142,7 @@ class DspController extends StateNotifier<DspState> {
   void loadFactoryPreset(FactoryPreset preset) {
     final maxPeqBands = _ref.read(systemProfileProvider).maxPeqBands;
     state = preset.build(maxPeqBands).copyWith(isDirty: false);
+    _recordPreferenceSignal(PreferenceAction.rollback, preset.name);
   }
 
   // ── User 프리셋 저장/불러오기 (SharedPreferences, Factory와 별도 네임스페이스) ──
@@ -153,6 +157,7 @@ class DspController extends StateNotifier<DspState> {
     await prefs.setStringList('dsp_presets', keys);
     await prefs.setString('dsp_preset_$trimmed', state.toJson());
     state = state.copyWith(isDirty: false);
+    _recordPreferenceSignal(PreferenceAction.save, trimmed);
     return true;
   }
 
@@ -170,6 +175,7 @@ class DspController extends StateNotifier<DspState> {
       final inputs = (data['inputs'] as List).map((i) => InputChannel.fromJson(i)).toList();
       final outputs = (data['outputs'] as List).map((o) => OutputChannel.fromJson(o)).toList();
       state = state.copyWith(inputs: inputs, outputs: outputs, isDirty: false);
+      _recordPreferenceSignal(PreferenceAction.select, name);
     } catch (_) {}
   }
 
@@ -179,6 +185,26 @@ class DspController extends StateNotifier<DspState> {
     keys.remove(name);
     await prefs.setStringList('dsp_presets', keys);
     await prefs.remove('dsp_preset_$name');
+    _recordPreferenceSignal(PreferenceAction.delete, name);
+  }
+
+  /// AKG-ready 선호 신호 기록(fire-and-forget) — 지금 당장 아무도 분석하지 않고
+  /// 나중에 AIE가 참조할 수 있도록 저장만 해둔다. 실패해도 프리셋 흐름엔 영향 없음.
+  void _recordPreferenceSignal(PreferenceAction action, String presetLabel) {
+    () async {
+      try {
+        final signal = UserPreferenceSignal(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          timestamp: DateTime.now(),
+          userId: _ref.read(authProvider).userId,
+          action: action,
+          presetLabel: presetLabel,
+        );
+        await UserPreferenceSignalStore.append(signal);
+      } catch (_) {
+        // 이력 저장 실패는 무시
+      }
+    }();
   }
 
   /// 1회성 마이그레이션: Factory/User 분리 이전에 "Factory"라는 이름으로 저장됐던
