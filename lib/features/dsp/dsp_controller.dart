@@ -5,6 +5,8 @@ import 'dsp_state.dart';
 import '../../core/dsp_engine.dart' as engine;
 import '../../core/dsp/dsp_adapter.dart';
 import '../../core/profiles/system_profile.dart';
+import '../../core/factory_preset.dart';
+import '../../core/dsp_safety_notice.dart';
 import '../connect/connect_controller.dart';
 import '../../core/channel_link_provider.dart';
 
@@ -16,8 +18,11 @@ final dspProvider = StateNotifierProvider<DspController, DspState>(
 class DspController extends StateNotifier<DspState> {
   final Ref _ref;
   DspController(this._ref)
-      : super(DspState.initial(
-          maxPeqBands: _ref.read(systemProfileProvider).maxPeqBands));
+      : super(kFactoryPresetFlat.build(_ref.read(systemProfileProvider).maxPeqBands)) {
+    // 과거(Factory/User 레이어 분리 이전)에 "Factory"라는 이름으로 저장된 유저
+    // 프리셋이 있으면 1회 마이그레이션 — 데이터는 보존하고 이름만 바꾼다.
+    _migrateLegacyFactoryNamedPresets();
+  }
 
   // ── 탭 전환 ──────────────────────────────────────
   void selectOutput(int i) => state = state.copyWith(selectedOutput: i, showInput: false, selectedBand: 0);
@@ -111,8 +116,10 @@ class DspController extends StateNotifier<DspState> {
   }
 
   // ── RESET ────────────────────────────────────────
+  // Factory 레이어(kFactoryPresetFlat)를 직접 가리킨다 — "초기화"와 "Factory 로드"가
+  // 서로 다른 값으로 드리프트하지 않도록 단일 소스로 유지(AOS 항목 C).
   void resetAll() {
-    state = DspState.initial(maxPeqBands: _ref.read(systemProfileProvider).maxPeqBands);
+    state = kFactoryPresetFlat.build(_ref.read(systemProfileProvider).maxPeqBands);
   }
 
   void resetOutputBands(int idx, {int bandCount = 20}) {
@@ -126,14 +133,27 @@ class DspController extends StateNotifier<DspState> {
     );
   }
 
-  // ── 프리셋 저장/불러오기 ──────────────────────────
-  Future<void> savePreset(String name) async {
+  // ── Factory 프리셋 (읽기전용, 별도 계층) ────────────
+  /// Factory는 SharedPreferences에 저장되지 않는다 — 코드에 내장된 불변 값을
+  /// 그대로 state에 반영할 뿐이라 덮어쓰기/삭제 대상이 아니다.
+  void loadFactoryPreset(FactoryPreset preset) {
+    final maxPeqBands = _ref.read(systemProfileProvider).maxPeqBands;
+    state = preset.build(maxPeqBands).copyWith(isDirty: false);
+  }
+
+  // ── User 프리셋 저장/불러오기 (SharedPreferences, Factory와 별도 네임스페이스) ──
+  /// "Factory"(대소문자 무관)로는 저장할 수 없다 — 성공 시 true, 예약된 이름이라
+  /// 거부되면 false를 반환한다(호출부가 사용자에게 안내).
+  Future<bool> savePreset(String name) async {
+    final trimmed = name.trim();
+    if (isReservedPresetName(trimmed)) return false;
     final prefs = await SharedPreferences.getInstance();
     final keys = prefs.getStringList('dsp_presets') ?? [];
-    if (!keys.contains(name)) keys.add(name);
+    if (!keys.contains(trimmed)) keys.add(trimmed);
     await prefs.setStringList('dsp_presets', keys);
-    await prefs.setString('dsp_preset_$name', state.toJson());
+    await prefs.setString('dsp_preset_$trimmed', state.toJson());
     state = state.copyWith(isDirty: false);
+    return true;
   }
 
   Future<List<String>> getPresets() async {
@@ -159,6 +179,35 @@ class DspController extends StateNotifier<DspState> {
     keys.remove(name);
     await prefs.setStringList('dsp_presets', keys);
     await prefs.remove('dsp_preset_$name');
+  }
+
+  /// 1회성 마이그레이션: Factory/User 분리 이전에 "Factory"라는 이름으로 저장됐던
+  /// 유저 프리셋을 찾아 데이터는 보존한 채 이름만 바꾼다(삭제하지 않음 — 사용자
+  /// 데이터 손실 방지). 여러 개 있어도 이름이 겹치지 않게 번호를 붙인다.
+  Future<void> _migrateLegacyFactoryNamedPresets() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getStringList('dsp_presets') ?? [];
+    final collisions = keys.where(isReservedPresetName).toList();
+    if (collisions.isEmpty) return;
+
+    for (final old in collisions) {
+      final json = prefs.getString('dsp_preset_$old');
+      keys.remove(old);
+      await prefs.remove('dsp_preset_$old');
+      if (json == null) continue;
+
+      var newName = '$old (사용자 저장본)';
+      var suffix = 2;
+      while (keys.contains(newName)) {
+        newName = '$old (사용자 저장본 $suffix)';
+        suffix++;
+      }
+      keys.add(newName);
+      await prefs.setString('dsp_preset_$newName', json);
+    }
+    await prefs.setStringList('dsp_presets', keys);
+    DspSafetyNotice.show(
+        '기존 "Factory"라는 이름으로 저장된 프리셋을 "(사용자 저장본)"으로 이름을 바꿨습니다 — 데이터는 그대로 보존됩니다.');
   }
 
   // ── SEND TO DSP ───────────────────────────────────

@@ -8,6 +8,7 @@ import 'widgets/crossover.dart';
 import 'widgets/channel_strip.dart';
 import '../connect/connect_controller.dart';
 import 'widgets/ai_panel.dart';
+import '../../core/factory_preset.dart';
 import '../../core/profiles/system_profile.dart';
 import '../mic/mic_measurement_controller.dart';
 import '../../core/channel_link_provider.dart';
@@ -96,12 +97,17 @@ class DspScreen extends ConsumerWidget {
               child: const Text('취소', style: TextStyle(color: Colors.white38))),
           TextButton(
             onPressed: () async {
+              final name = nameCtrl.text.trim();
               final nav = Navigator.of(context);
               final messenger = ScaffoldMessenger.of(context);
-              await ctrl.savePreset(nameCtrl.text.trim());
+              final ok = await ctrl.savePreset(name);
+              if (!ok) {
+                messenger.showSnackBar(const SnackBar(
+                    content: Text('"Factory"는 예약된 이름이라 사용할 수 없습니다. 다른 이름을 입력하세요.')));
+                return; // 다이얼로그 유지 — 사용자가 이름을 다시 입력
+              }
               nav.pop();
-              messenger.showSnackBar(
-                  SnackBar(content: Text('${nameCtrl.text} 저장됐습니다.')));
+              messenger.showSnackBar(SnackBar(content: Text('$name 저장됐습니다.')));
             },
             child: const Text('저장', style: TextStyle(color: Colors.white)),
           ),
@@ -111,13 +117,9 @@ class DspScreen extends ConsumerWidget {
   }
 
   void _showLoadDialog(BuildContext context, DspController ctrl) async {
-    final messenger = ScaffoldMessenger.of(context);
+    // Factory는 항상 최소 1개 존재하므로(kFactoryPresets) 유저 프리셋이 비어 있어도
+    // 다이얼로그를 열 수 있다 — "불러올 게 없다"는 상황 자체가 없어짐.
     final presets = await ctrl.getPresets();
-    if (presets.isEmpty) {
-      messenger.showSnackBar(
-          const SnackBar(content: Text('저장된 프리셋이 없습니다.')));
-      return;
-    }
     if (!context.mounted) return;
     showDialog(
       context: context,
@@ -129,27 +131,54 @@ class DspScreen extends ConsumerWidget {
           width: 300,
           child: ListView(
             shrinkWrap: true,
-            children: presets.map((name) => ListTile(
-              title: Text(name,
-                  style: const TextStyle(color: Colors.white, fontSize: 12)),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline,
-                    color: Colors.white24, size: 16),
-                onPressed: () async {
-                  final nav = Navigator.of(context);
-                  await ctrl.deletePreset(name);
-                  nav.pop();
-                },
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 4),
+                child: Text('FACTORY (읽기전용)',
+                    style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1)),
               ),
-              onTap: () async {
-                final nav = Navigator.of(context);
-                final snackbar = ScaffoldMessenger.of(context);
-                await ctrl.loadPreset(name);
-                nav.pop();
-                snackbar.showSnackBar(
-                    SnackBar(content: Text('$name 불러왔습니다.')));
-              },
-            )).toList(),
+              ...kFactoryPresets.map((p) => ListTile(
+                title: Text(p.name, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                subtitle: Text(p.description,
+                    style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                onTap: () {
+                  final nav = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
+                  ctrl.loadFactoryPreset(p);
+                  nav.pop();
+                  messenger.showSnackBar(SnackBar(content: Text('${p.name} 불러왔습니다.')));
+                },
+              )),
+              if (presets.isNotEmpty) ...[
+                const Divider(color: Colors.white12),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 4),
+                  child: Text('MY PRESETS',
+                      style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1)),
+                ),
+                ...presets.map((name) => ListTile(
+                  title: Text(name,
+                      style: const TextStyle(color: Colors.white, fontSize: 12)),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline,
+                        color: Colors.white24, size: 16),
+                    onPressed: () async {
+                      final nav = Navigator.of(context);
+                      await ctrl.deletePreset(name);
+                      nav.pop();
+                    },
+                  ),
+                  onTap: () async {
+                    final nav = Navigator.of(context);
+                    final snackbar = ScaffoldMessenger.of(context);
+                    await ctrl.loadPreset(name);
+                    nav.pop();
+                    snackbar.showSnackBar(
+                        SnackBar(content: Text('$name 불러왔습니다.')));
+                  },
+                )),
+              ],
+            ],
           ),
         ),
       ),
