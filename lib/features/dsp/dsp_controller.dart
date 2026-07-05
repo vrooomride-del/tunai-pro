@@ -4,7 +4,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dsp_state.dart';
 import '../../core/dsp_engine.dart' as engine;
 import '../../core/dsp/dsp_adapter.dart';
-import '../../core/dsp/adau1701_adapter.dart';
 import '../../core/profiles/system_profile.dart';
 import '../connect/connect_controller.dart';
 import '../../core/channel_link_provider.dart';
@@ -172,7 +171,10 @@ class DspController extends StateNotifier<DspState> {
 
     final notifier = _ref.read(connectProvider.notifier);
     Future<bool> rawWrite(List<int> bytes) => notifier.sendBytes(bytes);
-    final adapter = Adau1701Adapter(send: rawWrite);
+    // profile.adapterFactory를 반드시 경유해야 ValidatingDspAdapter(Safety
+    // Validation Layer)가 적용된다 — 이전에는 Adau1701Adapter를 직접 생성해서
+    // 이 경로를 우회하고 있었음(Living Speaker gap analysis에서 발견).
+    final adapter = profile.adapterFactory(rawWrite);
 
     for (var chIdx = 0; chIdx < state.outputs.length; chIdx++) {
       final out = state.outputs[chIdx];

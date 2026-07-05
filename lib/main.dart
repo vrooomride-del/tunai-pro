@@ -5,6 +5,7 @@ import 'features/community/community_screen.dart';
 import 'features/connect/connect_screen.dart';
 import 'features/driver/driver_screen.dart';
 import 'features/mic/measurement_mic_screen.dart';
+import 'core/dsp_safety_notice.dart';
 
 void main() {
   runApp(const ProviderScope(child: TunaiProApp()));
@@ -14,10 +15,11 @@ class TunaiProApp extends StatelessWidget {
   const TunaiProApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       title: 'TUNAI Pro',
       debugShowCheckedModeBanner: false,
-      home: TunaiProShell(),
+      scaffoldMessengerKey: DspSafetyNotice.scaffoldMessengerKey,
+      home: const TunaiProShell(),
     );
   }
 }
