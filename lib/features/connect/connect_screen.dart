@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'connect_controller.dart';
+import '../../core/profiles/system_profile.dart';
 
 Future<void> _showBluetoothOffDialog(BuildContext context) async {
   if (!context.mounted) return;
@@ -47,9 +48,15 @@ class ConnectScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(connectProvider);
     final ctrl = ref.read(connectProvider.notifier);
+    final profile = ref.watch(systemProfileProvider);
     final connected = state.connected;
     final scanning = state.connection == ConnectionStatus.scanning ||
         state.connection == ConnectionStatus.connecting;
+    // Windows는 flutter_blue_plus가 네이티브 구현체를 제공하지 않아 BLE 자체가
+    // 불가능함(fed6fff에서 크래시 방지로 탭을 숨김 — 플러그인 한계, 버그 아님).
+    // ADAU1466(파란보드)이 온보드 QCC5125 BLE로만 연결되는 구성이라면 Windows에서는
+    // 이 앱으로 연결할 방법이 없다 — UART 포트가 하나도 안 보이는 게 정상일 수 있음.
+    final bleUnavailableOnWindows = Platform.isWindows;
 
     // Bluetooth OFF 감지 → 안내 다이얼로그 (BLE 모드일 때만)
     ref.listen<ConnectState>(connectProvider, (prev, next) {
@@ -104,6 +111,41 @@ class ConnectScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
 
+            // ── TARGET 보드 선택 (수동 오버라이드) ────────────────────────
+            const Text('TARGET BOARD',
+                style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 3)),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.white24),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: DropdownButton<SystemProfile>(
+                value: profile,
+                dropdownColor: const Color(0xFF111111),
+                underline: const SizedBox(),
+                isExpanded: true,
+                items: kAllSystemProfiles.map((p) => DropdownMenuItem(
+                  value: p,
+                  child: Text('${p.displayName} (${p.chipLabel})',
+                      style: const TextStyle(color: Colors.white, fontSize: 13)),
+                )).toList(),
+                onChanged: connected
+                    ? null
+                    : (p) {
+                        if (p != null) ref.read(systemProfileProvider.notifier).state = p;
+                      },
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              '연결 시 자동탐지가 성공하면 이 값을 덮어씁니다 — 자동탐지가 안 되거나 '
+              '틀리게 판단할 때 수동으로 지정하세요.',
+              style: TextStyle(color: Colors.white24, fontSize: 10, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+
             const Text('DSP CONNECTION',
                 style: TextStyle(color: Colors.white60, fontSize: 13, letterSpacing: 3)),
             const SizedBox(height: 16),
@@ -132,6 +174,25 @@ class ConnectScreen extends ConsumerWidget {
                   onChanged: connected ? null : (v) => ctrl.selectPort(v!),
                 ),
               ),
+              if (state.ports.isEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.white12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    bleUnavailableOnWindows
+                        ? '포트가 하나도 없습니다. USB 케이블/드라이버(CH34x, FTDI, CP210x 등)를 '
+                          '확인하세요. 이 보드가 BLE(온보드 QCC5125 등)로만 연결되는 구성이라면, '
+                          'Windows에서는 BLE를 지원하지 않아(flutter_blue_plus 플러그인 한계) '
+                          '이 앱으로 연결할 수 없습니다 — macOS 버전을 사용하세요.'
+                        : 'USB 케이블 연결과 드라이버(CH34x, FTDI, CP210x 등) 설치 여부를 확인하세요.',
+                    style: const TextStyle(color: Colors.white38, fontSize: 11, height: 1.6),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
             ],
 
@@ -196,8 +257,9 @@ class ConnectScreen extends ConsumerWidget {
                   Icon(Icons.info_outline, color: Colors.amber, size: 14),
                   SizedBox(width: 8),
                   Expanded(child: Text(
-                    'ADAU1466 보드가 탐지됐습니다. 현재 지원 준비 중입니다.\n'
-                    'ADAU1701(JAB4) 보드에서 사용 가능합니다.',
+                    'ADAU1466 보드가 탐지됐습니다. Gain/Delay/PEQ는 사용 가능하고, '
+                    '크로스오버(XO)는 SafeLoad 프로토콜 실기기 검증 전까지 잠겨 있습니다.\n'
+                    '위 TARGET에서 Isobarik/Reference 중 실제 보드에 맞는 쪽을 선택하세요.',
                     style: TextStyle(color: Colors.amber, fontSize: 12, height: 1.5),
                   )),
                 ]),
@@ -243,7 +305,7 @@ class ConnectScreen extends ConsumerWidget {
                     state.deviceName ?? state.selectedPort ?? '-',
                   ),
                   if (state.mode == ConnectMode.uart) _infoRow('BAUD', '38400'),
-                  _infoRow('TARGET', 'ADAU1701 via ICP5'),
+                  _infoRow('TARGET', '${profile.displayName} (${profile.chipLabel})'),
                   _infoRow('STATUS', state.status,
                       error: state.status.startsWith('ERROR')),
                   if (state.mode == ConnectMode.uart && state.ports.isNotEmpty) ...[
