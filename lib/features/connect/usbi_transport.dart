@@ -30,7 +30,7 @@ class UsbiTransport {
   /// ADI USBi WinUSB 디바이스 인터페이스 GUID.
   /// VID=0x0456 PID=0x7031, 드라이버=libwdi(winusb.sys), 장치관리자 Class GUID로 확인.
   static const String kUsbiDeviceInterfaceGuid =
-      '{88bae032-5a81-49f0-bc3d-a4ff138216d6}';
+      '{3DA527B1-7E23-4147-88CB-E5F953755CA2}';
 
   int _fileHandle = -1;
   int _winUsbHandle = 0;
