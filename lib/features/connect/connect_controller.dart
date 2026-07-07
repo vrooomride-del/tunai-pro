@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
@@ -120,6 +119,8 @@ class ConnectController extends StateNotifier<ConnectState> {
   // 수정 없이 그대로 동작하도록 작성했다.
 
   UsbiTransport? _usbiTransport;
+
+  UsbiTransport? get usbiTransport => _usbiTransport;
 
   void scanUsbi() {
     if (!Platform.isWindows) return;

@@ -27,9 +27,10 @@ import 'usbi_protocol.dart';
 /// 원칙에 어긋나 비워뒀다). Windows 장치관리자에서 USBi 장치 속성 → 세부정보 →
 /// "장치 인스턴스 경로"/"디바이스 인터페이스 클래스" 항목으로 확인 가능.
 class UsbiTransport {
-  /// TODO: ADI USBi WinUSB 디바이스 인터페이스 GUID — 실기기/드라이버에서 확인 후 채울 것.
-  /// 비어있는 동안 [open]은 항상 실패한다(안전한 실패 — 잘못된 장치에 쓰지 않음).
-  static const String? kUsbiDeviceInterfaceGuid = null;
+  /// ADI USBi WinUSB 디바이스 인터페이스 GUID.
+  /// VID=0x0456 PID=0x7031, 드라이버=libwdi(winusb.sys), 장치관리자 Class GUID로 확인.
+  static const String kUsbiDeviceInterfaceGuid =
+      '{88bae032-5a81-49f0-bc3d-a4ff138216d6}';
 
   int _fileHandle = -1;
   int _winUsbHandle = 0;

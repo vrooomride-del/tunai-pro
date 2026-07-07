@@ -12,6 +12,7 @@ import '../../core/factory_preset.dart';
 import '../../core/profiles/system_profile.dart';
 import '../mic/mic_measurement_controller.dart';
 import '../../core/channel_link_provider.dart';
+import 'master_volume_controller.dart';
 
 class DspScreen extends ConsumerWidget {
   const DspScreen({super.key});
@@ -57,6 +58,9 @@ class DspScreen extends ConsumerWidget {
             ref.read(systemProfileProvider.notifier).state = p;
             ctrl.resetBandsForProfile(p.maxPeqBands);
           }),
+
+          // ── Master Volume ─────────────────────────────
+          if (connected) const _MasterVolumeSection(),
 
           // ── INPUT / OUTPUT 탭 선택 ───────────────────
           _SectionTabs(showInput: state.showInput, ctrl: ctrl, state: state),
@@ -593,6 +597,75 @@ class _BoardSelector extends StatelessWidget {
             onTap: () => onSelect(p),
           )),
           const Spacer(),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Master Volume ─────────────────────────────────────────────
+
+class _MasterVolumeSection extends ConsumerWidget {
+  const _MasterVolumeSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final vol = ref.watch(masterVolumeProvider);
+    final ctrl = ref.read(masterVolumeProvider.notifier);
+
+    return Container(
+      color: const Color(0xFF0D0D0D),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('MASTER VOL',
+                  style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 3)),
+              const SizedBox(width: 12),
+              Text('${vol.toStringAsFixed(1)} dB',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11, letterSpacing: 1)),
+              const Spacer(),
+              // 테스트 버튼 3개
+              for (final db in [-60.0, -50.0, -40.0]) ...[
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: () => ctrl.setVolume(db),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                          color: vol == db ? Colors.white54 : Colors.white24, width: 0.5),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text('${db.toInt()}',
+                        style: TextStyle(
+                          color: vol == db ? Colors.white70 : Colors.white38,
+                          fontSize: 10, letterSpacing: 1,
+                        )),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 1.5,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: Colors.white54,
+              inactiveTrackColor: Colors.white12,
+              thumbColor: Colors.white,
+              overlayColor: Colors.white12,
+            ),
+            child: Slider(
+              value: vol,
+              min: -70, max: 0,
+              onChanged: (v) => ctrl.updateUiOnly(v),
+              onChangeEnd: (v) => ctrl.setVolume(v),
+            ),
+          ),
         ],
       ),
     );

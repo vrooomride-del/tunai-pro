@@ -242,7 +242,6 @@ class DspController extends StateNotifier<DspState> {
     if (conn.connection != ConnectionStatus.connected) return false;
 
     final profile = _ref.read(systemProfileProvider);
-    if (profile.isAdau1466) return false; // 주소맵 미확정
 
     final notifier = _ref.read(connectProvider.notifier);
     Future<bool> rawWrite(List<int> bytes) => notifier.sendBytes(bytes);

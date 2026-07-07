@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   desktop_webview_window
   flutter_libserialport
+  just_audio_windows
   record_windows
   url_launcher_windows
   window_to_front
