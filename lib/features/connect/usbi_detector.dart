@@ -118,7 +118,9 @@ String? findUsbiDevicePath(String instanceId, {String? interfaceGuid}) {
         if (requiredSize.value == 0) continue;
 
         detailData = calloc<Uint8>(requiredSize.value).cast<SP_DEVICE_INTERFACE_DETAIL_DATA_>();
-        detailData.ref.cbSize = sizeOf<Uint32>() + sizeOf<IntPtr>();
+        // SP_DEVICE_INTERFACE_DETAIL_DATA_W: DWORD(4) + WCHAR[1](2), 4-byte alignment → 8
+        // sizeOf<IntPtr>() 를 쓰면 12 가 되어 error 1784 (ERROR_INVALID_USER_BUFFER) 발생
+        detailData.ref.cbSize = 8;
 
         final devInfo = calloc<SP_DEVINFO_DATA>();
         devInfo.ref.cbSize = sizeOf<SP_DEVINFO_DATA>();
