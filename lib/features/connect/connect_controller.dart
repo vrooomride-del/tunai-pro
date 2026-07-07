@@ -136,6 +136,7 @@ class ConnectController extends StateNotifier<ConnectState> {
   }
 
   Future<void> connectUsbi() async {
+    print('[USBi] connectUsbi() 시작');
     if (!Platform.isWindows) return;
     scanUsbi(); // 최신 상태로 재확인 후 연결 시도
     if (state.usbiDevices.isEmpty) {
@@ -152,10 +153,12 @@ class ConnectController extends StateNotifier<ConnectState> {
 
     // GUID가 확인되기 전까지 devicePath는 항상 null → open()까지 안 가고
     // 아래에서 안전하게 "감지됨/전송 불가" 상태로 표시한다.
+    print('[USBi] findUsbiDevicePath 호출');
     final devicePath = findUsbiDevicePath(
       device.instanceId,
       interfaceGuid: UsbiTransport.kUsbiDeviceInterfaceGuid,
     );
+    print('[USBi] devicePath: $devicePath');
 
     if (devicePath == null) {
       state = state.copyWith(
