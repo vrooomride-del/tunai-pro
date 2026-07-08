@@ -4,6 +4,7 @@ import 'project_status_bar.dart';
 import 'tabs/project_tab.dart';
 import 'tabs/workbench_tabs.dart';
 import '../../core/pro_project_store.dart';
+import '../../core/pro_measurement_store.dart';
 import '../../shared/pro_widgets.dart';
 
 class WorkbenchShell extends ConsumerStatefulWidget {
@@ -16,6 +17,14 @@ class WorkbenchShell extends ConsumerStatefulWidget {
 
 class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
   int _tabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(proMeasurementProvider.notifier).loadForProject(widget.projectId);
+    });
+  }
 
   static const _tabs = [
     _TabDef('Project', Icons.folder_outlined),

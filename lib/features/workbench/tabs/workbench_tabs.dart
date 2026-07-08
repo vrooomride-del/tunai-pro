@@ -1,3 +1,8 @@
+// Re-export tabs that have been split into dedicated files
+export 'measure_tab.dart';
+export 'analyze_tab.dart';
+export 'report_tab.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/pro_project.dart';
@@ -123,143 +128,8 @@ class _StatChip extends StatelessWidget {
   );
 }
 
-// ── Report Tab (special — shows project summary) ─────────────────────────────
-
-class ReportTab extends ConsumerWidget {
-  final String projectId;
-  const ReportTab({super.key, required this.projectId});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final store = ref.watch(proProjectStoreProvider);
-    final project = store.projects.where((p) => p.id == projectId).firstOrNull;
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(Icons.summarize_outlined, color: kProAccent.withValues(alpha: 0.6), size: 18),
-          const SizedBox(width: 10),
-          Text('Tuning Report', style: proTitle(size: 16)),
-        ]),
-        const SizedBox(height: 8),
-        Text('Export measurements, tuning decisions, and validation results.',
-            style: proSubtitle()),
-        const SizedBox(height: 20),
-
-        if (project != null) ...[
-          _SummaryCard(project: project),
-          const SizedBox(height: 16),
-        ],
-
-        Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: kProSurface,
-            border: Border.all(color: kProBorder),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Row(children: [
-            const Icon(Icons.hourglass_empty_outlined, color: Colors.white24, size: 14),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Report generation will be available after the project is Verified.',
-                style: proSubtitle(size: 11),
-              ),
-            ),
-          ]),
-        ),
-
-        const SizedBox(height: 16),
-        Wrap(spacing: 10, runSpacing: 10, children: const [
-          ProQuickStat('FORMAT', 'PDF / JSON'),
-          ProQuickStat('PAGES', '—'),
-          ProQuickStat('GENERATED', 'Never'),
-          ProQuickStat('SIGNED BY', '—'),
-        ].map((s) => _StatChip(stat: s)).toList()),
-      ]),
-    );
-  }
-}
-
-class _SummaryCard extends StatelessWidget {
-  final ProProject project;
-  const _SummaryCard({required this.project});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('PROJECT SUMMARY', style: proLabel(size: 9, spacing: 1.8)),
-      const SizedBox(height: 12),
-      _row('Project', project.name),
-      _row('Speaker', project.speakerModel),
-      _row('Room', project.roomName),
-      _row('DSP Target', project.dspTarget),
-      _row('Sample Rate', project.sampleRateLabel),
-      _row('Status', project.profileStatus.label),
-      _row('Safety', project.safetyStatus.label),
-    ]),
-  );
-
-  Widget _row(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Row(children: [
-      SizedBox(width: 100, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
-      Text(value, style: proValue(size: 11, color: Colors.white60)),
-    ]),
-  );
-}
-
 // ── Individual Tab Widgets ────────────────────────────────────────────────────
-
-class MeasureTab extends StatelessWidget {
-  final String projectId;
-  const MeasureTab({super.key, required this.projectId});
-  @override
-  Widget build(BuildContext context) => _StatusAwarePlaceholder(
-    projectId: projectId,
-    title: 'Measurement Workspace',
-    subtitle: 'Capture frequency response, phase, impulse response, and stereo balance.',
-    icon: Icons.mic_none_outlined,
-    stats: const [
-      ProQuickStat('FR RANGE', '20 Hz – 20 kHz'),
-      ProQuickStat('RESOLUTION', '1/24 oct'),
-      ProQuickStat('CHANNELS', 'L / R / Sum'),
-      ProQuickStat('SMOOTHING', '1/6 oct'),
-    ],
-    readinessMessage: (s) => s == ProfileStatus.draft
-        ? 'Ready to capture measurement data.'
-        : 'Measurement complete. Proceed to Analyze.',
-  );
-}
-
-class AnalyzeTab extends StatelessWidget {
-  final String projectId;
-  const AnalyzeTab({super.key, required this.projectId});
-  @override
-  Widget build(BuildContext context) => _StatusAwarePlaceholder(
-    projectId: projectId,
-    title: 'Acoustic Analysis',
-    subtitle: 'Review detected acoustic issues before tuning.',
-    icon: Icons.bar_chart_outlined,
-    stats: const [
-      ProQuickStat('PEAKS', '—'),
-      ProQuickStat('DIPS', '—'),
-      ProQuickStat('RESONANCES', '—'),
-      ProQuickStat('SCORE', '—'),
-    ],
-    readinessMessage: (s) => s.isAtLeast(ProfileStatus.measured)
-        ? 'Measurement data is ready for acoustic analysis.'
-        : 'Run measurement first.',
-  );
-}
+// MeasureTab, AnalyzeTab, ReportTab are defined in dedicated files (re-exported above).
 
 class CrossoverTab extends StatelessWidget {
   final String projectId;

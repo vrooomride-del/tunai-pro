@@ -104,10 +104,11 @@ class _ProjectTabState extends ConsumerState<ProjectTab> {
         const SizedBox(height: 20),
 
         // ── 3. Quick Actions ───────────────────────────────────────────────
-        const _SectionLabel('QUICK ACTIONS'),
+        const _SectionLabel('DEVELOPMENT WORKFLOW CONTROLS'),
         const SizedBox(height: 8),
         Text(
-          'Manually advance the project status for testing. Real transitions will be triggered by each workbench module.',
+          'Simulation-only controls for testing workflow transitions. '
+          'Real status changes are driven by the Measure, Analyze, Protection, and Deploy modules.',
           style: proSubtitle(size: 10),
         ),
         const SizedBox(height: 12),

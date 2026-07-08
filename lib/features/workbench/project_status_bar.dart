@@ -52,6 +52,14 @@ class ProjectStatusBar extends ConsumerWidget {
           value: safetyLabel,
           valueColor: _safetyColor(project?.safetyStatus),
         ),
+        if (project != null && project.measurementCount > 0) ...[
+          const _Div(),
+          _StatusItem(
+            label: 'SESSIONS',
+            value: '${project.measurementCount}',
+            valueColor: kProGreen,
+          ),
+        ],
         const Spacer(),
         Padding(
           padding: const EdgeInsets.only(right: 16),
