@@ -1,162 +1,409 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/pro_project.dart';
+import '../../../core/pro_project_store.dart';
 import '../../../shared/pro_widgets.dart';
 
-class MeasureTab extends StatelessWidget {
-  const MeasureTab({super.key});
+// ── Helper: project-aware placeholder ────────────────────────────────────────
+
+class _StatusAwarePlaceholder extends ConsumerWidget {
+  final String projectId;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final List<ProQuickStat> stats;
+  final String Function(ProfileStatus status) readinessMessage;
+
+  const _StatusAwarePlaceholder({
+    required this.projectId,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.stats,
+    required this.readinessMessage,
+  });
+
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final store = ref.watch(proProjectStoreProvider);
+    final project = store.projects.where((p) => p.id == projectId).firstOrNull;
+    final status = project?.profileStatus ?? ProfileStatus.draft;
+    final msg = readinessMessage(status);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, color: kProAccent.withValues(alpha: 0.6), size: 18),
+          const SizedBox(width: 10),
+          Text(title, style: proTitle(size: 16)),
+        ]),
+        const SizedBox(height: 8),
+        Text(subtitle, style: proSubtitle()),
+        const SizedBox(height: 16),
+
+        // Readiness banner
+        _ReadinessBanner(message: msg, status: status),
+        const SizedBox(height: 20),
+
+        // Graph placeholder
+        Container(
+          height: 180,
+          decoration: BoxDecoration(
+            color: kProSurface,
+            border: Border.all(color: kProBorder),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(icon, color: Colors.white10, size: 36),
+              const SizedBox(height: 12),
+              Text('No data', style: proLabel(color: Colors.white24)),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: stats.map((s) => _StatChip(stat: s)).toList(),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ReadinessBanner extends StatelessWidget {
+  final String message;
+  final ProfileStatus status;
+  const _ReadinessBanner({required this.message, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final isReady = !message.startsWith('Run') && !message.startsWith('Create') && !message.startsWith('Verify');
+    final color = isReady ? kProGreen : kProAmber;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(children: [
+        Icon(
+          isReady ? Icons.check_circle_outline : Icons.info_outline,
+          color: color,
+          size: 14,
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Text(message, style: proSubtitle(size: 11))),
+        ProStatusPill(label: status.label, color: isReady ? kProGreen : const Color(0xFF6B7280)),
+      ]),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final ProQuickStat stat;
+  const _StatChip({required this.stat});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(stat.label, style: proLabel(size: 9)),
+      const SizedBox(height: 4),
+      Text(stat.value, style: proValue(size: 13, color: Colors.white70)),
+    ]),
+  );
+}
+
+// ── Report Tab (special — shows project summary) ─────────────────────────────
+
+class ReportTab extends ConsumerWidget {
+  final String projectId;
+  const ReportTab({super.key, required this.projectId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final store = ref.watch(proProjectStoreProvider);
+    final project = store.projects.where((p) => p.id == projectId).firstOrNull;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.summarize_outlined, color: kProAccent.withValues(alpha: 0.6), size: 18),
+          const SizedBox(width: 10),
+          Text('Tuning Report', style: proTitle(size: 16)),
+        ]),
+        const SizedBox(height: 8),
+        Text('Export measurements, tuning decisions, and validation results.',
+            style: proSubtitle()),
+        const SizedBox(height: 20),
+
+        if (project != null) ...[
+          _SummaryCard(project: project),
+          const SizedBox(height: 16),
+        ],
+
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          decoration: BoxDecoration(
+            color: kProSurface,
+            border: Border.all(color: kProBorder),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(children: [
+            const Icon(Icons.hourglass_empty_outlined, color: Colors.white24, size: 14),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Report generation will be available after the project is Verified.',
+                style: proSubtitle(size: 11),
+              ),
+            ),
+          ]),
+        ),
+
+        const SizedBox(height: 16),
+        Wrap(spacing: 10, runSpacing: 10, children: const [
+          ProQuickStat('FORMAT', 'PDF / JSON'),
+          ProQuickStat('PAGES', '—'),
+          ProQuickStat('GENERATED', 'Never'),
+          ProQuickStat('SIGNED BY', '—'),
+        ].map((s) => _StatChip(stat: s)).toList()),
+      ]),
+    );
+  }
+}
+
+class _SummaryCard extends StatelessWidget {
+  final ProProject project;
+  const _SummaryCard({required this.project});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('PROJECT SUMMARY', style: proLabel(size: 9, spacing: 1.8)),
+      const SizedBox(height: 12),
+      _row('Project', project.name),
+      _row('Speaker', project.speakerModel),
+      _row('Room', project.roomName),
+      _row('DSP Target', project.dspTarget),
+      _row('Sample Rate', project.sampleRateLabel),
+      _row('Status', project.profileStatus.label),
+      _row('Safety', project.safetyStatus.label),
+    ]),
+  );
+
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(children: [
+      SizedBox(width: 100, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
+      Text(value, style: proValue(size: 11, color: Colors.white60)),
+    ]),
+  );
+}
+
+// ── Individual Tab Widgets ────────────────────────────────────────────────────
+
+class MeasureTab extends StatelessWidget {
+  final String projectId;
+  const MeasureTab({super.key, required this.projectId});
+  @override
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Measurement Workspace',
     subtitle: 'Capture frequency response, phase, impulse response, and stereo balance.',
     icon: Icons.mic_none_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('FR RANGE', '20 Hz – 20 kHz'),
       ProQuickStat('RESOLUTION', '1/24 oct'),
       ProQuickStat('CHANNELS', 'L / R / Sum'),
       ProQuickStat('SMOOTHING', '1/6 oct'),
     ],
+    readinessMessage: (s) => s == ProfileStatus.draft
+        ? 'Ready to capture measurement data.'
+        : 'Measurement complete. Proceed to Analyze.',
   );
 }
 
 class AnalyzeTab extends StatelessWidget {
-  const AnalyzeTab({super.key});
+  final String projectId;
+  const AnalyzeTab({super.key, required this.projectId});
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Acoustic Analysis',
     subtitle: 'Review detected acoustic issues before tuning.',
     icon: Icons.bar_chart_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('PEAKS', '—'),
       ProQuickStat('DIPS', '—'),
       ProQuickStat('RESONANCES', '—'),
       ProQuickStat('SCORE', '—'),
     ],
+    readinessMessage: (s) => s.isAtLeast(ProfileStatus.measured)
+        ? 'Measurement data is ready for acoustic analysis.'
+        : 'Run measurement first.',
   );
 }
 
 class CrossoverTab extends StatelessWidget {
-  const CrossoverTab({super.key});
+  final String projectId;
+  const CrossoverTab({super.key, required this.projectId});
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Crossover Designer',
     subtitle: 'Configure crossover frequency, slope, polarity, and routing.',
     icon: Icons.device_hub_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('HP FREQ', '—'),
       ProQuickStat('LP FREQ', '—'),
       ProQuickStat('SLOPE', '—'),
       ProQuickStat('POLARITY', '—'),
     ],
+    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
+        ? 'Tuning data available.'
+        : 'Create tuning decisions after measurement.',
   );
 }
 
 class PeqTab extends StatelessWidget {
-  const PeqTab({super.key});
+  final String projectId;
+  const PeqTab({super.key, required this.projectId});
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Parametric EQ',
     subtitle: 'Review and edit correction filters.',
     icon: Icons.tune_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('BANDS', '0 / 8'),
       ProQuickStat('MAX GAIN', '—'),
       ProQuickStat('ALGORITHM', 'Biquad IIR'),
       ProQuickStat('FORMAT', 'Direct Form II'),
     ],
+    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
+        ? 'Tuning data available.'
+        : 'Create tuning decisions after measurement.',
   );
 }
 
 class DelayPhaseTab extends StatelessWidget {
-  const DelayPhaseTab({super.key});
+  final String projectId;
+  const DelayPhaseTab({super.key, required this.projectId});
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Time Alignment',
     subtitle: 'Adjust delay and phase for driver integration and imaging.',
     icon: Icons.access_time_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('L DELAY', '0.00 ms'),
       ProQuickStat('R DELAY', '0.00 ms'),
       ProQuickStat('PHASE', '0°'),
       ProQuickStat('RESOLUTION', '0.02 ms'),
     ],
+    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
+        ? 'Tuning data available.'
+        : 'Create tuning decisions after measurement.',
   );
 }
 
 class LimiterTab extends StatelessWidget {
-  const LimiterTab({super.key});
+  final String projectId;
+  const LimiterTab({super.key, required this.projectId});
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Limiter',
     subtitle: 'Set safe output boundaries for the speaker system.',
     icon: Icons.shield_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('THRESHOLD', '—'),
       ProQuickStat('ATTACK', '—'),
       ProQuickStat('RELEASE', '—'),
       ProQuickStat('MODE', 'RMS / Peak'),
     ],
+    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
+        ? 'Tuning data available. Configure limits.'
+        : 'Create tuning decisions after measurement.',
   );
 }
 
 class ProtectionTab extends StatelessWidget {
-  const ProtectionTab({super.key});
+  final String projectId;
+  const ProtectionTab({super.key, required this.projectId});
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Protection Validation',
     subtitle: 'Verify the profile against speaker, amplifier, and thermal limits.',
     icon: Icons.verified_user_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('SPEAKER', 'Not checked'),
       ProQuickStat('AMPLIFIER', 'Not checked'),
       ProQuickStat('THERMAL', 'Not checked'),
       ProQuickStat('AOS STATUS', 'Inactive'),
     ],
+    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
+        ? 'Ready for safety validation.'
+        : 'Create a tuning profile first.',
   );
 }
 
 class CompareTab extends StatelessWidget {
-  const CompareTab({super.key});
+  final String projectId;
+  const CompareTab({super.key, required this.projectId});
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Compare Profiles',
     subtitle: 'Compare original, generated, and manually edited profiles.',
     icon: Icons.compare_arrows_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('PROFILE A', 'Original'),
       ProQuickStat('PROFILE B', 'Generated'),
       ProQuickStat('DELTA RMS', '—'),
       ProQuickStat('DELTA PEAK', '—'),
     ],
+    readinessMessage: (s) => s.isAtLeast(ProfileStatus.measured)
+        ? 'Measurement data available for comparison.'
+        : 'Run measurement first.',
   );
 }
 
 class DeployTab extends StatelessWidget {
-  const DeployTab({super.key});
+  final String projectId;
+  const DeployTab({super.key, required this.projectId});
   @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
+  Widget build(BuildContext context) => _StatusAwarePlaceholder(
+    projectId: projectId,
     title: 'Deploy DSP Profile',
     subtitle: 'Write verified profiles to connected hardware.',
     icon: Icons.upload_outlined,
-    stats: [
+    stats: const [
       ProQuickStat('TARGET', 'Not selected'),
       ProQuickStat('STATUS', 'Not verified'),
       ProQuickStat('CHECKSUM', '—'),
       ProQuickStat('LAST DEPLOY', 'Never'),
     ],
-  );
-}
-
-class ReportTab extends StatelessWidget {
-  const ReportTab({super.key});
-  @override
-  Widget build(BuildContext context) => const WorkbenchPlaceholder(
-    title: 'Tuning Report',
-    subtitle: 'Export measurements, tuning decisions, and validation results.',
-    icon: Icons.summarize_outlined,
-    stats: [
-      ProQuickStat('FORMAT', 'PDF / JSON'),
-      ProQuickStat('PAGES', '—'),
-      ProQuickStat('GENERATED', 'Never'),
-      ProQuickStat('SIGNED BY', '—'),
-    ],
+    readinessMessage: (s) => s == ProfileStatus.verified || s == ProfileStatus.deployed
+        ? 'Profile is ready to deploy.'
+        : 'Verify protection before deployment.',
   );
 }

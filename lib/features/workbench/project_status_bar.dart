@@ -1,68 +1,84 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/pro_project.dart';
+import '../../core/pro_project_store.dart';
 import '../../shared/pro_widgets.dart';
 
 class ProjectStatusBar extends ConsumerWidget {
-  const ProjectStatusBar({super.key});
+  final String projectId;
+  const ProjectStatusBar({super.key, required this.projectId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final project = ref.watch(proProjectProvider);
+    final store = ref.watch(proProjectStoreProvider);
+    final project = store.projects.where((p) => p.id == projectId).firstOrNull;
+
+    final name = project?.name ?? 'No Project';
+    final device = project?.connection.label ?? HardwareConnection.disconnected.label;
+    final sampleRate = project?.sampleRateLabel ?? '—';
+    final dspTarget = project?.dspTarget ?? '—';
+    final profileLabel = project?.profileStatus.label ?? '—';
+    final safetyLabel = project?.safetyStatus.label ?? '—';
+    final isConnected = project?.connection == HardwareConnection.connected;
 
     return Container(
       height: 36,
       decoration: const BoxDecoration(
         color: kProPanel,
-        border: Border(
-          bottom: BorderSide(color: kProBorder, width: 0.5),
+        border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+      ),
+      child: Row(children: [
+        const SizedBox(width: 16),
+        _StatusItem(label: 'PROJECT', value: name),
+        const _Div(),
+        _StatusItem(
+          label: 'DEVICE',
+          value: device,
+          valueColor: isConnected ? kProGreen : const Color(0xFF6B7280),
         ),
-      ),
-      child: Row(
-        children: [
-          const SizedBox(width: 16),
-          _StatusItem(label: 'PROJECT', value: project.name),
-          _Divider(),
-          _StatusItem(label: 'DEVICE', value: project.deviceName,
-              valueColor: project.connection != HardwareConnection.none
-                  ? kProGreen
-                  : const Color(0xFF6B7280)),
-          _Divider(),
-          _StatusItem(label: 'SAMPLE RATE', value: project.sampleRateLabel),
-          _Divider(),
-          _StatusItem(label: 'DSP TARGET', value: project.dspTarget),
-          _Divider(),
-          _StatusItem(label: 'PROFILE', value: project.profileStatusLabel,
-              valueColor: _profileColor(project.profileStatus)),
-          _Divider(),
-          _StatusItem(label: 'SAFETY', value: project.safetyStatusLabel,
-              valueColor: _safetyColor(project.safetyStatus)),
-          const Spacer(),
-          // Principle tag
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Text(
-              'AI suggests · Expert verifies · AOS protects · DSP executes',
-              style: proLabel(size: 9, color: Colors.white24, spacing: 0.5),
-            ),
+        const _Div(),
+        _StatusItem(label: 'SAMPLE RATE', value: sampleRate),
+        const _Div(),
+        _StatusItem(label: 'DSP TARGET', value: dspTarget),
+        const _Div(),
+        _StatusItem(
+          label: 'PROFILE',
+          value: profileLabel,
+          valueColor: _profileColor(project?.profileStatus),
+        ),
+        const _Div(),
+        _StatusItem(
+          label: 'SAFETY',
+          value: safetyLabel,
+          valueColor: _safetyColor(project?.safetyStatus),
+        ),
+        const Spacer(),
+        Padding(
+          padding: const EdgeInsets.only(right: 16),
+          child: Text(
+            'AI suggests · Expert verifies · AOS protects · DSP executes',
+            style: proLabel(size: 9, color: Colors.white24, spacing: 0.5),
           ),
-        ],
-      ),
+        ),
+      ]),
     );
   }
 
-  Color _profileColor(ProfileStatus s) => switch (s) {
+  Color _profileColor(ProfileStatus? s) => switch (s) {
     ProfileStatus.draft => const Color(0xFF6B7280),
-    ProfileStatus.reviewing => kProAmber,
+    ProfileStatus.measured => kProAmber,
+    ProfileStatus.tuned => kProAccent,
     ProfileStatus.verified => kProGreen,
-    ProfileStatus.deployed => kProAccent,
+    ProfileStatus.deployed => kProGreen,
+    null => const Color(0xFF6B7280),
   };
 
-  Color _safetyColor(SafetyStatus s) => switch (s) {
+  Color _safetyColor(SafetyStatus? s) => switch (s) {
     SafetyStatus.notVerified => const Color(0xFF6B7280),
-    SafetyStatus.checking => kProAmber,
-    SafetyStatus.passed => kProGreen,
-    SafetyStatus.failed => kProRed,
+    SafetyStatus.verified => kProGreen,
+    SafetyStatus.warning => kProAmber,
+    SafetyStatus.blocked => kProRed,
+    null => const Color(0xFF6B7280),
   };
 }
 
@@ -83,11 +99,9 @@ class _StatusItem extends StatelessWidget {
   );
 }
 
-class _Divider extends StatelessWidget {
+class _Div extends StatelessWidget {
+  const _Div();
   @override
-  Widget build(BuildContext context) => Container(
-    width: 0.5,
-    height: 16,
-    color: kProBorder,
-  );
+  Widget build(BuildContext context) =>
+      Container(width: 0.5, height: 16, color: kProBorder);
 }

@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'project_status_bar.dart';
 import 'tabs/project_tab.dart';
 import 'tabs/workbench_tabs.dart';
+import '../../core/pro_project_store.dart';
 import '../../shared/pro_widgets.dart';
 
-class WorkbenchShell extends StatefulWidget {
-  final String projectName;
-  const WorkbenchShell({super.key, this.projectName = 'Untitled Project'});
+class WorkbenchShell extends ConsumerStatefulWidget {
+  final String projectId;
+  const WorkbenchShell({super.key, required this.projectId});
 
   @override
-  State<WorkbenchShell> createState() => _WorkbenchShellState();
+  ConsumerState<WorkbenchShell> createState() => _WorkbenchShellState();
 }
 
-class _WorkbenchShellState extends State<WorkbenchShell> {
+class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
   int _tabIndex = 0;
 
   static const _tabs = [
@@ -29,43 +31,44 @@ class _WorkbenchShellState extends State<WorkbenchShell> {
     _TabDef('Report', Icons.summarize_outlined),
   ];
 
-  static const _screens = [
-    ProjectTab(),
-    MeasureTab(),
-    AnalyzeTab(),
-    CrossoverTab(),
-    PeqTab(),
-    DelayPhaseTab(),
-    LimiterTab(),
-    ProtectionTab(),
-    CompareTab(),
-    DeployTab(),
-    ReportTab(),
+  List<Widget> _screens(String projectId) => [
+    ProjectTab(projectId: projectId),
+    MeasureTab(projectId: projectId),
+    AnalyzeTab(projectId: projectId),
+    CrossoverTab(projectId: projectId),
+    PeqTab(projectId: projectId),
+    DelayPhaseTab(projectId: projectId),
+    LimiterTab(projectId: projectId),
+    ProtectionTab(projectId: projectId),
+    CompareTab(projectId: projectId),
+    DeployTab(projectId: projectId),
+    ReportTab(projectId: projectId),
   ];
 
   @override
   Widget build(BuildContext context) {
+    final store = ref.watch(proProjectStoreProvider);
+    final project = store.projects.where((p) => p.id == widget.projectId).firstOrNull;
+    final screens = _screens(widget.projectId);
+
     return Scaffold(
       backgroundColor: kProBg,
       body: Column(children: [
-        // Top status bar
-        const ProjectStatusBar(),
-        // Main content: sidebar + tab body
+        ProjectStatusBar(projectId: widget.projectId),
         Expanded(
           child: Row(children: [
-            // Left sidebar
             _Sidebar(
               tabs: _tabs,
               selected: _tabIndex,
+              projectName: project?.name ?? 'Project',
               onSelect: (i) => setState(() => _tabIndex = i),
+              onClose: () => Navigator.of(context).pop(),
             ),
-            // Vertical divider
             Container(width: 0.5, color: kProBorder),
-            // Tab content
             Expanded(
               child: IndexedStack(
                 index: _tabIndex,
-                children: _screens,
+                children: screens,
               ),
             ),
           ]),
@@ -86,18 +89,48 @@ class _TabDef {
 class _Sidebar extends StatelessWidget {
   final List<_TabDef> tabs;
   final int selected;
+  final String projectName;
   final ValueChanged<int> onSelect;
-  const _Sidebar({required this.tabs, required this.selected, required this.onSelect});
+  final VoidCallback onClose;
+
+  const _Sidebar({
+    required this.tabs,
+    required this.selected,
+    required this.projectName,
+    required this.onSelect,
+    required this.onClose,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 168,
+      width: 172,
       color: kProPanel,
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        // Workbench label
+        // Project name header
+        GestureDetector(
+          onTap: onClose,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.chevron_left, color: Colors.white38, size: 14),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  projectName,
+                  style: proTitle(size: 11, color: Colors.white60),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ]),
+          ),
+        ),
+        // Tab section label
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
           child: Text('WORKBENCH', style: proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
         ),
         Expanded(
@@ -120,19 +153,12 @@ class _Sidebar extends StatelessWidget {
                     ),
                   ),
                   child: Row(children: [
-                    Icon(
-                      tabs[i].icon,
-                      size: 14,
-                      color: active ? kProAccent : Colors.white38,
-                    ),
+                    Icon(tabs[i].icon, size: 14, color: active ? kProAccent : Colors.white38),
                     const SizedBox(width: 9),
                     Expanded(
                       child: Text(
                         tabs[i].label,
-                        style: proTitle(
-                          size: 11,
-                          color: active ? Colors.white : const Color(0xFF6B7280),
-                        ),
+                        style: proTitle(size: 11, color: active ? Colors.white : const Color(0xFF6B7280)),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -142,10 +168,9 @@ class _Sidebar extends StatelessWidget {
             },
           ),
         ),
-        // Bottom version tag
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-          child: Text('TUNAI PRO · Phase A', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
+          child: Text('TUNAI PRO · Phase B', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
         ),
       ]),
     );
