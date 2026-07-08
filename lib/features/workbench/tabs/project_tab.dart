@@ -4,14 +4,60 @@ import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../shared/pro_widgets.dart';
 
-class ProjectTab extends ConsumerWidget {
+class ProjectTab extends ConsumerStatefulWidget {
   final String projectId;
   const ProjectTab({super.key, required this.projectId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ProjectTab> createState() => _ProjectTabState();
+}
+
+class _ProjectTabState extends ConsumerState<ProjectTab> {
+  Future<void> _showNotesDialog(ProProject project) async {
+    final ctrl = TextEditingController(text: project.notes ?? '');
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kProPanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+          side: const BorderSide(color: kProBorder),
+        ),
+        title: Text('Project Notes', style: proTitle(size: 14)),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 5,
+          style: proValue(size: 12, color: Colors.white70),
+          decoration: const InputDecoration(
+            hintText: 'Add notes about goals, constraints, or decisions...',
+            hintStyle: TextStyle(color: Colors.white24, fontSize: 11),
+            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: kProBorder)),
+            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: kProAccent)),
+            filled: true,
+            fillColor: kProSurface,
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text('Cancel', style: proSubtitle(size: 12))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: const Text('Save', style: TextStyle(color: kProAccent, fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (saved != null && mounted) {
+      await ref.read(proProjectStoreProvider.notifier).updateProject(
+        project.copyWith(notes: saved.trim(), updatedAt: DateTime.now()),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final store = ref.watch(proProjectStoreProvider);
-    final project = store.projects.where((p) => p.id == projectId).firstOrNull;
+    final project = store.projects.where((p) => p.id == widget.projectId).firstOrNull;
 
     if (project == null) {
       return Center(child: Text('Project not found.', style: proSubtitle()));
@@ -41,8 +87,13 @@ class ProjectTab extends ConsumerWidget {
           _InfoRow('Sample Rate', project.sampleRateLabel),
           _InfoRow('DSP Target', project.dspTarget),
           _InfoRow('Channel Config', project.channelConfig),
+          _InfoRow('Measurements', '${project.measurementCount}'),
+          if (project.activeProfileName != null)
+            _InfoRow('Active Profile', project.activeProfileName!),
           _InfoRow('Created', _dateLabel(project.createdAt)),
           _InfoRow('Last Updated', _dateLabel(project.updatedAt)),
+          if (project.notes != null && project.notes!.isNotEmpty)
+            _InfoRow('Notes', project.notes!),
         ]),
         const SizedBox(height: 20),
 
@@ -65,29 +116,29 @@ class ProjectTab extends ConsumerWidget {
             label: 'Mark as Measured',
             enabled: project.profileStatus == ProfileStatus.draft,
             onTap: () => ref.read(proProjectStoreProvider.notifier)
-                .updateProfileStatus(projectId, ProfileStatus.measured),
+                .updateProfileStatus(widget.projectId, ProfileStatus.measured),
           ),
           _QuickActionButton(
             label: 'Mark as Tuned',
             enabled: project.profileStatus == ProfileStatus.measured,
             onTap: () => ref.read(proProjectStoreProvider.notifier)
-                .updateProfileStatus(projectId, ProfileStatus.tuned),
+                .updateProfileStatus(widget.projectId, ProfileStatus.tuned),
           ),
           _QuickActionButton(
             label: 'Mark as Verified',
             enabled: project.profileStatus == ProfileStatus.tuned,
             onTap: () {
               ref.read(proProjectStoreProvider.notifier)
-                  .updateProfileStatus(projectId, ProfileStatus.verified);
+                  .updateProfileStatus(widget.projectId, ProfileStatus.verified);
               ref.read(proProjectStoreProvider.notifier)
-                  .updateSafetyStatus(projectId, SafetyStatus.verified);
+                  .updateSafetyStatus(widget.projectId, SafetyStatus.verified);
             },
           ),
           _QuickActionButton(
             label: 'Mark as Deployed',
             enabled: project.profileStatus == ProfileStatus.verified,
             onTap: () => ref.read(proProjectStoreProvider.notifier)
-                .updateProfileStatus(projectId, ProfileStatus.deployed),
+                .updateProfileStatus(widget.projectId, ProfileStatus.deployed),
           ),
           _QuickActionButton(
             label: 'Reset to Draft',
@@ -95,10 +146,16 @@ class ProjectTab extends ConsumerWidget {
             color: kProRed,
             onTap: () {
               ref.read(proProjectStoreProvider.notifier)
-                  .updateProfileStatus(projectId, ProfileStatus.draft);
+                  .updateProfileStatus(widget.projectId, ProfileStatus.draft);
               ref.read(proProjectStoreProvider.notifier)
-                  .updateSafetyStatus(projectId, SafetyStatus.notVerified);
+                  .updateSafetyStatus(widget.projectId, SafetyStatus.notVerified);
             },
+          ),
+          _QuickActionButton(
+            label: 'Edit Notes',
+            enabled: true,
+            color: const Color(0xFF6B7280),
+            onTap: () => _showNotesDialog(project),
           ),
         ]),
 

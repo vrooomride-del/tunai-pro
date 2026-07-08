@@ -59,6 +59,9 @@ class ProProject {
   final ProfileStatus profileStatus;
   final SafetyStatus safetyStatus;
   final HardwareConnection connection;
+  final String? notes;
+  final int measurementCount;
+  final String? activeProfileName;
 
   ProProject({
     required this.id,
@@ -73,6 +76,9 @@ class ProProject {
     this.profileStatus = ProfileStatus.draft,
     this.safetyStatus = SafetyStatus.notVerified,
     this.connection = HardwareConnection.disconnected,
+    this.notes,
+    this.measurementCount = 0,
+    this.activeProfileName,
   });
 
   factory ProProject.create({
@@ -108,6 +114,9 @@ class ProProject {
     ProfileStatus? profileStatus,
     SafetyStatus? safetyStatus,
     HardwareConnection? connection,
+    String? notes,
+    int? measurementCount,
+    String? activeProfileName,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -121,6 +130,9 @@ class ProProject {
     profileStatus: profileStatus ?? this.profileStatus,
     safetyStatus: safetyStatus ?? this.safetyStatus,
     connection: connection ?? this.connection,
+    notes: notes ?? this.notes,
+    measurementCount: measurementCount ?? this.measurementCount,
+    activeProfileName: activeProfileName ?? this.activeProfileName,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -141,6 +153,9 @@ class ProProject {
     'profileStatus': profileStatus.toJson(),
     'safetyStatus': safetyStatus.toJson(),
     'connection': connection.toJson(),
+    if (notes != null) 'notes': notes,
+    'measurementCount': measurementCount,
+    if (activeProfileName != null) 'activeProfileName': activeProfileName,
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -156,6 +171,9 @@ class ProProject {
     profileStatus: ProfileStatusX.fromJson(j['profileStatus'] as String? ?? 'draft'),
     safetyStatus: SafetyStatusX.fromJson(j['safetyStatus'] as String? ?? 'notVerified'),
     connection: HardwareConnectionX.fromJson(j['connection'] as String? ?? 'disconnected'),
+    notes: j['notes'] as String?,
+    measurementCount: j['measurementCount'] as int? ?? 0,
+    activeProfileName: j['activeProfileName'] as String?,
   );
 
   static String encodeList(List<ProProject> list) =>
