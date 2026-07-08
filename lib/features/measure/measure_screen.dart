@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/spectrum_snapshot.dart';
+import '../../shared/frequency_response_chart.dart';
 import '../connect/connect_controller.dart';
 
 enum _MeasurePhase { idle, running, done }
@@ -20,23 +22,31 @@ class _MeasureScreenState extends ConsumerState<MeasureScreen> {
       _phase = _MeasurePhase.running;
       _progress = 0;
     });
-    // TODO: 실측 연동 — 현재는 UI skeleton
+    // TODO: 실측 연동 (UMIK-1 / RTA 마이크) — 현재는 시뮬레이션
     for (var i = 0; i <= 100; i += 5) {
       await Future.delayed(const Duration(milliseconds: 120));
       if (!mounted) return;
       setState(() => _progress = i / 100.0);
     }
-    if (mounted) setState(() => _phase = _MeasurePhase.done);
+    if (!mounted) return;
+    // 측정 완료 → 모의 응답 스펙트럼 저장
+    final mockBins = SpectrumSnapshotController.generateMockResponse();
+    ref.read(spectrumSnapshotProvider.notifier).setBefore(mockBins);
+    setState(() => _phase = _MeasurePhase.done);
   }
 
-  void _reset() => setState(() {
-        _phase = _MeasurePhase.idle;
-        _progress = 0;
-      });
+  void _reset() {
+    ref.read(spectrumSnapshotProvider.notifier).reset();
+    setState(() {
+      _phase = _MeasurePhase.idle;
+      _progress = 0;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final connected = ref.watch(connectProvider).connected;
+    final snap = ref.watch(spectrumSnapshotProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
@@ -53,12 +63,12 @@ class _MeasureScreenState extends ConsumerState<MeasureScreen> {
                     letterSpacing: 6)),
             const SizedBox(height: 8),
             const Text('마이크 측정 → AI Room Correction',
-                style:
-                    TextStyle(color: Colors.white38, fontSize: 12, letterSpacing: 1)),
+                style: TextStyle(
+                    color: Colors.white38, fontSize: 12, letterSpacing: 1)),
             const SizedBox(height: 32),
 
             // ── 측정 버튼 ──────────────────────────────────────────────────
-            if (_phase == _MeasurePhase.idle) ...[
+            if (_phase == _MeasurePhase.idle)
               GestureDetector(
                 onTap: connected ? _startMeasurement : null,
                 child: Container(
@@ -78,8 +88,9 @@ class _MeasureScreenState extends ConsumerState<MeasureScreen> {
                         const SizedBox(width: 10),
                         Text('측정 시작',
                             style: TextStyle(
-                                color:
-                                    connected ? Colors.white : Colors.white24,
+                                color: connected
+                                    ? Colors.white
+                                    : Colors.white24,
                                 fontSize: 15,
                                 letterSpacing: 3)),
                       ],
@@ -87,12 +98,12 @@ class _MeasureScreenState extends ConsumerState<MeasureScreen> {
                   ),
                 ),
               ),
-              if (!connected) ...[
-                const SizedBox(height: 12),
-                const Text('CONNECT 탭에서 먼저 연결하세요.',
-                    style: TextStyle(
-                        color: Colors.white38, fontSize: 11, letterSpacing: 1)),
-              ],
+
+            if (_phase == _MeasurePhase.idle && !connected) ...[
+              const SizedBox(height: 12),
+              const Text('CONNECT 탭에서 먼저 연결하세요.',
+                  style: TextStyle(
+                      color: Colors.white38, fontSize: 11, letterSpacing: 1)),
             ],
 
             if (_phase == _MeasurePhase.running) ...[
@@ -110,8 +121,7 @@ class _MeasureScreenState extends ConsumerState<MeasureScreen> {
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(
-                              strokeWidth: 1.5,
-                              color: Colors.white54)),
+                              strokeWidth: 1.5, color: Colors.white54)),
                       SizedBox(width: 12),
                       Text('측정 중...',
                           style: TextStyle(
@@ -176,98 +186,40 @@ class _MeasureScreenState extends ConsumerState<MeasureScreen> {
 
             const SizedBox(height: 32),
 
-            // ── Before / After 그래프 placeholder ──────────────────────────
+            // ── Frequency Response 차트 ────────────────────────────────────
             const Text('FREQUENCY RESPONSE',
                 style: TextStyle(
                     color: Colors.white60, fontSize: 13, letterSpacing: 3)),
+            const SizedBox(height: 4),
+            FrequencyResponseLegend(
+              hasBefore: snap.before != null,
+              hasAfter: snap.afterAi != null,
+            ),
             const SizedBox(height: 12),
             Container(
-              height: 180,
+              padding: const EdgeInsets.fromLTRB(4, 12, 8, 8),
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.white12),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: Stack(
-                children: [
-                  // 그래프 placeholder (측정 전: 안내, 측정 후: 실제 데이터)
-                  if (_phase != _MeasurePhase.done)
-                    const Center(
-                      child: Text('측정 후 그래프가 표시됩니다',
-                          style: TextStyle(
-                              color: Colors.white24, fontSize: 12)),
+              child: snap.before == null
+                  ? const SizedBox(
+                      height: 160,
+                      child: Center(
+                        child: Text('측정 후 그래프가 표시됩니다',
+                            style: TextStyle(
+                                color: Colors.white24, fontSize: 12)),
+                      ),
                     )
-                  else
-                    CustomPaint(
-                      painter: _PlaceholderCurvePainter(),
-                      child: const SizedBox.expand(),
+                  : FrequencyResponseChart(
+                      before: snap.before,
+                      afterAi: snap.afterAi,
+                      height: 180,
                     ),
-                  // 범례
-                  const Positioned(
-                    top: 10,
-                    right: 12,
-                    child: Row(
-                      children: [
-                        _LegendDot(color: Colors.white38, label: 'BEFORE'),
-                        SizedBox(width: 12),
-                        _LegendDot(color: Colors.white70, label: 'AFTER'),
-                        SizedBox(width: 12),
-                        _LegendDot(color: Colors.blueAccent, label: 'TARGET'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
             ),
           ],
         ),
       ),
     );
   }
-}
-
-class _LegendDot extends StatelessWidget {
-  final Color color;
-  final String label;
-
-  const _LegendDot({required this.color, required this.label});
-
-  @override
-  Widget build(BuildContext context) => Row(
-        children: [
-          Container(width: 8, height: 2, color: color),
-          const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(color: color, fontSize: 9, letterSpacing: 1)),
-        ],
-      );
-}
-
-class _PlaceholderCurvePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white24
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-
-    final path = Path();
-    path.moveTo(0, size.height * 0.6);
-    for (var x = 0.0; x <= size.width; x++) {
-      final t = x / size.width;
-      final y = size.height *
-          (0.5 + 0.15 * _fakeResponse(t) - 0.05 * (t - 0.5) * (t - 0.5));
-      if (x == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(path, paint);
-  }
-
-  double _fakeResponse(double t) =>
-      0.3 * (1 - t) + 0.2 * (t * (1 - t)) - 0.1 * t;
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
