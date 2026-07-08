@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'package:win32/win32.dart';
 
 /// Analog Devices USBi 프로그래머 — VID 0x0456.
@@ -84,7 +85,7 @@ void _readDeviceIfAnalogDevices(
 String? findUsbiDevicePath(String instanceId, {String? interfaceGuid}) {
   if (interfaceGuid == null) return null;
 
-  print('[USBi] findUsbiDevicePath() instanceId=$instanceId guid=$interfaceGuid');
+  debugPrint('[USBi] findUsbiDevicePath() instanceId=$instanceId guid=$interfaceGuid');
 
   final guidPtr = GUIDFromString(interfaceGuid);
   var deviceInfoSet = -1;
@@ -92,13 +93,13 @@ String? findUsbiDevicePath(String instanceId, {String? interfaceGuid}) {
   Pointer<SP_DEVICE_INTERFACE_DETAIL_DATA_> detailData = nullptr;
 
   try {
-    print('[USBi] SetupDiGetClassDevs 호출...');
+    debugPrint('[USBi] SetupDiGetClassDevs 호출...');
     deviceInfoSet = SetupDiGetClassDevs(
       guidPtr, nullptr, 0, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE,
     );
-    print('[USBi] SetupDiGetClassDevs 결과: $deviceInfoSet  lastError=${GetLastError()}');
+    debugPrint('[USBi] SetupDiGetClassDevs 결과: $deviceInfoSet  lastError=${GetLastError()}');
     if (deviceInfoSet == -1) {
-      print('[USBi] deviceInfoSet == -1 → null 반환');
+      debugPrint('[USBi] deviceInfoSet == -1 → null 반환');
       return null;
     }
 
@@ -106,15 +107,15 @@ String? findUsbiDevicePath(String instanceId, {String? interfaceGuid}) {
     ifaceData.ref.cbSize = sizeOf<SP_DEVICE_INTERFACE_DATA>();
 
     var index = 0;
-    print('[USBi] SetupDiEnumDeviceInterfaces 루프 시작...');
+    debugPrint('[USBi] SetupDiEnumDeviceInterfaces 루프 시작...');
     while (SetupDiEnumDeviceInterfaces(deviceInfoSet, nullptr, guidPtr, index, ifaceData) != 0) {
-      print('[USBi]   index=$index 인터페이스 발견');
+      debugPrint('[USBi]   index=$index 인터페이스 발견');
       index++;
 
       final requiredSize = calloc<Uint32>();
       try {
         SetupDiGetDeviceInterfaceDetail(deviceInfoSet, ifaceData, nullptr, 0, requiredSize, nullptr);
-        print('[USBi]   requiredSize=${requiredSize.value}  lastError=${GetLastError()}');
+        debugPrint('[USBi]   requiredSize=${requiredSize.value}  lastError=${GetLastError()}');
         if (requiredSize.value == 0) continue;
 
         detailData = calloc<Uint8>(requiredSize.value).cast<SP_DEVICE_INTERFACE_DETAIL_DATA_>();
@@ -128,17 +129,17 @@ String? findUsbiDevicePath(String instanceId, {String? interfaceGuid}) {
           final ok = SetupDiGetDeviceInterfaceDetail(
             deviceInfoSet, ifaceData, detailData, requiredSize.value, nullptr, devInfo,
           );
-          print('[USBi]   GetDeviceInterfaceDetail ok=$ok  lastError=${GetLastError()}');
+          debugPrint('[USBi]   GetDeviceInterfaceDetail ok=$ok  lastError=${GetLastError()}');
           if (ok == 0) continue;
 
           final idBuf = calloc<Uint16>(512).cast<Utf16>();
           try {
             final gotId = SetupDiGetDeviceInstanceId(deviceInfoSet, devInfo, idBuf, 512, nullptr);
             final foundId = gotId != 0 ? idBuf.toDartString() : '(실패)';
-            print('[USBi]   foundInstanceId=$foundId  target=$instanceId  match=${foundId == instanceId}');
+            debugPrint('[USBi]   foundInstanceId=$foundId  target=$instanceId  match=${foundId == instanceId}');
             if (gotId != 0 && foundId == instanceId) {
               final path = detailData.ref.DevicePath;
-              print('[USBi]   devicePath=$path');
+              debugPrint('[USBi]   devicePath=$path');
               return path;
             }
           } finally {
@@ -155,9 +156,9 @@ String? findUsbiDevicePath(String instanceId, {String? interfaceGuid}) {
         }
       }
     }
-    print('[USBi] 루프 종료 — 총 $index개 인터페이스 열거, 일치 없음. lastError=${GetLastError()}');
+    debugPrint('[USBi] 루프 종료 — 총 $index개 인터페이스 열거, 일치 없음. lastError=${GetLastError()}');
   } catch (e, st) {
-    print('[USBi] findUsbiDevicePath 예외: $e\n$st');
+    debugPrint('[USBi] findUsbiDevicePath 예외: $e\n$st');
   } finally {
     if (ifaceData != nullptr) calloc.free(ifaceData);
     calloc.free(guidPtr);

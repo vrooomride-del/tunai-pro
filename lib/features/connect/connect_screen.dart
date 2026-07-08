@@ -258,21 +258,7 @@ class ConnectScreen extends ConsumerWidget {
                   ]),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
-                  borderRadius: BorderRadius.circular(6),
-                  color: Colors.amber.withValues(alpha: 0.05),
-                ),
-                child: const Text(
-                  'USBi 장치 감지/연결 확인만 지원합니다. ADI USBi가 SigmaStudio와 주고받는 '
-                  'SPI 커맨드 프로토콜은 공개 문서가 없어 아직 구현하지 않았습니다 — '
-                  '연결에 성공해도 DSP로 실제 데이터가 전송되지 않습니다.',
-                  style: TextStyle(color: Colors.amber, fontSize: 11, height: 1.6),
-                ),
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 4),
             ],
 
             // ── CONNECT / SCAN / DISCONNECT 버튼 ─────────────────────────
