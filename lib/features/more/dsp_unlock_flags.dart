@@ -1,3 +1,6 @@
+// Source of truth: tunai/lib/features/more/dsp_unlock_flags.dart
+// tunai_pro/lib/features/more/dsp_unlock_flags.dart 와 동일 — 변경 시 양쪽 동기화.
+
 /// DSP 파라미터별 write 잠금 플래그.
 /// true = 즉시 write 가능, false = UI만 표시 (Capture Window 확인 필요).
 class DspUnlockFlags {
