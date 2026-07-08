@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../dsp/master_volume_controller.dart';
 import '../connect/connect_controller.dart';
+import 'test_tone_controller.dart';
 
 class ListenScreen extends ConsumerStatefulWidget {
   const ListenScreen({super.key});
@@ -18,6 +19,8 @@ class _ListenScreenState extends ConsumerState<ListenScreen> {
     final volume = ref.watch(masterVolumeProvider);
     final ctrl = ref.read(masterVolumeProvider.notifier);
     final connected = ref.watch(connectProvider).connected;
+    final toneIsPlaying = ref.watch(testToneProvider);
+    final toneCtrl = ref.read(testToneProvider.notifier);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
@@ -105,12 +108,13 @@ class _ListenScreenState extends ConsumerState<ListenScreen> {
               children: [
                 Expanded(
                   child: _OutlineButton(
-                    label: '1 kHz SINE',
-                    icon: Icons.music_note_outlined,
-                    enabled: connected,
-                    onTap: () {
-                      // TODO: tone generator 연동
-                    },
+                    label: toneIsPlaying ? '1 kHz STOP' : '1 kHz SINE',
+                    icon: toneIsPlaying
+                        ? Icons.stop_circle_outlined
+                        : Icons.music_note_outlined,
+                    enabled: true,
+                    onTap: toneCtrl.toggle,
+                    active: toneIsPlaying,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -183,12 +187,14 @@ class _OutlineButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool enabled;
+  final bool active;
   final VoidCallback? onTap;
 
   const _OutlineButton(
       {required this.label,
       required this.icon,
       required this.enabled,
+      this.active = false,
       this.onTap});
 
   @override
@@ -197,8 +203,11 @@ class _OutlineButton extends StatelessWidget {
         child: Container(
           height: 44,
           decoration: BoxDecoration(
-            border:
-                Border.all(color: enabled ? Colors.white38 : Colors.white12),
+            color: active ? Colors.white.withValues(alpha: 0.08) : Colors.transparent,
+            border: Border.all(
+                color: active
+                    ? Colors.white54
+                    : enabled ? Colors.white38 : Colors.white12),
             borderRadius: BorderRadius.circular(4),
           ),
           child: Row(
