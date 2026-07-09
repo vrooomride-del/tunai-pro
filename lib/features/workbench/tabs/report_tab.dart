@@ -11,6 +11,7 @@ import '../../../core/pro_optimizer_data.dart';
 import '../../../core/pro_export_data.dart';
 import '../../../core/pro_dsp_target_data.dart';
 import '../../../core/pro_simulation_data.dart';
+import '../../../core/pro_impedance_analysis.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -93,6 +94,12 @@ class ReportTab extends ConsumerWidget {
         // Phase L: Simulation readiness
         if (project != null) ...[
           _SimulationReadinessCard(simState: project.simulationState),
+          const SizedBox(height: 16),
+        ],
+
+        // Phase O: Impedance / load readiness
+        if (project != null) ...[
+          _ImpedanceReadinessCard(acoustic: project.acousticState),
           const SizedBox(height: 16),
         ],
 
@@ -572,6 +579,148 @@ class _ChannelControlReadinessCard extends StatelessWidget {
     child: Row(children: [
       SizedBox(width: 130, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
       Text(value, style: proValue(size: 11, color: Colors.white60)),
+    ]),
+  );
+}
+
+// ── Phase O: Impedance / Load Readiness Card ─────────────────────────────────
+
+class _ImpedanceReadinessCard extends StatelessWidget {
+  final MeasurementProjectState acoustic;
+  const _ImpedanceReadinessCard({required this.acoustic});
+
+  @override
+  Widget build(BuildContext context) {
+    final result = ProImpedanceAnalyzer.analyze(acousticState: acoustic);
+
+    Color riskColor(ImpedanceRiskLevel risk) => switch (risk) {
+      ImpedanceRiskLevel.critical => kProRed,
+      ImpedanceRiskLevel.high     => kProRed.withValues(alpha: 0.8),
+      ImpedanceRiskLevel.medium   => kProAmber,
+      ImpedanceRiskLevel.low      => kProGreen,
+      ImpedanceRiskLevel.none     => kProGreen,
+      ImpedanceRiskLevel.unknown  => Colors.white38,
+    };
+
+    // Min impedance across project
+    final zmaSummaries = result.summaries.where((s) => s.hasZma && s.minImpedanceOhm != null);
+    double? projectMinZ;
+    for (final s in zmaSummaries) {
+      if (projectMinZ == null || s.minImpedanceOhm! < projectMinZ) {
+        projectMinZ = s.minImpedanceOhm;
+      }
+    }
+
+    // Worst phase angle
+    double? worstPhase;
+    for (final s in result.summaries) {
+      if (s.maxPhaseAngleDeg != null) {
+        if (worstPhase == null || s.maxPhaseAngleDeg! > worstPhase) {
+          worstPhase = s.maxPhaseAngleDeg;
+        }
+      }
+    }
+
+    final zmaCount = acoustic.parsedZmaCount;
+    final missingZma = result.missingZmaCount;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text('IMPEDANCE / LOAD READINESS (PHASE O)', style: proLabel(size: 9, spacing: 1.8)),
+          const Spacer(),
+          ProStatusPill(
+            label: result.readinessLabel,
+            color: riskColor(result.overallRisk),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        Wrap(spacing: 10, runSpacing: 8, children: [
+          _ReportChip(
+            label: 'ZMA PARSED',
+            value: '$zmaCount',
+            color: zmaCount > 0 ? kProGreen : Colors.white38,
+          ),
+          _ReportChip(
+            label: 'MISSING ZMA',
+            value: '$missingZma',
+            color: missingZma > 0 ? kProAmber : Colors.white38,
+          ),
+          if (projectMinZ != null)
+            _ReportChip(
+              label: 'MIN IMPEDANCE',
+              value: '${projectMinZ.toStringAsFixed(1)} Ω',
+              color: projectMinZ < 2.0
+                  ? kProRed
+                  : projectMinZ < 4.0
+                      ? kProAmber
+                      : kProGreen,
+            ),
+          if (worstPhase != null)
+            _ReportChip(
+              label: 'WORST ∠',
+              value: '${worstPhase.toStringAsFixed(1)}°',
+              color: worstPhase >= 60 ? kProAmber : Colors.white60,
+            ),
+          _ReportChip(
+            label: 'OVERALL RISK',
+            value: result.overallRisk.label,
+            color: riskColor(result.overallRisk),
+          ),
+          _ReportChip(
+            label: 'CRITICAL',
+            value: '${result.criticalCount}',
+            color: result.hasCritical ? kProRed : Colors.white38,
+          ),
+          _ReportChip(
+            label: 'WARNINGS',
+            value: '${result.warningCount}',
+            color: result.hasWarnings ? kProAmber : Colors.white38,
+          ),
+        ]),
+        const SizedBox(height: 8),
+        const Row(children: [
+          Icon(Icons.info_outline, color: Colors.white24, size: 11),
+          SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Advisory load analysis. Not a certified amplifier safety calculation. '
+              'Hardware verification required.',
+              style: TextStyle(
+                  fontSize: 9, color: Colors.white24, fontFamily: 'monospace'),
+            ),
+          ),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _ReportChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  const _ReportChip(
+      {required this.label, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: kProBg,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: proLabel(size: 8, spacing: 1)),
+      const SizedBox(height: 2),
+      Text(value, style: proValue(size: 10, color: color)),
     ]),
   );
 }

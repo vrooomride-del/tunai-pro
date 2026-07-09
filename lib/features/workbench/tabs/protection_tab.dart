@@ -1,5 +1,5 @@
-// ── Protection Tab — Phase F ──────────────────────────────────────────────────
-// AOS verification rule editor and issue viewer.
+// ── Protection Tab — Phase O ──────────────────────────────────────────────────
+// AOS verification rule editor, issue viewer, and impedance load analysis.
 // No DSP write. No SafeLoad. No register addresses.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_protection_data.dart';
 import '../../../core/pro_verification_engine.dart';
+import '../../../core/pro_impedance_analysis.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ProtectionTab extends ConsumerWidget {
@@ -21,6 +22,10 @@ class ProtectionTab extends ConsumerWidget {
         store.projects.where((p) => p.id == projectId).firstOrNull;
     final protection =
         project?.protectionState ?? ProtectionProjectState.createDefault();
+
+    final impedanceResult = project != null
+        ? ProImpedanceAnalyzer.analyze(acousticState: project.acousticState)
+        : ImpedanceAnalysisResult.empty();
 
     Future<void> runVerification() async {
       if (project == null) return;
@@ -123,6 +128,10 @@ class ProtectionTab extends ConsumerWidget {
             ]),
           ),
         ],
+
+        // Phase O: Impedance load analysis
+        const SizedBox(height: 20),
+        _ImpedanceAnalysisSection(result: impedanceResult),
       ]),
     );
   }
@@ -268,6 +277,156 @@ class _RuleCard extends StatelessWidget {
           ),
         ),
       ),
+    ]),
+  );
+}
+
+// ── Impedance Analysis Section ────────────────────────────────────────────────
+
+class _ImpedanceAnalysisSection extends StatelessWidget {
+  final ImpedanceAnalysisResult result;
+  const _ImpedanceAnalysisSection({required this.result});
+
+  Color _riskColor(ImpedanceRiskLevel risk) => switch (risk) {
+    ImpedanceRiskLevel.critical => kProRed,
+    ImpedanceRiskLevel.high     => kProRed.withValues(alpha: 0.8),
+    ImpedanceRiskLevel.medium   => kProAmber,
+    ImpedanceRiskLevel.low      => kProGreen,
+    ImpedanceRiskLevel.none     => kProGreen,
+    ImpedanceRiskLevel.unknown  => Colors.white38,
+  };
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(children: [
+        Text('IMPEDANCE / LOAD ANALYSIS', style: proLabel(size: 9, spacing: 2)),
+        const Spacer(),
+        ProStatusPill(
+          label: result.readinessLabel,
+          color: _riskColor(result.overallRisk),
+        ),
+      ]),
+      const SizedBox(height: 8),
+
+      // Summary chips
+      Wrap(spacing: 10, runSpacing: 8, children: [
+        _SummaryChip(
+          label: 'OVERALL RISK',
+          value: result.overallRisk.label,
+          color: _riskColor(result.overallRisk),
+        ),
+        _SummaryChip(
+          label: 'ANALYZED',
+          value: '${result.analyzedDriverCount}',
+          color: Colors.white60,
+        ),
+        _SummaryChip(
+          label: 'MISSING ZMA',
+          value: '${result.missingZmaCount}',
+          color: result.missingZmaCount > 0 ? kProAmber : Colors.white38,
+        ),
+        _SummaryChip(
+          label: 'LOW Z',
+          value: '${result.lowImpedanceCount}',
+          color: result.lowImpedanceCount > 0 ? kProAmber : Colors.white38,
+        ),
+        _SummaryChip(
+          label: 'CRITICAL',
+          value: '${result.criticalCount}',
+          color: result.hasCritical ? kProRed : Colors.white38,
+        ),
+      ]),
+      const SizedBox(height: 10),
+
+      // Per-driver rows
+      if (result.summaries.isNotEmpty) ...[
+        ...result.summaries.map((s) => _DriverImpedanceRow(summary: s)),
+        const SizedBox(height: 8),
+      ],
+
+      // Advisory note
+      Container(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: const Row(children: [
+          Icon(Icons.info_outline, color: Colors.white24, size: 11),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Advisory load analysis. Not a certified amplifier safety calculation. '
+              'Hardware verification required. AOS protects.',
+              style: TextStyle(
+                  fontSize: 9, color: Colors.white24, fontFamily: 'monospace'),
+            ),
+          ),
+        ]),
+      ),
+    ],
+  );
+}
+
+class _DriverImpedanceRow extends StatelessWidget {
+  final DriverImpedanceSummary summary;
+  const _DriverImpedanceRow({required this.summary});
+
+  Color _riskColor(ImpedanceRiskLevel risk) => switch (risk) {
+    ImpedanceRiskLevel.critical => kProRed,
+    ImpedanceRiskLevel.high     => kProRed.withValues(alpha: 0.8),
+    ImpedanceRiskLevel.medium   => kProAmber,
+    ImpedanceRiskLevel.low      => kProGreen,
+    ImpedanceRiskLevel.none     => kProGreen,
+    ImpedanceRiskLevel.unknown  => Colors.white38,
+  };
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 4),
+    padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(
+          color: _riskColor(summary.riskLevel).withValues(alpha: 0.25)),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Row(children: [
+      Container(
+        width: 3,
+        height: 36,
+        decoration: BoxDecoration(
+          color: _riskColor(summary.riskLevel).withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(summary.driverName, style: proTitle(size: 10)),
+          const SizedBox(height: 2),
+          if (summary.hasZma) ...[
+            Wrap(spacing: 10, children: [
+              Text('Min Z: ${summary.minImpedanceLabel}',
+                  style: proSubtitle(size: 9)),
+              if (summary.minImpedanceFrequencyHz != null)
+                Text(
+                    'at ${summary.minImpedanceFrequencyHz!.toStringAsFixed(0)} Hz',
+                    style: proSubtitle(size: 9, color: Colors.white24)),
+              if (summary.maxPhaseAngleDeg != null)
+                Text('Max ∠: ${summary.maxPhaseLabel}',
+                    style: proSubtitle(size: 9)),
+              Text('${summary.pointCount} pts', style: proSubtitle(size: 9, color: Colors.white24)),
+            ]),
+          ] else
+            Text('No ZMA data', style: proSubtitle(size: 9, color: kProAmber)),
+        ]),
+      ),
+      const SizedBox(width: 8),
+      ProStatusPill(label: summary.riskLevel.label, color: _riskColor(summary.riskLevel)),
     ]),
   );
 }

@@ -1,10 +1,12 @@
-// ── TUNAI PRO Phase F — Verification Engine ───────────────────────────────────
-// Transparent draft checks. No DSP write. No register access.
+// ── TUNAI PRO Phase O — Verification Engine ───────────────────────────────────
+// Transparent draft checks including impedance load analysis.
+// No DSP write. No register access. No hardware addresses.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
 import 'pro_acoustic_data.dart';
 import 'pro_tuning_data.dart';
 import 'pro_protection_data.dart';
+import 'pro_impedance_analysis.dart';
 
 ProtectionProjectState runProtectionVerification({
   required MeasurementProjectState acousticState,
@@ -204,6 +206,28 @@ ProtectionProjectState runProtectionVerification({
     }
   }
 
+  // 9. Impedance load analysis (Phase O)
+  final impedanceResult =
+      ProImpedanceAnalyzer.analyze(acousticState: acousticState);
+
+  for (final impIssue in impedanceResult.issues) {
+    final severity = switch (impIssue.riskLevel) {
+      ImpedanceRiskLevel.critical => ProtectionSeverity.critical,
+      ImpedanceRiskLevel.high     => ProtectionSeverity.warning,
+      ImpedanceRiskLevel.medium   => ProtectionSeverity.warning,
+      ImpedanceRiskLevel.unknown  => ProtectionSeverity.info,
+      _                           => ProtectionSeverity.info,
+    };
+    issues.add(VerificationIssue(
+      id: nextId(),
+      ruleId: 'rule_impedance_load',
+      severity: severity,
+      message: '${impIssue.title}: ${impIssue.description}',
+      channelId: impIssue.channelId,
+      value: impIssue.frequencyHz,
+    ));
+  }
+
   // Determine verification status
   final hasCritical = issues.any((i) => i.severity == ProtectionSeverity.critical);
   final hasWarning = issues.any((i) => i.severity == ProtectionSeverity.warning);
@@ -221,5 +245,8 @@ ProtectionProjectState runProtectionVerification({
     verificationStatus: status,
     exportLocked: exportLocked,
     revision: protectionState.revision + 1,
+    impedanceRiskLevel: impedanceResult.overallRisk.toJson(),
+    impedanceIssueCount: impedanceResult.issues.length,
+    impedanceCriticalCount: impedanceResult.criticalCount,
   );
 }

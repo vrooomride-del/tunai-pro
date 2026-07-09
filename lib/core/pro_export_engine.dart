@@ -9,6 +9,7 @@ import 'pro_export_data.dart';
 import 'pro_dsp_target_data.dart';
 import 'pro_biquad_engine.dart';
 import 'pro_crossover_topology.dart';
+import 'pro_impedance_analysis.dart';
 
 DspExportPackage generateDspExportDraft({required ProProject project}) {
   final acoustic = project.acousticState;
@@ -375,6 +376,26 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
   if (acoustic.hasMissingMeasurements) {
     warnings.add(
         'FRD data missing on ${acoustic.totalDrivers - acoustic.importedFrdCount} channel(s).');
+  }
+
+  // Impedance analysis warnings (Phase O)
+  final impResult = ProImpedanceAnalyzer.analyze(acousticState: acoustic);
+  if (impResult.hasCritical) {
+    warnings.add(
+        'CRITICAL: Impedance load analysis detected critical load risk '
+        '(${impResult.overallRisk.label}). '
+        'Hardware amplifier verification required before deployment.');
+  }
+  if (impResult.missingZmaCount > 0) {
+    warnings.add(
+        'ZMA data missing for ${impResult.missingZmaCount} channel(s). '
+        'Import ZMA for amplifier load-risk verification.');
+  }
+  if (impResult.hasWarnings && !impResult.hasCritical) {
+    warnings.add(
+        'Impedance load analysis: ${impResult.overallRisk.label} risk. '
+        '${impResult.warningCount} warning(s). '
+        'Expert amplifier load verification required.');
   }
   if (optimizer.acceptedSuggestionCount > 0) {
     warnings.add(

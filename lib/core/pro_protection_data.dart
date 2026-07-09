@@ -1,4 +1,5 @@
-// ── TUNAI PRO Phase F — Protection / Verification Data Models ─────────────────
+// ── TUNAI PRO Phase O — Protection / Verification Data Models ─────────────────
+// Phase O: impedance risk fields added.
 // AOS protects. No DSP write. No SafeLoad. No register addresses.
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
@@ -204,6 +205,10 @@ class ProtectionProjectState {
   final DateTime updatedAt;
   final int revision;
   final bool exportLocked;
+  // Phase O: impedance load summary (advisory, not certified)
+  final String? impedanceRiskLevel;
+  final int impedanceIssueCount;
+  final int impedanceCriticalCount;
 
   ProtectionProjectState({
     this.rules = const [],
@@ -212,6 +217,9 @@ class ProtectionProjectState {
     DateTime? updatedAt,
     this.revision = 0,
     this.exportLocked = true,
+    this.impedanceRiskLevel,
+    this.impedanceIssueCount = 0,
+    this.impedanceCriticalCount = 0,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
   // ── Computed getters ──────────────────────────────────────────────────────
@@ -241,6 +249,9 @@ class ProtectionProjectState {
     DateTime? updatedAt,
     int? revision,
     bool? exportLocked,
+    String? impedanceRiskLevel,
+    int? impedanceIssueCount,
+    int? impedanceCriticalCount,
   }) => ProtectionProjectState(
     rules: rules ?? this.rules,
     issues: issues ?? this.issues,
@@ -248,6 +259,9 @@ class ProtectionProjectState {
     updatedAt: updatedAt ?? DateTime.now(),
     revision: revision ?? this.revision,
     exportLocked: exportLocked ?? this.exportLocked,
+    impedanceRiskLevel: impedanceRiskLevel ?? this.impedanceRiskLevel,
+    impedanceIssueCount: impedanceIssueCount ?? this.impedanceIssueCount,
+    impedanceCriticalCount: impedanceCriticalCount ?? this.impedanceCriticalCount,
   );
 
   Map<String, dynamic> toJson() => {
@@ -257,6 +271,9 @@ class ProtectionProjectState {
     'updatedAt': updatedAt.toIso8601String(),
     'revision': revision,
     'exportLocked': exportLocked,
+    if (impedanceRiskLevel != null) 'impedanceRiskLevel': impedanceRiskLevel,
+    'impedanceIssueCount': impedanceIssueCount,
+    'impedanceCriticalCount': impedanceCriticalCount,
   };
 
   factory ProtectionProjectState.fromJson(Map<String, dynamic> j) =>
@@ -273,6 +290,9 @@ class ProtectionProjectState {
             DateTime.tryParse(j['updatedAt'] as String? ?? '') ?? DateTime.now(),
         revision: j['revision'] as int? ?? 0,
         exportLocked: j['exportLocked'] as bool? ?? true,
+        impedanceRiskLevel: j['impedanceRiskLevel'] as String?,
+        impedanceIssueCount: j['impedanceIssueCount'] as int? ?? 0,
+        impedanceCriticalCount: j['impedanceCriticalCount'] as int? ?? 0,
       );
 
   static ProtectionProjectState createDefault() =>
