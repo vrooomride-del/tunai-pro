@@ -366,9 +366,80 @@ class CrossoverChannelState {
       CrossoverChannelState(channelId: channelId);
 }
 
+// ── Phase E: Channel Control State ────────────────────────────────────────────
+
+class ChannelControlState {
+  final String channelId;
+  final bool muted;
+  final bool solo;
+  final double gainDb;
+  final double delayMs;
+  final double phaseOffsetDeg;
+  final String notes;
+
+  const ChannelControlState({
+    required this.channelId,
+    this.muted = false,
+    this.solo = false,
+    this.gainDb = 0.0,
+    this.delayMs = 0.0,
+    this.phaseOffsetDeg = 0.0,
+    this.notes = '',
+  });
+
+  bool get hasGainTrim => gainDb != 0.0;
+  bool get hasDelay => delayMs > 0.0;
+  // Speed of sound ≈ 34300 cm/s
+  double get delayDistanceCm => delayMs / 1000.0 * 34300.0;
+  bool get isControlActive => muted || solo || hasGainTrim || hasDelay || phaseOffsetDeg != 0.0;
+
+  ChannelControlState copyWith({
+    bool? muted,
+    bool? solo,
+    double? gainDb,
+    double? delayMs,
+    double? phaseOffsetDeg,
+    String? notes,
+  }) => ChannelControlState(
+    channelId: channelId,
+    muted: muted ?? this.muted,
+    solo: solo ?? this.solo,
+    gainDb: gainDb ?? this.gainDb,
+    delayMs: delayMs ?? this.delayMs,
+    phaseOffsetDeg: phaseOffsetDeg ?? this.phaseOffsetDeg,
+    notes: notes ?? this.notes,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'channelId': channelId,
+    'muted': muted,
+    'solo': solo,
+    'gainDb': gainDb,
+    'delayMs': delayMs,
+    'phaseOffsetDeg': phaseOffsetDeg,
+    if (notes.isNotEmpty) 'notes': notes,
+  };
+
+  factory ChannelControlState.fromJson(Map<String, dynamic> j) => ChannelControlState(
+    channelId: j['channelId'] as String,
+    muted: j['muted'] as bool? ?? false,
+    solo: j['solo'] as bool? ?? false,
+    gainDb: (j['gainDb'] as num?)?.toDouble() ?? 0.0,
+    delayMs: (j['delayMs'] as num?)?.toDouble() ?? 0.0,
+    phaseOffsetDeg: (j['phaseOffsetDeg'] as num?)?.toDouble() ?? 0.0,
+    notes: j['notes'] as String? ?? '',
+  );
+
+  factory ChannelControlState.empty(String channelId) =>
+      ChannelControlState(channelId: channelId);
+}
+
+// ── Tuning Project State ───────────────────────────────────────────────────────
+
 class TuningProjectState {
   final List<PeqChannelState> peqChannels;
   final List<CrossoverChannelState> crossoverChannels;
+  final List<ChannelControlState> channelControls;
   final DateTime updatedAt;
   final int tuningRevision;
   final bool hasManualChanges;
@@ -377,13 +448,14 @@ class TuningProjectState {
   TuningProjectState({
     this.peqChannels = const [],
     this.crossoverChannels = const [],
+    this.channelControls = const [],
     DateTime? updatedAt,
     this.tuningRevision = 0,
     this.hasManualChanges = false,
     this.notes,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
-  // ── Readiness getters ─────────────────────────────────────────────────────
+  // ── PEQ / XO getters ──────────────────────────────────────────────────────
 
   int get totalPeqBands => peqChannels.fold(0, (n, ch) => n + ch.bands.length);
   int get activePeqBands => peqChannels.fold(0, (n, ch) => n + ch.activeBandCount);
@@ -391,6 +463,24 @@ class TuningProjectState {
   int get hpfCount => crossoverChannels.where((c) => c.hasHighPass).length;
   int get lpfCount => crossoverChannels.where((c) => c.hasLowPass).length;
   int get polarityInvertedCount => crossoverChannels.where((c) => c.polarityInverted).length;
+
+  // ── Channel control getters (Phase E) ─────────────────────────────────────
+
+  int get totalMutedChannels => channelControls.where((c) => c.muted).length;
+  int get totalSoloChannels => channelControls.where((c) => c.solo).length;
+  int get totalGainTrimChannels => channelControls.where((c) => c.hasGainTrim).length;
+  int get totalDelayChannels => channelControls.where((c) => c.hasDelay).length;
+  double get maxDelayMs => channelControls.isEmpty
+      ? 0.0
+      : channelControls.map((c) => c.delayMs).reduce((a, b) => a > b ? a : b);
+  double get gainMinDb => channelControls.isEmpty
+      ? 0.0
+      : channelControls.map((c) => c.gainDb).reduce((a, b) => a < b ? a : b);
+  double get gainMaxDb => channelControls.isEmpty
+      ? 0.0
+      : channelControls.map((c) => c.gainDb).reduce((a, b) => a > b ? a : b);
+
+  // ── Readiness labels ──────────────────────────────────────────────────────
 
   String get readinessLabel {
     final hasPeq = totalPeqBands > 0;
@@ -401,9 +491,56 @@ class TuningProjectState {
     return 'Ready for optimization draft';
   }
 
+  String get channelControlReadinessLabel {
+    final hasGain = totalGainTrimChannels > 0;
+    final hasDelay = totalDelayChannels > 0;
+    final hasPolarity = polarityInvertedCount > 0;
+    final hasPhase = channelControls.any((c) => c.phaseOffsetDeg != 0.0);
+    if (!hasGain && !hasDelay && !hasPolarity && !hasPhase) return 'No channel controls';
+    if (hasGain && !hasDelay && !hasPolarity) return 'Gain started';
+    if (hasDelay && !hasPolarity) return 'Delay started';
+    if (hasPolarity && !hasGain && !hasDelay) return 'Phase/polarity started';
+    return 'Ready for verification draft';
+  }
+
+  // ── Helpers (Phase E) ─────────────────────────────────────────────────────
+
+  ChannelControlState getOrCreateControl(String channelId) =>
+      channelControls.firstWhere(
+        (c) => c.channelId == channelId,
+        orElse: () => ChannelControlState.empty(channelId),
+      );
+
+  TuningProjectState replaceControl(ChannelControlState updated) {
+    final exists = channelControls.any((c) => c.channelId == updated.channelId);
+    final newControls = exists
+        ? channelControls.map((c) => c.channelId == updated.channelId ? updated : c).toList()
+        : [...channelControls, updated];
+    return copyWith(channelControls: newControls, hasManualChanges: true,
+        tuningRevision: tuningRevision + 1);
+  }
+
+  CrossoverChannelState getOrCreateCrossoverChannel(String channelId) =>
+      crossoverChannels.firstWhere(
+        (c) => c.channelId == channelId,
+        orElse: () => CrossoverChannelState.empty(channelId),
+      );
+
+  TuningProjectState replaceCrossoverChannel(CrossoverChannelState updated) {
+    final exists = crossoverChannels.any((c) => c.channelId == updated.channelId);
+    final newChannels = exists
+        ? crossoverChannels.map((c) => c.channelId == updated.channelId ? updated : c).toList()
+        : [...crossoverChannels, updated];
+    return copyWith(crossoverChannels: newChannels, hasManualChanges: true,
+        tuningRevision: tuningRevision + 1);
+  }
+
+  // ── Persistence ───────────────────────────────────────────────────────────
+
   TuningProjectState copyWith({
     List<PeqChannelState>? peqChannels,
     List<CrossoverChannelState>? crossoverChannels,
+    List<ChannelControlState>? channelControls,
     DateTime? updatedAt,
     int? tuningRevision,
     bool? hasManualChanges,
@@ -411,6 +548,7 @@ class TuningProjectState {
   }) => TuningProjectState(
     peqChannels: peqChannels ?? this.peqChannels,
     crossoverChannels: crossoverChannels ?? this.crossoverChannels,
+    channelControls: channelControls ?? this.channelControls,
     updatedAt: updatedAt ?? DateTime.now(),
     tuningRevision: tuningRevision ?? this.tuningRevision,
     hasManualChanges: hasManualChanges ?? this.hasManualChanges,
@@ -420,6 +558,7 @@ class TuningProjectState {
   Map<String, dynamic> toJson() => {
     'peqChannels': peqChannels.map((c) => c.toJson()).toList(),
     'crossoverChannels': crossoverChannels.map((c) => c.toJson()).toList(),
+    'channelControls': channelControls.map((c) => c.toJson()).toList(),
     'updatedAt': updatedAt.toIso8601String(),
     'tuningRevision': tuningRevision,
     'hasManualChanges': hasManualChanges,
@@ -432,6 +571,9 @@ class TuningProjectState {
         .toList(),
     crossoverChannels: (j['crossoverChannels'] as List? ?? [])
         .map((e) => CrossoverChannelState.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList(),
+    channelControls: (j['channelControls'] as List? ?? [])
+        .map((e) => ChannelControlState.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList(),
     updatedAt: DateTime.tryParse(j['updatedAt'] as String? ?? '') ?? DateTime.now(),
     tuningRevision: j['tuningRevision'] as int? ?? 0,

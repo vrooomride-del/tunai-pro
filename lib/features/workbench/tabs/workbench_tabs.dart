@@ -6,6 +6,9 @@ export 'target_tab.dart';
 export 'report_tab.dart';
 export 'peq_tab.dart';
 export 'xo_tab.dart';
+export 'gain_tab.dart';
+export 'delay_tab.dart';
+export 'phase_tab.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -138,47 +141,7 @@ class _StatChip extends StatelessWidget {
 // PeqTab → peq_tab.dart (Phase D)
 // XoTab (was CrossoverTab) → xo_tab.dart (Phase D)
 
-class DelayPhaseTab extends StatelessWidget {
-  final String projectId;
-  const DelayPhaseTab({super.key, required this.projectId});
-  @override
-  Widget build(BuildContext context) => _StatusAwarePlaceholder(
-    projectId: projectId,
-    title: 'Time Alignment',
-    subtitle: 'Adjust delay and phase for driver integration and imaging.',
-    icon: Icons.access_time_outlined,
-    stats: const [
-      ProQuickStat('L DELAY', '0.00 ms'),
-      ProQuickStat('R DELAY', '0.00 ms'),
-      ProQuickStat('PHASE', '0°'),
-      ProQuickStat('RESOLUTION', '0.02 ms'),
-    ],
-    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
-        ? 'Tuning data available.'
-        : 'Create tuning decisions after measurement.',
-  );
-}
-
-class LimiterTab extends StatelessWidget {
-  final String projectId;
-  const LimiterTab({super.key, required this.projectId});
-  @override
-  Widget build(BuildContext context) => _StatusAwarePlaceholder(
-    projectId: projectId,
-    title: 'Limiter',
-    subtitle: 'Set safe output boundaries for the speaker system.',
-    icon: Icons.shield_outlined,
-    stats: const [
-      ProQuickStat('THRESHOLD', '—'),
-      ProQuickStat('ATTACK', '—'),
-      ProQuickStat('RELEASE', '—'),
-      ProQuickStat('MODE', 'RMS / Peak'),
-    ],
-    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
-        ? 'Tuning data available. Configure limits.'
-        : 'Create tuning decisions after measurement.',
-  );
-}
+// DelayPhaseTab, LimiterTab → replaced by PhaseTab, DelayTab, GainTab in Phase E
 
 class ProtectionTab extends StatelessWidget {
   final String projectId;

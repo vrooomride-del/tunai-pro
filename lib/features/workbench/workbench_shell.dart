@@ -47,9 +47,9 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     ImportTab(projectId: projectId),
     PeqTab(projectId: projectId),
     XoTab(projectId: projectId),
-    DelayPhaseTab(projectId: projectId),   // Phase
-    DelayPhaseTab(projectId: projectId),   // Delay (shared placeholder until split in Phase D)
-    LimiterTab(projectId: projectId),      // Gain
+    PhaseTab(projectId: projectId),
+    DelayTab(projectId: projectId),
+    GainTab(projectId: projectId),
     ProtectionTab(projectId: projectId),
     TargetTab(projectId: projectId),
     DeployTab(projectId: projectId),       // Export
@@ -181,7 +181,7 @@ class _Sidebar extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-          child: Text('TUNAI PRO · Phase D', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
+          child: Text('TUNAI PRO · Phase E', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
         ),
       ]),
     );

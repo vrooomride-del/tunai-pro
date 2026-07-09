@@ -64,6 +64,15 @@ class ReportTab extends ConsumerWidget {
           const SizedBox(height: 16),
         ],
 
+        // Phase E: Channel control readiness
+        if (project != null) ...[
+          _ChannelControlReadinessCard(
+            tuning: project.tuningState,
+            acoustic: project.acousticState,
+          ),
+          const SizedBox(height: 16),
+        ],
+
         // Measurement summary
         _MeasurementSummaryCard(
           sessionCount: mStore.sessions.length,
@@ -344,6 +353,90 @@ class _TuningReadinessCard extends StatelessWidget {
             child: Text(
               'FRD data missing on ${acoustic.totalDrivers - acoustic.importedFrdCount} channel(s). '
               'Optimization accuracy is reduced without full measurement data.',
+              style: proSubtitle(size: 10),
+            ),
+          ),
+        ]),
+      ],
+    ]),
+  );
+
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(children: [
+      SizedBox(width: 130, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
+      Text(value, style: proValue(size: 11, color: Colors.white60)),
+    ]),
+  );
+}
+
+// ── Phase E: Channel Control Readiness Card ───────────────────────────────────
+
+class _ChannelControlReadinessCard extends StatelessWidget {
+  final TuningProjectState tuning;
+  final MeasurementProjectState acoustic;
+  const _ChannelControlReadinessCard({required this.tuning, required this.acoustic});
+
+  Color _readinessColor() {
+    final label = tuning.channelControlReadinessLabel;
+    if (label == 'Ready for verification draft') return kProGreen;
+    if (label == 'No channel controls') return const Color(0xFF6B7280);
+    return kProAmber;
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('CHANNEL CONTROL READINESS (PHASE E)', style: proLabel(size: 9, spacing: 1.8)),
+      const SizedBox(height: 12),
+      _row('Channel controls', '${tuning.channelControls.length}'),
+      _row('Gain trim channels', '${tuning.totalGainTrimChannels}'),
+      _row('Gain range',
+          tuning.channelControls.isEmpty
+              ? '—'
+              : '${tuning.gainMinDb >= 0 ? '+' : ''}${tuning.gainMinDb.toStringAsFixed(1)} '
+                'to ${tuning.gainMaxDb >= 0 ? '+' : ''}${tuning.gainMaxDb.toStringAsFixed(1)} dB'),
+      _row('Muted channels', '${tuning.totalMutedChannels}'),
+      _row('Solo channels', '${tuning.totalSoloChannels}'),
+      _row('Delay channels', '${tuning.totalDelayChannels}'),
+      _row('Max delay', tuning.maxDelayMs == 0.0
+          ? '—'
+          : '${tuning.maxDelayMs.toStringAsFixed(2)} ms'),
+      _row('Polarity inverted', '${tuning.polarityInvertedCount}'),
+      const SizedBox(height: 8),
+      Row(children: [
+        SizedBox(width: 130, child: Text('Control status', style: proLabel(size: 10, spacing: 0.3))),
+        ProStatusPill(label: tuning.channelControlReadinessLabel, color: _readinessColor()),
+      ]),
+      if (tuning.totalSoloChannels > 0) ...[
+        const SizedBox(height: 8),
+        Row(children: [
+          const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '${tuning.totalSoloChannels} solo channel(s) active. '
+              'Verify solo state before export.',
+              style: proSubtitle(size: 10),
+            ),
+          ),
+        ]),
+      ],
+      if (acoustic.hasMissingMeasurements) ...[
+        const SizedBox(height: 8),
+        Row(children: [
+          const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'FRD data missing on ${acoustic.totalDrivers - acoustic.importedFrdCount} channel(s). '
+              'Gain and delay decisions may be inaccurate without full measurements.',
               style: proSubtitle(size: 10),
             ),
           ),
