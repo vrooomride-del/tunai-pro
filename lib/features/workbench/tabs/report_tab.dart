@@ -5,6 +5,7 @@ import '../../../core/pro_project_store.dart';
 import '../../../core/pro_measurement.dart';
 import '../../../core/pro_measurement_store.dart';
 import '../../../core/pro_acoustic_data.dart';
+import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -51,6 +52,15 @@ class ReportTab extends ConsumerWidget {
         // Phase C: Driver / acoustic readiness
         if (project != null) ...[
           _AcousticReadinessCard(acoustic: project.acousticState),
+          const SizedBox(height: 16),
+        ],
+
+        // Phase D: Tuning readiness
+        if (project != null) ...[
+          _TuningReadinessCard(
+            tuning: project.tuningState,
+            acoustic: project.acousticState,
+          ),
           const SizedBox(height: 16),
         ],
 
@@ -272,6 +282,71 @@ class _AcousticReadinessCard extends StatelessWidget {
           Text('Missing FRD data on ${acoustic.totalDrivers - acoustic.importedFrdCount} channel(s). '
                'Import before optimization.',
               style: proSubtitle(size: 10)),
+        ]),
+      ],
+    ]),
+  );
+
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(children: [
+      SizedBox(width: 130, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
+      Text(value, style: proValue(size: 11, color: Colors.white60)),
+    ]),
+  );
+}
+
+// ── Phase D: Tuning Readiness Card ───────────────────────────────────────────
+
+class _TuningReadinessCard extends StatelessWidget {
+  final TuningProjectState tuning;
+  final MeasurementProjectState acoustic;
+  const _TuningReadinessCard({required this.tuning, required this.acoustic});
+
+  Color _readinessColor() {
+    final label = tuning.readinessLabel;
+    if (label == 'Ready for optimization draft') return kProGreen;
+    if (label == 'No tuning configured') return const Color(0xFF6B7280);
+    return kProAmber;
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('TUNING READINESS (PHASE D)', style: proLabel(size: 9, spacing: 1.8)),
+      const SizedBox(height: 12),
+      _row('PEQ channels', '${tuning.peqChannels.length}'),
+      _row('Total PEQ bands', '${tuning.totalPeqBands}'),
+      _row('Active PEQ bands', '${tuning.activePeqBands}'),
+      _row('XO channels configured', '${tuning.configuredXoChannels}'),
+      _row('HPF configured', '${tuning.hpfCount}'),
+      _row('LPF configured', '${tuning.lpfCount}'),
+      _row('Polarity inverted', '${tuning.polarityInvertedCount}'),
+      _row('Manual changes', tuning.hasManualChanges ? 'Yes' : 'No'),
+      _row('Tuning revision', '${tuning.tuningRevision}'),
+      const SizedBox(height: 8),
+      Row(children: [
+        SizedBox(width: 130, child: Text('Tuning status', style: proLabel(size: 10, spacing: 0.3))),
+        ProStatusPill(label: tuning.readinessLabel, color: _readinessColor()),
+      ]),
+      if (acoustic.hasMissingMeasurements) ...[
+        const SizedBox(height: 8),
+        Row(children: [
+          const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'FRD data missing on ${acoustic.totalDrivers - acoustic.importedFrdCount} channel(s). '
+              'Optimization accuracy is reduced without full measurement data.',
+              style: proSubtitle(size: 10),
+            ),
+          ),
         ]),
       ],
     ]),

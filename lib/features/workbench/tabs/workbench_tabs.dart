@@ -4,6 +4,8 @@ export 'analyze_tab.dart';
 export 'import_tab.dart';
 export 'target_tab.dart';
 export 'report_tab.dart';
+export 'peq_tab.dart';
+export 'xo_tab.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -133,47 +135,8 @@ class _StatChip extends StatelessWidget {
 // ── Individual Tab Widgets ────────────────────────────────────────────────────
 // MeasureTab, AnalyzeTab, ReportTab are defined in dedicated files (re-exported above).
 
-class CrossoverTab extends StatelessWidget {
-  final String projectId;
-  const CrossoverTab({super.key, required this.projectId});
-  @override
-  Widget build(BuildContext context) => _StatusAwarePlaceholder(
-    projectId: projectId,
-    title: 'Crossover Designer',
-    subtitle: 'Configure crossover frequency, slope, polarity, and routing.',
-    icon: Icons.device_hub_outlined,
-    stats: const [
-      ProQuickStat('HP FREQ', '—'),
-      ProQuickStat('LP FREQ', '—'),
-      ProQuickStat('SLOPE', '—'),
-      ProQuickStat('POLARITY', '—'),
-    ],
-    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
-        ? 'Tuning data available.'
-        : 'Create tuning decisions after measurement.',
-  );
-}
-
-class PeqTab extends StatelessWidget {
-  final String projectId;
-  const PeqTab({super.key, required this.projectId});
-  @override
-  Widget build(BuildContext context) => _StatusAwarePlaceholder(
-    projectId: projectId,
-    title: 'Parametric EQ',
-    subtitle: 'Review and edit correction filters.',
-    icon: Icons.tune_outlined,
-    stats: const [
-      ProQuickStat('BANDS', '0 / 8'),
-      ProQuickStat('MAX GAIN', '—'),
-      ProQuickStat('ALGORITHM', 'Biquad IIR'),
-      ProQuickStat('FORMAT', 'Direct Form II'),
-    ],
-    readinessMessage: (s) => s.isAtLeast(ProfileStatus.tuned)
-        ? 'Tuning data available.'
-        : 'Create tuning decisions after measurement.',
-  );
-}
+// PeqTab → peq_tab.dart (Phase D)
+// XoTab (was CrossoverTab) → xo_tab.dart (Phase D)
 
 class DelayPhaseTab extends StatelessWidget {
   final String projectId;

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'pro_acoustic_data.dart';
+import 'pro_tuning_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 enum SafetyStatus { notVerified, verified, warning, blocked }
@@ -64,6 +65,7 @@ class ProProject {
   final int measurementCount;
   final String? activeProfileName;
   final MeasurementProjectState acousticState;
+  final TuningProjectState tuningState;
 
   ProProject({
     required this.id,
@@ -82,7 +84,9 @@ class ProProject {
     this.measurementCount = 0,
     this.activeProfileName,
     MeasurementProjectState? acousticState,
-  }) : acousticState = acousticState ?? MeasurementProjectState.createDefault();
+    TuningProjectState? tuningState,
+  }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
+       tuningState = tuningState ?? TuningProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -121,6 +125,7 @@ class ProProject {
     int? measurementCount,
     String? activeProfileName,
     MeasurementProjectState? acousticState,
+    TuningProjectState? tuningState,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -138,6 +143,7 @@ class ProProject {
     measurementCount: measurementCount ?? this.measurementCount,
     activeProfileName: activeProfileName ?? this.activeProfileName,
     acousticState: acousticState ?? this.acousticState,
+    tuningState: tuningState ?? this.tuningState,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -162,6 +168,7 @@ class ProProject {
     'measurementCount': measurementCount,
     if (activeProfileName != null) 'activeProfileName': activeProfileName,
     'acousticState': acousticState.toJson(),
+    'tuningState': tuningState.toJson(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -182,6 +189,9 @@ class ProProject {
     activeProfileName: j['activeProfileName'] as String?,
     acousticState: j['acousticState'] != null
         ? MeasurementProjectState.fromJson(Map<String, dynamic>.from(j['acousticState'] as Map))
+        : null,
+    tuningState: j['tuningState'] != null
+        ? TuningProjectState.fromJson(Map<String, dynamic>.from(j['tuningState'] as Map))
         : null,
   );
 
