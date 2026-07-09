@@ -223,6 +223,28 @@ class _ExportTabState extends ConsumerState<ExportTab> {
             const SizedBox(height: 16),
           ],
 
+          // Phase Q: Hardware dry-run plan note
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            decoration: BoxDecoration(
+              color: kProSurface,
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Row(children: [
+              Icon(Icons.security_outlined, color: Colors.white24, size: 13),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Hardware dry-run plan available in Hardware tab.  '
+                  'Hardware write disabled.',
+                  style: TextStyle(fontSize: 10, color: Colors.white38),
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 16),
+
           // JSON preview
           _JsonPreviewCard(pkg: activePkg),
         ] else

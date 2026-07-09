@@ -5,6 +5,7 @@ import 'pro_protection_data.dart';
 import 'pro_optimizer_data.dart';
 import 'pro_export_data.dart';
 import 'pro_simulation_data.dart';
+import 'pro_hardware_connection_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 enum SafetyStatus { notVerified, verified, warning, blocked }
@@ -74,6 +75,7 @@ class ProProject {
   final OptimizerProjectState optimizerState;
   final ExportProjectState exportState;
   final SimulationProjectState simulationState;
+  final HardwareProjectState hardwareState;
 
   ProProject({
     required this.id,
@@ -97,12 +99,14 @@ class ProProject {
     OptimizerProjectState? optimizerState,
     ExportProjectState? exportState,
     SimulationProjectState? simulationState,
+    HardwareProjectState? hardwareState,
   }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
        tuningState = tuningState ?? TuningProjectState.createDefault(),
        protectionState = protectionState ?? ProtectionProjectState.createDefault(),
        optimizerState = optimizerState ?? OptimizerProjectState.createDefault(),
        exportState = exportState ?? ExportProjectState.createDefault(),
-       simulationState = simulationState ?? SimulationProjectState.createDefault();
+       simulationState = simulationState ?? SimulationProjectState.createDefault(),
+       hardwareState = hardwareState ?? HardwareProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -146,6 +150,7 @@ class ProProject {
     OptimizerProjectState? optimizerState,
     ExportProjectState? exportState,
     SimulationProjectState? simulationState,
+    HardwareProjectState? hardwareState,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -168,6 +173,7 @@ class ProProject {
     optimizerState: optimizerState ?? this.optimizerState,
     exportState: exportState ?? this.exportState,
     simulationState: simulationState ?? this.simulationState,
+    hardwareState: hardwareState ?? this.hardwareState,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -197,6 +203,7 @@ class ProProject {
     'optimizerState': optimizerState.toJson(),
     'exportState': exportState.toJson(),
     'simulationState': simulationState.toJson(),
+    'hardwareState': hardwareState.toJson(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -233,6 +240,10 @@ class ProProject {
     simulationState: j['simulationState'] != null
         ? SimulationProjectState.fromJson(
             Map<String, dynamic>.from(j['simulationState'] as Map))
+        : null,
+    hardwareState: j['hardwareState'] != null
+        ? HardwareProjectState.fromJson(
+            Map<String, dynamic>.from(j['hardwareState'] as Map))
         : null,
   );
 

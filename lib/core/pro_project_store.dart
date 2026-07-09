@@ -7,6 +7,7 @@ import 'pro_protection_data.dart';
 import 'pro_optimizer_data.dart';
 import 'pro_export_data.dart';
 import 'pro_simulation_data.dart';
+import 'pro_hardware_connection_data.dart';
 
 const _kProjectsKey = 'tunai_pro_projects';
 const _kCurrentIdKey = 'tunai_pro_current_project_id';
@@ -111,6 +112,7 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
       optimizerState: original.optimizerState,
       exportState: original.exportState,
       simulationState: original.simulationState,
+      hardwareState: original.hardwareState,
     );
     await addProject(dup);
     return dup;
@@ -166,6 +168,13 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     final project = state.projects.firstWhere((p) => p.id == id);
     await updateProject(
         project.copyWith(simulationState: simulationState, updatedAt: DateTime.now()));
+  }
+
+  Future<void> updateHardwareState(
+      String id, HardwareProjectState hardwareState) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(
+        project.copyWith(hardwareState: hardwareState, updatedAt: DateTime.now()));
   }
 }
 

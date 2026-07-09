@@ -40,6 +40,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     _TabDef('Simulation', Icons.show_chart_outlined),
     _TabDef('Protection', Icons.verified_user_outlined),
     _TabDef('Export',     Icons.upload_outlined),
+    _TabDef('Hardware',   Icons.security_outlined),
     _TabDef('Report',     Icons.summarize_outlined),
   ];
 
@@ -57,6 +58,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     SimulationTab(projectId: projectId),
     ProtectionTab(projectId: projectId),
     ExportTab(projectId: projectId),
+    HardwareTab(projectId: projectId),
     ReportTab(projectId: projectId),
   ];
 
@@ -185,7 +187,7 @@ class _Sidebar extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-          child: Text('TUNAI PRO · Phase L', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
+          child: Text('TUNAI PRO · Phase Q', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
         ),
       ]),
     );

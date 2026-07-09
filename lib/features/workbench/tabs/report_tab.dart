@@ -14,6 +14,7 @@ import '../../../core/pro_simulation_data.dart';
 import '../../../core/pro_impedance_analysis.dart';
 import '../../../core/pro_dsp_address_registry.dart';
 import '../../../core/pro_sigma_mapping_data.dart';
+import '../../../core/pro_hardware_connection_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -123,6 +124,9 @@ class ReportTab extends ConsumerWidget {
           const SizedBox(height: 16),
 
           _DspMappingReadinessCard(exportState: project.exportState),
+          const SizedBox(height: 16),
+
+          _HardwareReadinessCard(hardwareState: project.hardwareState),
           const SizedBox(height: 16),
         ],
 
@@ -1411,6 +1415,116 @@ class _DspMappingReadinessCard extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           'Verified addresses are references only. Hardware write remains disabled.',
+          style: proSubtitle(size: 9),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Phase Q: Hardware Readiness Card ─────────────────────────────────────────
+
+class _HardwareReadinessCard extends StatelessWidget {
+  final HardwareProjectState hardwareState;
+  const _HardwareReadinessCard({required this.hardwareState});
+
+  @override
+  Widget build(BuildContext context) {
+    final conn = hardwareState.connectionState;
+    final plan = hardwareState.activePlan;
+
+    final readiness = plan == null
+        ? 'No export package'
+        : plan.blockedStepCount > 0
+            ? 'Unverified mappings block write'
+            : plan.dryRunOnly
+                ? 'Dry-run plan ready'
+                : 'Hardware write disabled';
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.security_outlined, color: Color(0xFFA78BFA), size: 13),
+          const SizedBox(width: 8),
+          Text('HARDWARE READINESS', style: proLabel(size: 9, spacing: 2)),
+        ]),
+        const SizedBox(height: 10),
+        _ReportChip(
+          label: 'TRANSPORT',
+          value: conn.transportType.label,
+          color: Colors.white54,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'CONNECTION STATUS',
+          value: conn.connectionStatus.label,
+          color: conn.connectionStatus == HardwareConnectionStatus.simulated
+              ? const Color(0xFF4A9EFF)
+              : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'TARGET DEVICE',
+          value: conn.targetDevice.label,
+          color: Colors.white54,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'WRITE PLANS',
+          value: '${hardwareState.planCount} plan(s)',
+          color: Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'DRY-RUN ONLY',
+          value: plan != null ? (plan.dryRunOnly ? 'Yes' : 'No') : 'N/A',
+          color: plan?.dryRunOnly ?? true ? kProAmber : const Color(0xFFEF4444),
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'BLOCKED CHECKS',
+          value: '${hardwareState.blockedCheckCount}',
+          color: hardwareState.blockedCheckCount > 0
+              ? const Color(0xFFEF4444)
+              : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'WARNING CHECKS',
+          value: '${hardwareState.warningCheckCount}',
+          color: hardwareState.warningCheckCount > 0 ? kProAmber : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'VERIFIED STEPS',
+          value: plan != null ? '${plan.verifiedStepCount}' : 'N/A',
+          color: (plan?.verifiedStepCount ?? 0) > 0
+              ? const Color(0xFF4A9EFF)
+              : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'BLOCKED STEPS',
+          value: plan != null ? '${plan.blockedStepCount}' : 'N/A',
+          color: (plan?.blockedStepCount ?? 0) > 0
+              ? const Color(0xFFEF4444)
+              : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'READINESS',
+          value: readiness,
+          color: Colors.white54,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'No hardware write is enabled in Phase Q.',
           style: proSubtitle(size: 9),
         ),
       ]),
