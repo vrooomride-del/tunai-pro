@@ -6,6 +6,7 @@ import 'pro_tuning_data.dart';
 import 'pro_protection_data.dart';
 import 'pro_optimizer_data.dart';
 import 'pro_export_data.dart';
+import 'pro_simulation_data.dart';
 
 const _kProjectsKey = 'tunai_pro_projects';
 const _kCurrentIdKey = 'tunai_pro_current_project_id';
@@ -109,6 +110,7 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
       protectionState: original.protectionState,
       optimizerState: original.optimizerState,
       exportState: original.exportState,
+      simulationState: original.simulationState,
     );
     await addProject(dup);
     return dup;
@@ -157,6 +159,13 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
   Future<void> updateExportState(String id, ExportProjectState exportState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
     await updateProject(project.copyWith(exportState: exportState, updatedAt: DateTime.now()));
+  }
+
+  Future<void> updateSimulationState(
+      String id, SimulationProjectState simulationState) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(
+        project.copyWith(simulationState: simulationState, updatedAt: DateTime.now()));
   }
 }
 

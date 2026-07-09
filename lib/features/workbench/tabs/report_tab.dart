@@ -10,6 +10,7 @@ import '../../../core/pro_protection_data.dart';
 import '../../../core/pro_optimizer_data.dart';
 import '../../../core/pro_export_data.dart';
 import '../../../core/pro_dsp_target_data.dart';
+import '../../../core/pro_simulation_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -80,6 +81,12 @@ class ReportTab extends ConsumerWidget {
         // Phase G: Optimizer readiness
         if (project != null) ...[
           _OptimizerReadinessCard(optimizer: project.optimizerState),
+          const SizedBox(height: 16),
+        ],
+
+        // Phase L: Simulation readiness
+        if (project != null) ...[
+          _SimulationReadinessCard(simState: project.simulationState),
           const SizedBox(height: 16),
         ],
 
@@ -929,4 +936,100 @@ class _DspImplChip extends StatelessWidget {
       Text(value, style: proValue(size: 11, color: color ?? Colors.white54)),
     ]),
   );
+}
+
+// ── Phase L: Simulation Readiness Card ───────────────────────────────────────
+
+class _SimulationReadinessCard extends StatelessWidget {
+  final SimulationProjectState simState;
+  const _SimulationReadinessCard({required this.simState});
+
+  @override
+  Widget build(BuildContext context) {
+    final run = simState.activeRun;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.show_chart_outlined,
+              color: Color(0xFF4A9EFF), size: 13),
+          const SizedBox(width: 8),
+          Text('SIMULATION', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          Text(simState.readinessLabel,
+              style: proLabel(
+                  size: 9, color: Colors.white38, spacing: 0.3)),
+        ]),
+        const SizedBox(height: 10),
+
+        Wrap(spacing: 10, runSpacing: 8, children: [
+          _DspImplChip(
+            label: 'RUNS',
+            value: '${simState.runCount}',
+          ),
+          _DspImplChip(
+            label: 'ACTIVE CURVES',
+            value: '${simState.activeCurveCount}',
+          ),
+          _DspImplChip(
+            label: 'WARNINGS',
+            value: '${simState.warningCount}',
+            color: simState.warningCount > 0 ? kProAmber : null,
+          ),
+          if (run != null) ...[
+            _DspImplChip(
+              label: 'TARGET',
+              value: run.hasTargetCurve ? 'Yes' : 'No',
+              color: run.hasTargetCurve ? kProGreen : Colors.white38,
+            ),
+            _DspImplChip(
+              label: 'SUMMED',
+              value: run.hasSummedCurve ? 'Draft' : 'No',
+              color: run.hasSummedCurve ? kProAmber : Colors.white38,
+            ),
+            _DspImplChip(
+              label: 'DRIVERS',
+              value: run.hasDriverCurves ? 'Yes' : 'No',
+              color: run.hasDriverCurves ? kProGreen : Colors.white38,
+            ),
+          ],
+        ]),
+
+        const SizedBox(height: 10),
+        const Row(children: [
+          Icon(Icons.info_outline, color: Colors.white24, size: 11),
+          SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Simulation is draft-only. Measurement verification remains required. '
+              'Not final acoustic summation.',
+              style: TextStyle(
+                  fontSize: 9, color: Colors.white38,
+                  fontFamily: 'monospace'),
+            ),
+          ),
+        ]),
+
+        if (run == null) ...[
+          const SizedBox(height: 6),
+          const Row(children: [
+            Icon(Icons.warning_amber_outlined, color: kProAmber, size: 11),
+            SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'No simulation draft generated before export.',
+                style: TextStyle(fontSize: 9, color: kProAmber),
+              ),
+            ),
+          ]),
+        ],
+      ]),
+    );
+  }
 }
