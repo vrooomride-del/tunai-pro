@@ -1,4 +1,4 @@
-// ── Export Tab — Phase H/I ────────────────────────────────────────────────────
+// ── Export Tab — Phase H/I/K ──────────────────────────────────────────────────
 // DSP Export Architecture Foundation.
 // No hardware write. No USBi. No SafeLoad. No register addresses.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
@@ -730,6 +730,12 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
                 color: kProRed),
         ]),
 
+        // XO cascade summary (Phase K)
+        if (_hasXoCascadeStages(draft)) ...[
+          const SizedBox(height: 10),
+          _XoCascadeSummary(draft: draft),
+        ],
+
         const SizedBox(height: 8),
         const Row(children: [
           Icon(Icons.warning_amber_outlined, color: kProAmber, size: 11),
@@ -778,6 +784,63 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
             ),
           ],
         ],
+      ]),
+    );
+  }
+
+  bool _hasXoCascadeStages(DspImplementationDraft draft) =>
+      draft.biquadStages.any((s) =>
+          s.title.contains('HPF') || s.title.contains('LPF'));
+}
+
+class _XoCascadeSummary extends StatelessWidget {
+  final DspImplementationDraft draft;
+  const _XoCascadeSummary({required this.draft});
+
+  @override
+  Widget build(BuildContext context) {
+    final xoStages = draft.biquadStages
+        .where((s) => s.title.contains('HPF') || s.title.contains('LPF'))
+        .toList();
+    final calcXo =
+        xoStages.where((s) =>
+            s.coefficients.status == BiquadDraftStatus.calculatedDraft).length;
+    final verifyXo =
+        xoStages.where((s) =>
+            s.coefficients.status == BiquadDraftStatus.requiresVerification ||
+            s.coefficients.status == BiquadDraftStatus.placeholder).length;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: kProBg,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.filter_alt_outlined,
+              size: 11, color: Color(0xFF4A9EFF)),
+          const SizedBox(width: 6),
+          Text('XO CASCADE', style: proLabel(size: 9, spacing: 1.5)),
+          const Spacer(),
+          Text('${xoStages.length} stage(s)',
+              style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
+        ]),
+        const SizedBox(height: 6),
+        Wrap(spacing: 8, runSpacing: 6, children: [
+          if (calcXo > 0)
+            ProStatusPill(label: '$calcXo Calculated Draft', color: kProGreen),
+          if (verifyXo > 0)
+            ProStatusPill(label: '$verifyXo Requires Verify', color: kProAmber),
+        ]),
+        const SizedBox(height: 6),
+        const Text(
+          'Requires acoustic verification. '
+          'Draft cascade does not imply final acoustic summation correctness.',
+          style: TextStyle(
+              fontSize: 9, color: Colors.white38, fontFamily: 'monospace'),
+        ),
       ]),
     );
   }

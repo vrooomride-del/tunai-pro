@@ -781,14 +781,39 @@ class _DspImplementationReadinessCard extends StatelessWidget {
       draft = DspImplementationDraft.fromJson(pkg!.implementationDraftJson!);
     }
 
-    final readinessLabel = isBlocked
-        ? 'Blocked by target capability'
-        : draft?.readinessLabel ?? 'No export package';
-
     final calcCount = draft?.calculatedCount ?? 0;
     final phCount = draft?.placeholderCount ?? 0;
     final verCount = draft?.requiresVerificationCount ?? 0;
     final totalStages = draft?.stageCount ?? 0;
+
+    final xoStages = draft?.biquadStages
+        .where((s) => s.title.contains('HPF') || s.title.contains('LPF'))
+        .length ?? 0;
+    final topologyWarningCount = draft?.warnings
+        .where((w) => w.toLowerCase().contains('topolog') ||
+            w.toLowerCase().contains('cascade') ||
+            w.toLowerCase().contains('lr') ||
+            w.toLowerCase().contains('butterworth'))
+        .length ?? 0;
+
+    String readinessLabel;
+    if (isBlocked) {
+      readinessLabel = 'Blocked by target capability';
+    } else if (draft == null || totalStages == 0) {
+      readinessLabel = 'No export package';
+    } else if (verCount > 0) {
+      readinessLabel = xoStages > 0
+          ? 'Topology requires verification'
+          : 'Some coefficients require verification';
+    } else if (phCount > 0) {
+      readinessLabel = 'Biquad placeholders only';
+    } else if (xoStages > 0 && calcCount > 0) {
+      readinessLabel = 'XO cascade draft generated';
+    } else if (calcCount > 0) {
+      readinessLabel = 'Draft coefficients generated';
+    } else {
+      readinessLabel = draft.readinessLabel;
+    }
 
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -821,6 +846,9 @@ class _DspImplementationReadinessCard extends StatelessWidget {
           _DspImplChip(label: 'SAMPLE RATES', value: profile.sampleRateLabel),
           if (draft != null) ...[
             _DspImplChip(label: 'TOTAL STAGES', value: '$totalStages'),
+            if (xoStages > 0)
+              _DspImplChip(label: 'XO CASCADE', value: '$xoStages',
+                  color: const Color(0xFF4A9EFF)),
             if (calcCount > 0)
               _DspImplChip(label: 'CALCULATED', value: '$calcCount',
                   color: kProGreen),
@@ -830,6 +858,9 @@ class _DspImplementationReadinessCard extends StatelessWidget {
             if (verCount > 0)
               _DspImplChip(label: 'NEEDS VERIFY', value: '$verCount',
                   color: kProRed),
+            if (topologyWarningCount > 0)
+              _DspImplChip(label: 'TOPO WARN', value: '$topologyWarningCount',
+                  color: kProAmber),
           ],
         ]),
 
@@ -849,6 +880,23 @@ class _DspImplementationReadinessCard extends StatelessWidget {
               ),
             ),
           ]),
+          if (xoStages > 0) ...[
+            const SizedBox(height: 4),
+            const Row(children: [
+              Icon(Icons.filter_alt_outlined,
+                  color: Colors.white38, size: 11),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Crossover topology draft does not imply final '
+                  'acoustic summation verification.',
+                  style: TextStyle(
+                      fontSize: 9, color: Colors.white38,
+                      fontFamily: 'monospace'),
+                ),
+              ),
+            ]),
+          ],
         ],
 
         if (profile.warning != null) ...[

@@ -8,6 +8,7 @@ import 'pro_protection_data.dart';
 import 'pro_export_data.dart';
 import 'pro_dsp_target_data.dart';
 import 'pro_biquad_engine.dart';
+import 'pro_crossover_topology.dart';
 
 DspExportPackage generateDspExportDraft({required ProProject project}) {
   final acoustic = project.acousticState;
@@ -255,51 +256,112 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     }
   }
 
-  // XO filters → biquad stages
+  // XO filters → topology-aware cascade biquad stages (Phase K)
+  final topologyWarnings = <String>[];
+  bool anyTopologyRequiresVerification = false;
+
   for (final xo in tuning.crossoverChannels) {
     if (xo.hasHighPass) {
       final hp = xo.highPass!;
-      final result = ProBiquadEngine.calculate(BiquadDesignInput(
-        type: BiquadFilterType.highPass,
-        sampleRateHz: sampleRateHz,
-        frequencyHz: hp.frequencyHz,
-        q: 0.707,
-        enabled: hp.enabled,
-        sourceDescription: 'HPF — ${xo.channelId}',
-      ));
-      biquadStages.add(BiquadDraftStage(
-        id: nextId('bq'),
+      final topoInput = CrossoverTopologyInput(
         channelId: xo.channelId,
+        shape: CrossoverFilterShape.highPass,
+        family: CrossoverFilterFamily.fromExisting(hp.type),
+        slope: XoSlope.fromExisting(hp.slope),
+        frequencyHz: hp.frequencyHz,
+        sampleRateHz: sampleRateHz,
         sourceBlockId: 'xo_${xo.channelId}',
-        title: 'HPF — ${xo.channelId}',
-        filterSummary: '${result.summary}  [${hp.type.name} ${hp.slope.name}]'
-            '  Q=0.707 draft — final crossover topology to be refined',
-        coefficients: result.coefficients,
-        notes: 'Crossover topology (${hp.type.name} ${hp.slope.name}) uses Q=0.707 '
-            'draft. Final multi-pole crossover requires dedicated cascade design.',
-      ));
+        sourceDescription: 'HPF — ${xo.channelId}',
+      );
+      final plan = CrossoverTopologyPlanner.plan(topoInput);
+      topologyWarnings.addAll(plan.warnings);
+      if (plan.requiresVerification) anyTopologyRequiresVerification = true;
+
+      for (final stage in plan.stages) {
+        final result = ProBiquadEngine.calculate(BiquadDesignInput(
+          type: stage.filterType,
+          sampleRateHz: sampleRateHz,
+          frequencyHz: stage.frequencyHz,
+          q: stage.q,
+          enabled: hp.enabled,
+          sourceDescription: stage.stageLabel,
+        ));
+        biquadStages.add(BiquadDraftStage(
+          id: nextId('bq'),
+          channelId: xo.channelId,
+          sourceBlockId: 'xo_${xo.channelId}',
+          title: '${xo.channelId} ${stage.stageLabel}',
+          filterSummary: stage.summary,
+          coefficients: result.coefficients,
+          notes: [
+            if (stage.warning != null) stage.warning!,
+            'Floating-point draft only. Not ADAU fixed-point. No hardware address.',
+          ].join('  '),
+        ));
+      }
+
+      // If plan produced no stages (bypass/unsupported), emit a placeholder
+      if (plan.stages.isEmpty) {
+        biquadStages.add(BiquadDraftStage(
+          id: nextId('bq'),
+          channelId: xo.channelId,
+          sourceBlockId: 'xo_${xo.channelId}',
+          title: '${xo.channelId} HPF — ${plan.summary}',
+          filterSummary: plan.summary,
+          notes: plan.warnings.join('; '),
+        ));
+      }
     }
+
     if (xo.hasLowPass) {
       final lp = xo.lowPass!;
-      final result = ProBiquadEngine.calculate(BiquadDesignInput(
-        type: BiquadFilterType.lowPass,
-        sampleRateHz: sampleRateHz,
-        frequencyHz: lp.frequencyHz,
-        q: 0.707,
-        enabled: lp.enabled,
-        sourceDescription: 'LPF — ${xo.channelId}',
-      ));
-      biquadStages.add(BiquadDraftStage(
-        id: nextId('bq'),
+      final topoInput = CrossoverTopologyInput(
         channelId: xo.channelId,
+        shape: CrossoverFilterShape.lowPass,
+        family: CrossoverFilterFamily.fromExisting(lp.type),
+        slope: XoSlope.fromExisting(lp.slope),
+        frequencyHz: lp.frequencyHz,
+        sampleRateHz: sampleRateHz,
         sourceBlockId: 'xo_${xo.channelId}',
-        title: 'LPF — ${xo.channelId}',
-        filterSummary: '${result.summary}  [${lp.type.name} ${lp.slope.name}]'
-            '  Q=0.707 draft — final crossover topology to be refined',
-        coefficients: result.coefficients,
-        notes: 'Crossover topology (${lp.type.name} ${lp.slope.name}) uses Q=0.707 '
-            'draft. Final multi-pole crossover requires dedicated cascade design.',
-      ));
+        sourceDescription: 'LPF — ${xo.channelId}',
+      );
+      final plan = CrossoverTopologyPlanner.plan(topoInput);
+      topologyWarnings.addAll(plan.warnings);
+      if (plan.requiresVerification) anyTopologyRequiresVerification = true;
+
+      for (final stage in plan.stages) {
+        final result = ProBiquadEngine.calculate(BiquadDesignInput(
+          type: stage.filterType,
+          sampleRateHz: sampleRateHz,
+          frequencyHz: stage.frequencyHz,
+          q: stage.q,
+          enabled: lp.enabled,
+          sourceDescription: stage.stageLabel,
+        ));
+        biquadStages.add(BiquadDraftStage(
+          id: nextId('bq'),
+          channelId: xo.channelId,
+          sourceBlockId: 'xo_${xo.channelId}',
+          title: '${xo.channelId} ${stage.stageLabel}',
+          filterSummary: stage.summary,
+          coefficients: result.coefficients,
+          notes: [
+            if (stage.warning != null) stage.warning!,
+            'Floating-point draft only. Not ADAU fixed-point. No hardware address.',
+          ].join('  '),
+        ));
+      }
+
+      if (plan.stages.isEmpty) {
+        biquadStages.add(BiquadDraftStage(
+          id: nextId('bq'),
+          channelId: xo.channelId,
+          sourceBlockId: 'xo_${xo.channelId}',
+          title: '${xo.channelId} LPF — ${plan.summary}',
+          filterSummary: plan.summary,
+          notes: plan.warnings.join('; '),
+        ));
+      }
     }
   }
 
@@ -335,6 +397,15 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
           '(e.g. frequency above Nyquist or degenerate filter).');
     }
   }
+
+  // Topology warnings (Phase K)
+  for (final w in topologyWarnings) {
+    if (!warnings.contains(w)) warnings.add(w);
+  }
+  if (anyTopologyRequiresVerification) {
+    warnings.add(
+        'Crossover topology draft does not imply final acoustic summation verification.');
+  }
   if (targetProfile.warning != null) {
     warnings.add(targetProfile.warning!);
   }
@@ -353,6 +424,13 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
         'Coefficient draft does not imply hardware deployment readiness.');
     draftWarnings.add(
         'No hardware address. No SigmaStudio register map. Requires expert verification.');
+  }
+  if (anyTopologyRequiresVerification) {
+    draftWarnings.add(
+        'Crossover topology draft does not imply final acoustic summation verification.');
+  }
+  for (final w in topologyWarnings) {
+    if (!draftWarnings.contains(w)) draftWarnings.add(w);
   }
   if (targetProfile.warning != null) {
     draftWarnings.add(targetProfile.warning!);
