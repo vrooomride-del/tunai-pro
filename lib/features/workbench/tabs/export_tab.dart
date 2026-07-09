@@ -1,4 +1,4 @@
-// ── Export Tab — Phase H/I/K ──────────────────────────────────────────────────
+// ── Export Tab — Phase H/I/K/P ────────────────────────────────────────────────
 // DSP Export Architecture Foundation.
 // No hardware write. No USBi. No SafeLoad. No register addresses.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
@@ -12,6 +12,8 @@ import '../../../core/pro_protection_data.dart';
 import '../../../core/pro_export_data.dart';
 import '../../../core/pro_export_engine.dart';
 import '../../../core/pro_dsp_target_data.dart';
+import '../../../core/pro_dsp_address_registry.dart';
+import '../../../core/pro_sigma_mapping_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ExportTab extends ConsumerStatefulWidget {
@@ -197,6 +199,27 @@ class _ExportTabState extends ConsumerState<ExportTab> {
               draft: DspImplementationDraft.fromJson(
                   activePkg.implementationDraftJson!),
             ),
+            const SizedBox(height: 16),
+          ],
+
+          // Phase P: Verified Address Registry
+          _VerifiedAddressRegistryPanel(
+            registryJson: activePkg.addressRegistrySnapshotJson,
+          ),
+          const SizedBox(height: 16),
+
+          // Phase P: SigmaStudio Mapping Reference
+          if (activePkg.sigmaMappingReferenceJson != null) ...[
+            _SigmaMappingPanel(
+              mappingRef: SigmaMappingReference.fromJson(
+                  activePkg.sigmaMappingReferenceJson!),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Phase P: Fixed-Point Draft
+          if (activePkg.fixedPointDraftJson != null) ...[
+            _FixedPointDraftPanel(draftJson: activePkg.fixedPointDraftJson!),
             const SizedBox(height: 16),
           ],
 
@@ -967,5 +990,300 @@ class _CoeffRow extends StatelessWidget {
             fontFamily: 'monospace'),
       ),
     ]),
+  );
+}
+
+// ── Phase P: Verified Address Registry Panel ──────────────────────────────────
+
+class _VerifiedAddressRegistryPanel extends StatelessWidget {
+  final Map<String, dynamic>? registryJson;
+  const _VerifiedAddressRegistryPanel({required this.registryJson});
+
+  @override
+  Widget build(BuildContext context) {
+    final registry = registryJson != null
+        ? DspAddressRegistry.fromJson(registryJson!)
+        : DspAddressRegistry.createDefault();
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.verified_outlined, color: Color(0xFF4A9EFF), size: 13),
+          const SizedBox(width: 8),
+          Text('VERIFIED ADDRESS REGISTRY', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          _InfoChip('${registry.verifiedCount} verified',
+              const Color(0xFF4A9EFF)),
+        ]),
+        const SizedBox(height: 10),
+        ...registry.addresses.map((addr) => _AddressRow(addr: addr)),
+        const SizedBox(height: 8),
+        Text(
+          'Verified addresses are references only. '
+          'Hardware write remains disabled.',
+          style: proSubtitle(size: 9),
+        ),
+      ]),
+    );
+  }
+}
+
+class _AddressRow extends StatelessWidget {
+  final VerifiedDspAddress addr;
+  const _AddressRow({required this.addr});
+
+  @override
+  Widget build(BuildContext context) {
+    final isVerified =
+        addr.verificationStatus == DspAddressVerificationStatus.verified;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(children: [
+        Container(
+          width: 6, height: 6,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isVerified ? const Color(0xFF4A9EFF) : Colors.white24,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(addr.platform.label,
+            style: proLabel(size: 9, color: Colors.white38, spacing: 0)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(addr.logicalName,
+              style: const TextStyle(color: Colors.white70, fontSize: 10)),
+        ),
+        Text(addr.addressHex,
+            style: const TextStyle(
+                color: Color(0xFF4A9EFF),
+                fontSize: 10,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w600)),
+        const SizedBox(width: 8),
+        Text(addr.source.label,
+            style: proSubtitle(size: 9)),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: isVerified
+                ? const Color(0xFF4A9EFF).withValues(alpha: 0.12)
+                : kProSurface,
+            border: Border.all(
+                color: isVerified
+                    ? const Color(0xFF4A9EFF).withValues(alpha: 0.4)
+                    : kProBorder),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(addr.verificationStatus.label,
+              style: TextStyle(
+                  fontSize: 9,
+                  color: isVerified ? const Color(0xFF4A9EFF) : Colors.white38)),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Phase P: SigmaStudio Mapping Reference Panel ──────────────────────────────
+
+class _SigmaMappingPanel extends StatelessWidget {
+  final SigmaMappingReference mappingRef;
+  const _SigmaMappingPanel({required this.mappingRef});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.map_outlined, color: Color(0xFFFBBF24), size: 13),
+          const SizedBox(width: 8),
+          Text('SIGMASTUDIO MAPPING REFERENCE',
+              style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          _InfoChip(mappingRef.status.label, const Color(0xFFFBBF24)),
+        ]),
+        const SizedBox(height: 4),
+        Text(mappingRef.summary, style: proSubtitle(size: 9)),
+        const SizedBox(height: 10),
+        Row(children: [
+          _InfoChip('${mappingRef.mappedCount} mapped', Colors.white38),
+          const SizedBox(width: 6),
+          _InfoChip('${mappingRef.verifiedMappedCount} verified',
+              const Color(0xFF4A9EFF)),
+          const SizedBox(width: 6),
+          _InfoChip('${mappingRef.requiresCaptureCount} need capture',
+              const Color(0xFFFBBF24)),
+        ]),
+        const SizedBox(height: 10),
+        ...mappingRef.mappings.map((m) => _MappingRow(mapping: m)),
+        if (mappingRef.warnings.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ...mappingRef.warnings.map((w) => Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('⚠ ', style: TextStyle(fontSize: 9, color: Color(0xFFFBBF24))),
+              Expanded(child: Text(w, style: proSubtitle(size: 9))),
+            ]),
+          )),
+        ],
+      ]),
+    );
+  }
+}
+
+class _MappingRow extends StatelessWidget {
+  final SigmaParameterMapping mapping;
+  const _MappingRow({required this.mapping});
+
+  @override
+  Widget build(BuildContext context) {
+    final isVerified = mapping.mappingStatus == SigmaMappingStatus.mappedVerified;
+    final needsCapture = mapping.mappingStatus == SigmaMappingStatus.requiresCapture;
+    final statusColor = isVerified
+        ? const Color(0xFF4A9EFF)
+        : needsCapture
+            ? const Color(0xFFFBBF24)
+            : Colors.white38;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Row(children: [
+        Text(mapping.blockKind.label,
+            style: proLabel(size: 9, color: Colors.white38, spacing: 0)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(mapping.logicalName,
+              style: const TextStyle(color: Colors.white70, fontSize: 10)),
+        ),
+        if (mapping.addressHex != null) ...[
+          Text(mapping.addressHex!,
+              style: const TextStyle(
+                  color: Color(0xFF4A9EFF),
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(width: 8),
+        ],
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: statusColor.withValues(alpha: 0.1),
+            border: Border.all(color: statusColor.withValues(alpha: 0.35)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            isVerified ? 'Verified' : needsCapture ? 'Capture needed' : 'Unverified',
+            style: TextStyle(fontSize: 9, color: statusColor),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Phase P: Fixed-Point Draft Panel ─────────────────────────────────────────
+
+class _FixedPointDraftPanel extends StatelessWidget {
+  final Map<String, dynamic> draftJson;
+  const _FixedPointDraftPanel({required this.draftJson});
+
+  @override
+  Widget build(BuildContext context) {
+    final stageCount = draftJson['stageCount'] as int? ?? 0;
+    final warning = draftJson['warning'] as String? ?? '';
+    final stages = draftJson['stages'] as List? ?? [];
+
+    int draftCount = 0;
+    int verifyCount = 0;
+    for (final stage in stages) {
+      final coeffs = (stage as Map)['coefficients'] as List? ?? [];
+      for (final c in coeffs) {
+        final status = (c as Map)['status'] as String? ?? '';
+        if (status == 'convertedDraft') draftCount++;
+        if (status == 'requiresVerification') verifyCount++;
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.memory_outlined, color: Color(0xFFA78BFA), size: 13),
+          const SizedBox(width: 8),
+          Text('ADAU FIXED-POINT DRAFT', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          const _InfoChip('8.24 format', Color(0xFFA78BFA)),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          _InfoChip('$stageCount stage(s)', Colors.white38),
+          const SizedBox(width: 6),
+          _InfoChip('$draftCount converted (draft)', const Color(0xFFA78BFA)),
+          if (verifyCount > 0) ...[
+            const SizedBox(width: 6),
+            _InfoChip('$verifyCount need verification', const Color(0xFFFBBF24)),
+          ],
+        ]),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFBBF24).withValues(alpha: 0.06),
+            border: Border.all(
+                color: const Color(0xFFFBBF24).withValues(alpha: 0.25)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('⚠ ',
+                style: TextStyle(fontSize: 9, color: Color(0xFFFBBF24))),
+            Expanded(
+              child: Text(
+                warning.isNotEmpty
+                    ? warning
+                    : 'Draft fixed-point values are not hardware-ready.',
+                style: proSubtitle(size: 9),
+              ),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _InfoChip(this.label, this.color);
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.1),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Text(label,
+        style: TextStyle(fontSize: 9, color: color)),
   );
 }

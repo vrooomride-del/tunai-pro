@@ -1,4 +1,4 @@
-// ── TUNAI PRO Phase H/I — DSP Export Engine ──────────────────────────────────
+// ── TUNAI PRO Phase H/I/P — DSP Export Engine ────────────────────────────────
 // Generates draft export packages from project state.
 // No hardware write. No USBi. No SafeLoad. No DSP register addresses.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
@@ -10,6 +10,9 @@ import 'pro_dsp_target_data.dart';
 import 'pro_biquad_engine.dart';
 import 'pro_crossover_topology.dart';
 import 'pro_impedance_analysis.dart';
+import 'pro_dsp_address_registry.dart';
+import 'pro_adau_fixed_point.dart';
+import 'pro_sigma_mapping_data.dart';
 
 DspExportPackage generateDspExportDraft({required ProProject project}) {
   final acoustic = project.acousticState;
@@ -464,6 +467,142 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     warnings: draftWarnings,
   );
 
+  // ── Phase P: Verified Address Registry snapshot ───────────────────────────
+  final addressRegistry = DspAddressRegistry.createDefault();
+  final registrySnapshot = addressRegistry.toJson();
+
+  // ── Phase P: SigmaStudio Mapping Reference ────────────────────────────────
+  final platform = exportState.selectedTarget;
+  final isAdauTarget = platform == DspTargetPlatform.adau1466 ||
+      platform == DspTargetPlatform.adau1701;
+
+  final mappings = <SigmaParameterMapping>[];
+  int mapSeq = 0;
+  String nextMapId() => 'map_${mapSeq++}';
+
+  if (platform == DspTargetPlatform.adau1466) {
+    // Master Volume L — verified address known
+    mappings.add(SigmaParameterMapping(
+      id: nextMapId(),
+      platform: platform,
+      blockKind: SigmaBlockKind.masterVolume,
+      logicalName: 'Master Volume L',
+      addressId: 'adau1466_master_vol_l',
+      addressHex: '0x67',
+      mappingStatus: SigmaMappingStatus.mappedVerified,
+      sourceNote: 'Verified from direct-write/capture work.',
+    ));
+    mappings.add(SigmaParameterMapping(
+      id: nextMapId(),
+      platform: platform,
+      blockKind: SigmaBlockKind.masterVolume,
+      logicalName: 'Master Volume R',
+      addressId: 'adau1466_master_vol_r',
+      addressHex: '0x64',
+      mappingStatus: SigmaMappingStatus.mappedVerified,
+      sourceNote: 'Verified from direct-write/capture work.',
+    ));
+    // All other parameter kinds require SigmaStudio capture
+    for (final kind in [
+      SigmaBlockKind.peq, SigmaBlockKind.crossover,
+      SigmaBlockKind.gain, SigmaBlockKind.delay,
+      SigmaBlockKind.mute, SigmaBlockKind.output,
+    ]) {
+      mappings.add(SigmaParameterMapping(
+        id: nextMapId(),
+        platform: platform,
+        blockKind: kind,
+        logicalName: '${kind.label} (all channels)',
+        mappingStatus: SigmaMappingStatus.requiresCapture,
+        warning: 'Address unknown — requires SigmaStudio Export/Capture.',
+      ));
+    }
+  } else if (platform == DspTargetPlatform.adau1701) {
+    for (final kind in SigmaBlockKind.values.where((k) => k != SigmaBlockKind.unknown)) {
+      mappings.add(SigmaParameterMapping(
+        id: nextMapId(),
+        platform: platform,
+        blockKind: kind,
+        logicalName: '${kind.label} (all channels)',
+        mappingStatus: SigmaMappingStatus.requiresCapture,
+        warning: 'No verified ADAU1701 addresses available. Requires SigmaStudio Export/Capture.',
+      ));
+    }
+  }
+  // simulationOnly / genericBiquad: no ADAU mapping needed
+
+  final hasVerifiedMapping = mappings
+      .any((m) => m.mappingStatus == SigmaMappingStatus.mappedVerified);
+  final allRequireCapture = mappings.isNotEmpty &&
+      mappings.every((m) => m.mappingStatus == SigmaMappingStatus.requiresCapture);
+
+  final mappingStatus = mappings.isEmpty
+      ? SigmaMappingStatus.unmapped
+      : allRequireCapture
+          ? SigmaMappingStatus.requiresCapture
+          : hasVerifiedMapping
+              ? SigmaMappingStatus.partiallyMapped
+              : SigmaMappingStatus.requiresCapture;
+
+  final mappingWarnings = <String>[
+    'Only verified DSP addresses may be used.',
+    if (platform == DspTargetPlatform.adau1466)
+      'Master Volume L/R ADAU1466 addresses are known verified references (0x67, 0x64).',
+    if (isAdauTarget)
+      'All unverified mappings require SigmaStudio Export/Capture.',
+    'No hardware write is performed.',
+  ];
+
+  final sigmaMapping = SigmaMappingReference(
+    id: nextId('sigma'),
+    platform: platform,
+    mappings: mappings,
+    warnings: mappingWarnings,
+    summary: mappings.isEmpty
+        ? 'No ADAU mapping required for ${platform.label}.'
+        : '${mappings.length} parameter block(s). '
+            '${mappings.where((m) => m.mappingStatus == SigmaMappingStatus.mappedVerified).length} verified. '
+            '${mappings.where((m) => m.mappingStatus == SigmaMappingStatus.requiresCapture).length} require capture.',
+    status: mappingStatus,
+  );
+
+  // ── Phase P: Fixed-point draft ────────────────────────────────────────────
+  Map<String, dynamic>? fixedPointDraft;
+  if (isAdauTarget && biquadStages.isNotEmpty) {
+    final convertedStages = <Map<String, dynamic>>[];
+    for (final stage in biquadStages) {
+      final c = stage.coefficients;
+      final coeffDoubles = [c.b0, c.b1, c.b2, c.a1, c.a2];
+      final converted = AdauFixedPointConverter.biquadCoefficients824(coeffDoubles);
+      convertedStages.add({
+        'stageId': stage.id,
+        'format': '8.24',
+        'coefficients': converted.map((v) => v.toJson()).toList(),
+        'warning': 'Fixed-point values are draft conversions and are not linked '
+            'to unverified DSP addresses.',
+      });
+    }
+    fixedPointDraft = {
+      'format': AdauFixedPointFormat.format824.toJson(),
+      'stageCount': convertedStages.length,
+      'stages': convertedStages,
+      'warning': 'Fixed-point values are draft conversions and are not linked '
+          'to unverified DSP addresses. Not for hardware write.',
+    };
+    warnings.add('Fixed-point values are draft conversions and are not linked '
+        'to unverified DSP addresses.');
+  }
+
+  // Phase P mandatory package warnings
+  warnings.add('Only verified DSP addresses may be used.');
+  if (platform == DspTargetPlatform.adau1466) {
+    warnings.add('Master Volume L/R ADAU1466 addresses are known verified references.');
+  }
+  if (isAdauTarget) {
+    warnings.add('All unverified mappings require SigmaStudio Export/Capture.');
+  }
+  warnings.add('No hardware write is performed.');
+
   return DspExportPackage(
     id: nextId('pkg'),
     targetPlatform: exportState.selectedTarget,
@@ -477,5 +616,8 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     parameterBlocks: blocks,
     warnings: warnings,
     implementationDraftJson: implDraft.toJson(),
+    addressRegistrySnapshotJson: registrySnapshot,
+    sigmaMappingReferenceJson: sigmaMapping.toJson(),
+    fixedPointDraftJson: fixedPointDraft,
   );
 }

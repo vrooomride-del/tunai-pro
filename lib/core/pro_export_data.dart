@@ -194,6 +194,10 @@ class DspExportPackage {
   final String? notes;
   // Phase I: serialized DspImplementationDraft (avoids circular import)
   final Map<String, dynamic>? implementationDraftJson;
+  // Phase P: DSP mapping reference snapshots (serialized JSON, avoids circular import)
+  final Map<String, dynamic>? sigmaMappingReferenceJson;
+  final Map<String, dynamic>? fixedPointDraftJson;
+  final Map<String, dynamic>? addressRegistrySnapshotJson;
 
   DspExportPackage({
     required this.id,
@@ -211,6 +215,9 @@ class DspExportPackage {
     this.blockedReason,
     this.notes,
     this.implementationDraftJson,
+    this.sigmaMappingReferenceJson,
+    this.fixedPointDraftJson,
+    this.addressRegistrySnapshotJson,
   }) : createdAt = createdAt ?? DateTime.now();
 
   int get blockCount => parameterBlocks.length;
@@ -225,6 +232,9 @@ class DspExportPackage {
     List<String>? warnings,
     String? blockedReason,
     Map<String, dynamic>? implementationDraftJson,
+    Map<String, dynamic>? sigmaMappingReferenceJson,
+    Map<String, dynamic>? fixedPointDraftJson,
+    Map<String, dynamic>? addressRegistrySnapshotJson,
   }) => DspExportPackage(
     id: id,
     targetPlatform: targetPlatform,
@@ -241,6 +251,9 @@ class DspExportPackage {
     blockedReason: blockedReason ?? this.blockedReason,
     notes: notes,
     implementationDraftJson: implementationDraftJson ?? this.implementationDraftJson,
+    sigmaMappingReferenceJson: sigmaMappingReferenceJson ?? this.sigmaMappingReferenceJson,
+    fixedPointDraftJson: fixedPointDraftJson ?? this.fixedPointDraftJson,
+    addressRegistrySnapshotJson: addressRegistrySnapshotJson ?? this.addressRegistrySnapshotJson,
   );
 
   Map<String, dynamic> toJson() => {
@@ -260,6 +273,12 @@ class DspExportPackage {
     if (notes != null) 'notes': notes,
     if (implementationDraftJson != null)
       'implementationDraft': implementationDraftJson,
+    if (sigmaMappingReferenceJson != null)
+      'sigmaMappingReference': sigmaMappingReferenceJson,
+    if (fixedPointDraftJson != null)
+      'fixedPointDraft': fixedPointDraftJson,
+    if (addressRegistrySnapshotJson != null)
+      'addressRegistrySnapshot': addressRegistrySnapshotJson,
   };
 
   factory DspExportPackage.fromJson(Map<String, dynamic> j) => DspExportPackage(
@@ -283,6 +302,15 @@ class DspExportPackage {
     notes: j['notes'] as String?,
     implementationDraftJson: j['implementationDraft'] != null
         ? Map<String, dynamic>.from(j['implementationDraft'] as Map)
+        : null,
+    sigmaMappingReferenceJson: j['sigmaMappingReference'] != null
+        ? Map<String, dynamic>.from(j['sigmaMappingReference'] as Map)
+        : null,
+    fixedPointDraftJson: j['fixedPointDraft'] != null
+        ? Map<String, dynamic>.from(j['fixedPointDraft'] as Map)
+        : null,
+    addressRegistrySnapshotJson: j['addressRegistrySnapshot'] != null
+        ? Map<String, dynamic>.from(j['addressRegistrySnapshot'] as Map)
         : null,
   );
 }

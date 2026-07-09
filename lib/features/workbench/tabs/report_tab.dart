@@ -12,6 +12,8 @@ import '../../../core/pro_export_data.dart';
 import '../../../core/pro_dsp_target_data.dart';
 import '../../../core/pro_simulation_data.dart';
 import '../../../core/pro_impedance_analysis.dart';
+import '../../../core/pro_dsp_address_registry.dart';
+import '../../../core/pro_sigma_mapping_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -118,6 +120,9 @@ class ReportTab extends ConsumerWidget {
         // Phase I: DSP implementation readiness
         if (project != null) ...[
           _DspImplementationReadinessCard(exportState: project.exportState),
+          const SizedBox(height: 16),
+
+          _DspMappingReadinessCard(exportState: project.exportState),
           const SizedBox(height: 16),
         ],
 
@@ -1304,6 +1309,110 @@ class _SimulationReadinessCard extends StatelessWidget {
             ),
           ]),
         ],
+      ]),
+    );
+  }
+}
+
+// ── Phase P: DSP Mapping Readiness Card ──────────────────────────────────────
+
+class _DspMappingReadinessCard extends StatelessWidget {
+  final ExportProjectState exportState;
+  const _DspMappingReadinessCard({required this.exportState});
+
+  @override
+  Widget build(BuildContext context) {
+    final platform = exportState.selectedTarget;
+    final isAdau = platform == DspTargetPlatform.adau1466 ||
+        platform == DspTargetPlatform.adau1701;
+
+    final registry = DspAddressRegistry.createDefault();
+    final platformAddresses = registry.addressesForPlatform(platform);
+    final verifiedCount = platformAddresses
+        .where((a) => a.verificationStatus == DspAddressVerificationStatus.verified)
+        .length;
+
+    final hasVerifiedMV = registry.hasVerifiedMasterVolume1466 &&
+        platform == DspTargetPlatform.adau1466;
+
+    // Derive mapping reference from active package if available
+    final activePkg = exportState.activePackage;
+    SigmaMappingReference? mappingRef;
+    if (activePkg?.sigmaMappingReferenceJson != null) {
+      mappingRef = SigmaMappingReference.fromJson(
+          activePkg!.sigmaMappingReferenceJson!);
+    }
+
+    final requiresCaptureCount = mappingRef?.requiresCaptureCount ?? 0;
+
+    String readinessLabel;
+    if (!isAdau) {
+      readinessLabel = 'Simulation target — no DSP mapping required';
+    } else if (hasVerifiedMV && (mappingRef?.verifiedMappedCount ?? 0) > 0) {
+      readinessLabel = 'Verified master volume mapping available';
+    } else if (requiresCaptureCount > 0) {
+      readinessLabel = 'Mapping requires SigmaStudio capture';
+    } else {
+      readinessLabel = 'Mapping requires SigmaStudio capture';
+    }
+
+    final hasFPDraft = activePkg?.fixedPointDraftJson != null;
+    final fpStatus = hasFPDraft ? 'Fixed-point draft requires verification' : 'Not generated';
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.hub_outlined, color: Color(0xFFA78BFA), size: 13),
+          const SizedBox(width: 8),
+          Text('DSP MAPPING READINESS', style: proLabel(size: 9, spacing: 2)),
+        ]),
+        const SizedBox(height: 10),
+        _ReportChip(
+          label: 'DSP TARGET',
+          value: platform.label,
+          color: Colors.white54,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'VERIFIED ADDRESSES',
+          value: '$verifiedCount address(es) on ${platform.label}',
+          color: verifiedCount > 0 ? const Color(0xFF4A9EFF) : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'KNOWN MASTER VOLUME (ADAU1466)',
+          value: hasVerifiedMV ? 'Yes — 0x67 (L), 0x64 (R)' : 'N/A',
+          color: hasVerifiedMV ? const Color(0xFF4A9EFF) : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'MAPPINGS REQUIRING CAPTURE',
+          value: requiresCaptureCount > 0 ? '$requiresCaptureCount block(s)' : 'None',
+          color: requiresCaptureCount > 0 ? kProAmber : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'FIXED-POINT DRAFT',
+          value: fpStatus,
+          color: hasFPDraft ? const Color(0xFFA78BFA) : Colors.white38,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'READINESS',
+          value: readinessLabel,
+          color: Colors.white54,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Verified addresses are references only. Hardware write remains disabled.',
+          style: proSubtitle(size: 9),
+        ),
       ]),
     );
   }
