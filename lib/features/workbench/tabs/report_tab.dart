@@ -84,6 +84,12 @@ class ReportTab extends ConsumerWidget {
           const SizedBox(height: 16),
         ],
 
+        // Phase M: Measurement data readiness
+        if (project != null) ...[
+          _MeasurementDataCard(acoustic: project.acousticState),
+          const SizedBox(height: 16),
+        ],
+
         // Phase L: Simulation readiness
         if (project != null) ...[
           _SimulationReadinessCard(simState: project.simulationState),
@@ -335,6 +341,87 @@ class _AcousticReadinessCard extends StatelessWidget {
     padding: const EdgeInsets.symmetric(vertical: 4),
     child: Row(children: [
       SizedBox(width: 130, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
+      Text(value, style: proValue(size: 11, color: Colors.white60)),
+    ]),
+  );
+}
+
+// ── Phase M: Measurement Data Readiness Card ──────────────────────────────────
+
+class _MeasurementDataCard extends StatelessWidget {
+  final MeasurementProjectState acoustic;
+  const _MeasurementDataCard({required this.acoustic});
+
+  String get _readinessLabel {
+    final frd = acoustic.parsedFrdCount;
+    final zma = acoustic.parsedZmaCount;
+    final total = acoustic.totalDrivers;
+    if (frd == 0 && zma == 0) return 'No measurement data';
+    if (frd < total) return 'Partial FRD data ($frd/$total drivers)';
+    if (zma == 0) return 'FRD data ready';
+    if (acoustic.missingPhaseCount > 0) return 'Measurement data has warnings';
+    return 'FRD/ZMA data ready';
+  }
+
+  Color get _readinessColor {
+    if (acoustic.parsedFrdCount == 0) return const Color(0xFF6B7280);
+    if (acoustic.parsedFrdCount < acoustic.totalDrivers) return kProAmber;
+    if (acoustic.missingPhaseCount > 0) return kProAmber;
+    return kProGreen;
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('MEASUREMENT DATA (PHASE M)', style: proLabel(size: 9, spacing: 1.8)),
+      const SizedBox(height: 12),
+      _row('Driver channels', '${acoustic.totalDrivers}'),
+      _row('FRD parsed', '${acoustic.parsedFrdCount} / ${acoustic.totalDrivers}'),
+      _row('ZMA parsed', '${acoustic.parsedZmaCount} / ${acoustic.totalDrivers}'),
+      _row('FRD with phase', '${acoustic.parsedFrdWithPhaseCount} / ${acoustic.parsedFrdCount}'),
+      _row('Missing phase', '${acoustic.missingPhaseCount}'),
+      const SizedBox(height: 8),
+      Row(children: [
+        SizedBox(width: 150, child: Text('Data readiness', style: proLabel(size: 10, spacing: 0.3))),
+        ProStatusPill(label: _readinessLabel, color: _readinessColor),
+      ]),
+      if (acoustic.parsedFrdCount == 0) ...[
+        const SizedBox(height: 8),
+        const Row(children: [
+          Icon(Icons.info_outline, color: Colors.white38, size: 12),
+          SizedBox(width: 6),
+          Expanded(
+              child: Text(
+            'No FRD data imported. Use the Import tab to paste and parse FRD files.',
+            style: TextStyle(color: Colors.white38, fontSize: 10),
+          )),
+        ]),
+      ] else if (acoustic.missingPhaseCount > 0) ...[
+        const SizedBox(height: 8),
+        Row(children: [
+          const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+          const SizedBox(width: 6),
+          Expanded(
+              child: Text(
+            '${acoustic.missingPhaseCount} driver(s) have FRD without phase data. '
+            'Phase-aware summation will not be possible until phase data is available.',
+            style: proSubtitle(size: 10),
+          )),
+        ]),
+      ],
+    ]),
+  );
+
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(children: [
+      SizedBox(width: 150, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
       Text(value, style: proValue(size: 11, color: Colors.white60)),
     ]),
   );
@@ -993,11 +1080,31 @@ class _SimulationReadinessCard extends StatelessWidget {
               value: run.hasSummedCurve ? 'Draft' : 'No',
               color: run.hasSummedCurve ? kProAmber : Colors.white38,
             ),
-            _DspImplChip(
-              label: 'DRIVERS',
-              value: run.hasDriverCurves ? 'Yes' : 'No',
-              color: run.hasDriverCurves ? kProGreen : Colors.white38,
-            ),
+            () {
+              final importedCount = run.curves
+                  .where((c) =>
+                      c.type == SimulationCurveType.driver &&
+                      c.status == SimulationCurveStatus.imported)
+                  .length;
+              final placeholderCount = run.curves
+                  .where((c) =>
+                      c.type == SimulationCurveType.driver &&
+                      c.status != SimulationCurveStatus.imported)
+                  .length;
+              return Row(mainAxisSize: MainAxisSize.min, children: [
+                _DspImplChip(
+                  label: 'FRD CURVES',
+                  value: '$importedCount',
+                  color: importedCount > 0 ? kProGreen : Colors.white38,
+                ),
+                const SizedBox(width: 10),
+                _DspImplChip(
+                  label: 'PLACEHOLDER',
+                  value: '$placeholderCount',
+                  color: placeholderCount > 0 ? kProAmber : kProGreen,
+                ),
+              ]);
+            }(),
           ],
         ]),
 
@@ -1024,6 +1131,25 @@ class _SimulationReadinessCard extends StatelessWidget {
             Expanded(
               child: Text(
                 'No simulation draft generated before export.',
+                style: TextStyle(fontSize: 9, color: kProAmber),
+              ),
+            ),
+          ]),
+        ],
+
+        if (run != null &&
+            run.curves.any((c) =>
+                c.type == SimulationCurveType.driver &&
+                c.status != SimulationCurveStatus.imported)) ...[
+          const SizedBox(height: 6),
+          const Row(children: [
+            Icon(Icons.warning_amber_outlined,
+                color: kProAmber, size: 11),
+            SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Simulation still uses placeholder driver curves. '
+                'Import FRD data and regenerate for measured-data simulation.',
                 style: TextStyle(fontSize: 9, color: kProAmber),
               ),
             ),

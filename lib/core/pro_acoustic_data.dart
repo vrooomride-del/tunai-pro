@@ -1,6 +1,6 @@
-// ── TUNAI PRO Phase C — Acoustic Data Models ─────────────────────────────────
-// Driver channels, FRD/ZMA file references, measurement status, target curve.
-// No DSP writes. No hardware access. Data-layer only.
+// ── TUNAI PRO Phase M — Acoustic Data Models ─────────────────────────────────
+// Driver channels, FRD/ZMA file references, measurement status, target curve,
+// parsed measurement data. No DSP writes. No hardware access. Data-layer only.
 
 import 'dart:convert';
 
@@ -140,7 +140,140 @@ enum TargetCurvePreset {
       TargetCurvePreset.values.firstWhere((e) => e.name == s, orElse: () => TargetCurvePreset.flat);
 }
 
+enum MeasurementParseStatus {
+  notParsed,
+  parsed,
+  parsedWithWarnings,
+  failed,
+  unsupported;
+
+  String get label => switch (this) {
+    MeasurementParseStatus.notParsed          => 'Not Parsed',
+    MeasurementParseStatus.parsed             => 'Parsed',
+    MeasurementParseStatus.parsedWithWarnings => 'Parsed (Warnings)',
+    MeasurementParseStatus.failed             => 'Failed',
+    MeasurementParseStatus.unsupported        => 'Unsupported',
+  };
+
+  String toJson() => name;
+  static MeasurementParseStatus fromJson(String s) =>
+      MeasurementParseStatus.values.firstWhere((e) => e.name == s,
+          orElse: () => MeasurementParseStatus.notParsed);
+}
+
 // ── Models ────────────────────────────────────────────────────────────────────
+
+/// Single point from an FRD or ZMA file.
+class MeasurementDataPoint {
+  final double frequencyHz;
+  final double? magnitudeDb;
+  final double? phaseDeg;
+  final double? impedanceOhm;
+  final double? impedancePhaseDeg;
+
+  const MeasurementDataPoint({
+    required this.frequencyHz,
+    this.magnitudeDb,
+    this.phaseDeg,
+    this.impedanceOhm,
+    this.impedancePhaseDeg,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'f': frequencyHz,
+    if (magnitudeDb != null) 'm': magnitudeDb,
+    if (phaseDeg != null) 'p': phaseDeg,
+    if (impedanceOhm != null) 'z': impedanceOhm,
+    if (impedancePhaseDeg != null) 'zp': impedancePhaseDeg,
+  };
+
+  factory MeasurementDataPoint.fromJson(Map<String, dynamic> j) =>
+      MeasurementDataPoint(
+        frequencyHz: (j['f'] as num).toDouble(),
+        magnitudeDb: (j['m'] as num?)?.toDouble(),
+        phaseDeg: (j['p'] as num?)?.toDouble(),
+        impedanceOhm: (j['z'] as num?)?.toDouble(),
+        impedancePhaseDeg: (j['zp'] as num?)?.toDouble(),
+      );
+}
+
+/// Fully parsed measurement data from a single FRD or ZMA file.
+class ParsedMeasurementData {
+  final String id;
+  final String sourceFileName;
+  final AcousticFileType fileType;
+  final DateTime importedAt;
+  final List<MeasurementDataPoint> points;
+  final String? warning;
+  final String? notes;
+
+  const ParsedMeasurementData({
+    required this.id,
+    required this.sourceFileName,
+    required this.fileType,
+    required this.importedAt,
+    required this.points,
+    this.warning,
+    this.notes,
+  });
+
+  double get minFrequencyHz =>
+      points.isEmpty ? 0 : points.map((p) => p.frequencyHz).reduce((a, b) => a < b ? a : b);
+  double get maxFrequencyHz =>
+      points.isEmpty ? 0 : points.map((p) => p.frequencyHz).reduce((a, b) => a > b ? a : b);
+  int get pointCount => points.length;
+  bool get hasMagnitude => points.any((p) => p.magnitudeDb != null);
+  bool get hasPhase => points.any((p) => p.phaseDeg != null);
+  bool get hasImpedance => points.any((p) => p.impedanceOhm != null);
+
+  String get freqRangeLabel {
+    if (points.isEmpty) return '—';
+    return '${_hzLabel(minFrequencyHz)} – ${_hzLabel(maxFrequencyHz)}';
+  }
+
+  static String _hzLabel(double v) =>
+      v >= 1000 ? '${(v / 1000).toStringAsFixed(1)} kHz' : '${v.toStringAsFixed(0)} Hz';
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'sourceFileName': sourceFileName,
+    'fileType': fileType.toJson(),
+    'importedAt': importedAt.toIso8601String(),
+    'points': points.map((p) => p.toJson()).toList(),
+    if (warning != null) 'warning': warning,
+    if (notes != null) 'notes': notes,
+  };
+
+  factory ParsedMeasurementData.fromJson(Map<String, dynamic> j) =>
+      ParsedMeasurementData(
+        id: j['id'] as String,
+        sourceFileName: j['sourceFileName'] as String,
+        fileType: AcousticFileType.fromJson(j['fileType'] as String? ?? 'unknown'),
+        importedAt: DateTime.tryParse(j['importedAt'] as String? ?? '') ?? DateTime.now(),
+        points: (j['points'] as List? ?? [])
+            .map((e) => MeasurementDataPoint.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList(),
+        warning: j['warning'] as String?,
+        notes: j['notes'] as String?,
+      );
+}
+
+/// Result of parsing an FRD or ZMA file.
+class MeasurementParseResult {
+  final MeasurementParseStatus status;
+  final ParsedMeasurementData? data;
+  final List<String> warnings;
+  final List<String> errors;
+  final String summary;
+
+  const MeasurementParseResult({
+    required this.status,
+    this.data,
+    this.warnings = const [],
+    this.errors = const [],
+    required this.summary,
+  });
+}
 
 class AcousticFileRef {
   final String id;
@@ -152,6 +285,8 @@ class AcousticFileRef {
   final double? minFrequency;
   final double? maxFrequency;
   final String? notes;
+  final MeasurementParseStatus parseStatus;
+  final String? parsedDataId;
 
   const AcousticFileRef({
     required this.id,
@@ -163,6 +298,8 @@ class AcousticFileRef {
     this.minFrequency,
     this.maxFrequency,
     this.notes,
+    this.parseStatus = MeasurementParseStatus.notParsed,
+    this.parsedDataId,
   });
 
   String get freqRangeLabel {
@@ -172,6 +309,27 @@ class AcousticFileRef {
 
   static String _hz(double v) =>
       v >= 1000 ? '${(v / 1000).toStringAsFixed(1)} kHz' : '${v.toStringAsFixed(0)} Hz';
+
+  AcousticFileRef copyWith({
+    MeasurementParseStatus? parseStatus,
+    String? parsedDataId,
+    int? pointCount,
+    double? minFrequency,
+    double? maxFrequency,
+    String? notes,
+  }) => AcousticFileRef(
+    id: id,
+    fileName: fileName,
+    filePath: filePath,
+    type: type,
+    importedAt: importedAt,
+    pointCount: pointCount ?? this.pointCount,
+    minFrequency: minFrequency ?? this.minFrequency,
+    maxFrequency: maxFrequency ?? this.maxFrequency,
+    notes: notes ?? this.notes,
+    parseStatus: parseStatus ?? this.parseStatus,
+    parsedDataId: parsedDataId ?? this.parsedDataId,
+  );
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -183,6 +341,8 @@ class AcousticFileRef {
     if (minFrequency != null) 'minFrequency': minFrequency,
     if (maxFrequency != null) 'maxFrequency': maxFrequency,
     if (notes != null) 'notes': notes,
+    'parseStatus': parseStatus.toJson(),
+    if (parsedDataId != null) 'parsedDataId': parsedDataId,
   };
 
   factory AcousticFileRef.fromJson(Map<String, dynamic> j) => AcousticFileRef(
@@ -195,6 +355,8 @@ class AcousticFileRef {
     minFrequency: (j['minFrequency'] as num?)?.toDouble(),
     maxFrequency: (j['maxFrequency'] as num?)?.toDouble(),
     notes: j['notes'] as String?,
+    parseStatus: MeasurementParseStatus.fromJson(j['parseStatus'] as String? ?? 'notParsed'),
+    parsedDataId: j['parsedDataId'] as String?,
   );
 }
 
@@ -209,6 +371,9 @@ class DriverChannel {
   final AcousticFileRef? zmaFile;
   final MeasurementStatus measurementStatus;
   final String? notes;
+  // Phase M: parsed data, stored inline per driver
+  final ParsedMeasurementData? frdData;
+  final ParsedMeasurementData? zmaData;
 
   const DriverChannel({
     required this.id,
@@ -221,11 +386,15 @@ class DriverChannel {
     this.zmaFile,
     this.measurementStatus = MeasurementStatus.empty,
     this.notes,
+    this.frdData,
+    this.zmaData,
   });
 
   String get shortLabel => '${role.short} · ${side.label}';
   bool get hasFrd => frdFile != null;
   bool get hasZma => zmaFile != null;
+  bool get hasParsedFrd => frdData != null;
+  bool get hasParsedZma => zmaData != null;
 
   DriverChannel copyWith({
     String? name,
@@ -239,6 +408,10 @@ class DriverChannel {
     bool clearZma = false,
     MeasurementStatus? measurementStatus,
     String? notes,
+    ParsedMeasurementData? frdData,
+    bool clearFrdData = false,
+    ParsedMeasurementData? zmaData,
+    bool clearZmaData = false,
   }) => DriverChannel(
     id: id,
     name: name ?? this.name,
@@ -250,6 +423,8 @@ class DriverChannel {
     zmaFile: clearZma ? null : (zmaFile ?? this.zmaFile),
     measurementStatus: measurementStatus ?? this.measurementStatus,
     notes: notes ?? this.notes,
+    frdData: clearFrdData ? null : (frdData ?? this.frdData),
+    zmaData: clearZmaData ? null : (zmaData ?? this.zmaData),
   );
 
   Map<String, dynamic> toJson() => {
@@ -263,6 +438,8 @@ class DriverChannel {
     if (zmaFile != null) 'zmaFile': zmaFile!.toJson(),
     'measurementStatus': measurementStatus.toJson(),
     if (notes != null) 'notes': notes,
+    if (frdData != null) 'frdData': frdData!.toJson(),
+    if (zmaData != null) 'zmaData': zmaData!.toJson(),
   };
 
   factory DriverChannel.fromJson(Map<String, dynamic> j) => DriverChannel(
@@ -280,6 +457,12 @@ class DriverChannel {
         : null,
     measurementStatus: MeasurementStatus.fromJson(j['measurementStatus'] as String? ?? 'empty'),
     notes: j['notes'] as String?,
+    frdData: j['frdData'] != null
+        ? ParsedMeasurementData.fromJson(Map<String, dynamic>.from(j['frdData'] as Map))
+        : null,
+    zmaData: j['zmaData'] != null
+        ? ParsedMeasurementData.fromJson(Map<String, dynamic>.from(j['zmaData'] as Map))
+        : null,
   );
 }
 
@@ -341,6 +524,11 @@ class MeasurementProjectState {
   int get totalDrivers => driverChannels.length;
   int get importedFrdCount => driverChannels.where((d) => d.hasFrd).length;
   int get importedZmaCount => driverChannels.where((d) => d.hasZma).length;
+  int get parsedFrdCount => driverChannels.where((d) => d.hasParsedFrd).length;
+  int get parsedZmaCount => driverChannels.where((d) => d.hasParsedZma).length;
+  int get parsedFrdWithPhaseCount =>
+      driverChannels.where((d) => d.frdData?.hasPhase == true).length;
+  int get missingPhaseCount => parsedFrdCount - parsedFrdWithPhaseCount;
   int get readyDriverCount =>
       driverChannels.where((d) => d.measurementStatus == MeasurementStatus.validated ||
                                   d.measurementStatus == MeasurementStatus.imported).length;

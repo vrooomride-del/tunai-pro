@@ -5,6 +5,7 @@ import 'package:tunai_pro/core/pro_simulation_data.dart';
 import 'package:tunai_pro/core/pro_simulation_engine.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
+import 'package:tunai_pro/core/pro_measurement_parser.dart';
 
 ProProject _defaultProject() => ProProject.create(
   name: 'Sim Test',
@@ -261,6 +262,172 @@ void main() {
         expect(jsonStr, isNot(contains('safeload')));
         expect(jsonStr, isNot(contains('0x')));
       }
+    });
+  });
+
+  group('Imported FRD integration', () {
+    ParsedMeasurementData makeFrd({bool withPhase = true}) {
+      const frdContent = '''
+20    -10.0    0.0
+100     0.0   90.0
+1000    2.0   45.0
+10000   1.0   10.0
+20000  -5.0  -20.0
+''';
+      final r = withPhase
+          ? ProMeasurementParser.parseFrd(
+              fileName: 'woofer.frd', content: frdContent)
+          : ProMeasurementParser.parseFrd(
+              fileName: 'woofer.frd',
+              content: '20 -10.0\n100 0.0\n1000 2.0\n10000 1.0\n20000 -5.0\n');
+      return r.data!;
+    }
+
+    test('imported FRD data is used instead of placeholder', () {
+      final frd = makeFrd();
+      const driver = DriverChannel(
+        id: 'wf_l',
+        name: 'Woofer L',
+        role: DriverRole.woofer,
+        side: DriverSide.left,
+        enabled: true,
+      );
+      final driverWithFrd = driver.copyWith(frdData: frd);
+      final acoustic = MeasurementProjectState.createDefault()
+          .copyWith(driverChannels: [driverWithFrd]);
+      final project = _defaultProject().copyWith(acousticState: acoustic);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+            includeDrivers: true, includeSummed: false, includeTarget: false),
+      );
+      expect(result.hasDriverCurves, isTrue);
+      final curve = result.curves
+          .firstWhere((c) => c.type == SimulationCurveType.driver);
+      expect(curve.status, SimulationCurveStatus.imported);
+    });
+
+    test('imported FRD curve label contains FRD source tag', () {
+      final frd = makeFrd();
+      const driver = DriverChannel(
+        id: 'wf_l',
+        name: 'Woofer L',
+        role: DriverRole.woofer,
+        side: DriverSide.left,
+        enabled: true,
+      );
+      final driverWithFrd = driver.copyWith(frdData: frd);
+      final acoustic = MeasurementProjectState.createDefault()
+          .copyWith(driverChannels: [driverWithFrd]);
+      final project = _defaultProject().copyWith(acousticState: acoustic);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+            includeDrivers: true, includeSummed: false, includeTarget: false),
+      );
+      final curve = result.curves
+          .firstWhere((c) => c.type == SimulationCurveType.driver);
+      expect(curve.label, contains('FRD'));
+    });
+
+    test('gain offset applies to imported curve', () {
+      final frd = makeFrd();
+      const driver = DriverChannel(
+        id: 'wf_l',
+        name: 'Woofer L',
+        role: DriverRole.woofer,
+        side: DriverSide.left,
+        enabled: true,
+      );
+      final driverWithFrd = driver.copyWith(frdData: frd);
+      final acoustic = MeasurementProjectState.createDefault()
+          .copyWith(driverChannels: [driverWithFrd]);
+      final projectNoGain = _defaultProject().copyWith(acousticState: acoustic);
+      final projectGain = projectNoGain; // gain offset = 0 for default
+
+      final resultNo = generateSimulationDraft(
+        project: projectNoGain,
+        config: const SimulationRunConfig(
+            includeDrivers: true, includeSummed: false, includeTarget: false),
+      );
+      final resultWith = generateSimulationDraft(
+        project: projectGain,
+        config: const SimulationRunConfig(
+            includeDrivers: true, includeSummed: false, includeTarget: false),
+      );
+      // With default tuning both should match
+      final ptNo = resultNo.curves
+          .firstWhere((c) => c.type == SimulationCurveType.driver)
+          .points[2];
+      final ptWith = resultWith.curves
+          .firstWhere((c) => c.type == SimulationCurveType.driver)
+          .points[2];
+      expect(ptNo.value, closeTo(ptWith.value, 0.001));
+    });
+
+    test('summed response includes imported FRD curves', () {
+      final frd = makeFrd();
+      const driver = DriverChannel(
+        id: 'wf_l',
+        name: 'Woofer L',
+        role: DriverRole.woofer,
+        side: DriverSide.left,
+        enabled: true,
+      );
+      final driverWithFrd = driver.copyWith(frdData: frd);
+      final acoustic = MeasurementProjectState.createDefault()
+          .copyWith(driverChannels: [driverWithFrd]);
+      final project = _defaultProject().copyWith(acousticState: acoustic);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+            includeDrivers: true, includeSummed: true, includeTarget: false),
+      );
+      expect(result.hasSummedCurve, isTrue);
+    });
+
+    test('mixed imported/placeholder warning appears', () {
+      final frd = makeFrd();
+      final drivers = MeasurementProjectState.createDefault().driverChannels;
+      // Assign FRD only to first driver
+      final mixed = [
+        drivers.first.copyWith(frdData: frd),
+        ...drivers.skip(1),
+      ];
+      final acoustic = MeasurementProjectState.createDefault()
+          .copyWith(driverChannels: mixed);
+      final project = _defaultProject().copyWith(acousticState: acoustic);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+            includeDrivers: true, includeSummed: false, includeTarget: false),
+      );
+      final allWarnings = result.warnings.join(' ').toLowerCase();
+      expect(allWarnings, contains('mixed'));
+    });
+
+    test('FRD without phase emits no-phase warning in curve', () {
+      final frd = makeFrd(withPhase: false);
+      const driver = DriverChannel(
+        id: 'wf_l',
+        name: 'Woofer L',
+        role: DriverRole.woofer,
+        side: DriverSide.left,
+        enabled: true,
+      );
+      final driverWithFrd = driver.copyWith(frdData: frd);
+      final acoustic = MeasurementProjectState.createDefault()
+          .copyWith(driverChannels: [driverWithFrd]);
+      final project = _defaultProject().copyWith(acousticState: acoustic);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+            includeDrivers: true, includeSummed: false, includeTarget: false),
+      );
+      final curve = result.curves
+          .firstWhere((c) => c.type == SimulationCurveType.driver);
+      final warn = (curve.warning ?? '').toLowerCase();
+      expect(warn, contains('phase'));
     });
   });
 

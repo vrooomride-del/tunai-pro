@@ -574,7 +574,43 @@ class _CurveRow extends StatelessWidget {
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-            Text(curve.label, style: proTitle(size: 10)),
+            Row(children: [
+              Expanded(
+                  child: Text(curve.label, style: proTitle(size: 10))),
+              if (curve.status == SimulationCurveStatus.imported)
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: kProGreen.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: const Text('FRD',
+                      style: TextStyle(
+                          color: kProGreen, fontSize: 8,
+                          letterSpacing: 0.5)),
+                )
+              else if (curve.type == SimulationCurveType.driver)
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: kProAmber.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: const Text('placeholder',
+                      style: TextStyle(
+                          color: kProAmber, fontSize: 8,
+                          letterSpacing: 0.3)),
+                ),
+            ]),
+            if (curve.notes != null) ...[
+              const SizedBox(height: 1),
+              Text(curve.notes!,
+                  style: proSubtitle(size: 8, color: Colors.white24)),
+            ],
             if (curve.warning != null) ...[
               const SizedBox(height: 2),
               Text(curve.warning!,
@@ -589,11 +625,12 @@ class _CurveRow extends StatelessWidget {
         ProStatusPill(
           label: curve.status.label,
           color: switch (curve.status) {
-            SimulationCurveStatus.calculatedDraft => kProGreen,
+            SimulationCurveStatus.imported        => kProGreen,
+            SimulationCurveStatus.calculatedDraft => kProAccent,
             SimulationCurveStatus.estimated       => kProAccent,
             SimulationCurveStatus.placeholder     => kProAmber,
-            SimulationCurveStatus.empty            => Colors.white24,
-            _                                      => kProAmber,
+            SimulationCurveStatus.empty           => Colors.white24,
+            _                                     => kProAmber,
           },
         ),
       ]),

@@ -1340,10 +1340,31 @@ class _ChannelPill extends StatelessWidget {
       Text(channel.name, style: proTitle(size: 10, color: Colors.white60), overflow: TextOverflow.ellipsis),
       const SizedBox(height: 4),
       Row(children: [
-        _FileIndicator(label: 'FRD', present: channel.hasFrd, color: kProAccent),
+        _FileIndicator(
+          label: 'FRD',
+          present: channel.hasFrd,
+          parsed: channel.hasParsedFrd,
+          hasPhase: channel.frdData?.hasPhase ?? false,
+          color: kProAccent,
+        ),
         const SizedBox(width: 4),
-        _FileIndicator(label: 'ZMA', present: channel.hasZma, color: kProAmber),
+        _FileIndicator(
+          label: 'ZMA',
+          present: channel.hasZma,
+          parsed: channel.hasParsedZma,
+          hasPhase: channel.zmaData?.hasImpedance ?? false,
+          color: kProAmber,
+        ),
       ]),
+      if (channel.hasParsedFrd) ...[
+        const SizedBox(height: 3),
+        Text(
+          '${channel.frdData!.pointCount} pts  ${channel.frdData!.freqRangeLabel}'
+          '${channel.frdData!.hasPhase ? "" : "  no phase"}',
+          style: const TextStyle(color: Colors.white24, fontSize: 8),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     ]),
   );
 }
@@ -1351,18 +1372,49 @@ class _ChannelPill extends StatelessWidget {
 class _FileIndicator extends StatelessWidget {
   final String label;
   final bool present;
+  final bool parsed;
+  final bool hasPhase;
   final Color color;
-  const _FileIndicator({required this.label, required this.present, required this.color});
+  const _FileIndicator({
+    required this.label,
+    required this.present,
+    this.parsed = false,
+    this.hasPhase = false,
+    required this.color,
+  });
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-    decoration: BoxDecoration(
-      color: present ? color.withValues(alpha: 0.1) : Colors.transparent,
-      border: Border.all(color: present ? color.withValues(alpha: 0.4) : Colors.white12),
-      borderRadius: BorderRadius.circular(2),
-    ),
-    child: Text(label,
-        style: TextStyle(color: present ? color : Colors.white24, fontSize: 8, letterSpacing: 0.5)),
-  );
+  Widget build(BuildContext context) {
+    final effectiveColor = parsed
+        ? color
+        : present
+            ? color.withValues(alpha: 0.5)
+            : Colors.white12;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        color: parsed
+            ? color.withValues(alpha: 0.12)
+            : present
+                ? color.withValues(alpha: 0.05)
+                : Colors.transparent,
+        border: Border.all(
+            color: parsed
+                ? color.withValues(alpha: 0.5)
+                : present
+                    ? color.withValues(alpha: 0.25)
+                    : Colors.white12),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Text(label,
+            style: TextStyle(
+                color: effectiveColor, fontSize: 8, letterSpacing: 0.5)),
+        if (parsed) ...[
+          const SizedBox(width: 3),
+          Icon(Icons.check, color: effectiveColor, size: 8),
+        ],
+      ]),
+    );
+  }
 }

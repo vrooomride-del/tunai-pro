@@ -1,5 +1,6 @@
-// ── TUNAI PRO Phase L — Acoustic Simulation Engine (Draft) ───────────────────
+// ── TUNAI PRO Phase M — Acoustic Simulation Engine (Draft) ───────────────────
 // Generates draft frequency response preview curves from project state.
+// Uses imported FRD data when available; falls back to placeholder shapes.
 // Not final acoustic simulation. No hardware write. No DSP addresses.
 // Phase-aware summation is NOT implemented. Placeholder summation only.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
@@ -51,13 +52,22 @@ SimulationRunResult generateSimulationDraft({
     curves.add(target);
   }
 
-  // 2. Per-driver placeholder curves
+  // 2. Per-driver curves — use imported FRD when available
   final driverCurves = <SimulationCurve>[];
+  bool hasImportedFrd = false;
+  bool hasPlaceholderDriver = false;
   if (cfg.includeDrivers) {
     for (final driver in acoustic.driverChannels) {
       final gainOffset = _channelGainDb(tuning, driver.id);
-      driverCurves.add(_buildDriverCurve(
-          nextId('curve'), driver, freqs, gainOffset));
+      if (driver.hasParsedFrd && driver.frdData != null) {
+        hasImportedFrd = true;
+        driverCurves.add(_buildImportedFrdCurve(
+            nextId('curve'), driver, freqs, gainOffset));
+      } else {
+        hasPlaceholderDriver = true;
+        driverCurves.add(_buildDriverCurve(
+            nextId('curve'), driver, freqs, gainOffset));
+      }
     }
     if (acoustic.driverChannels.isEmpty) {
       driverCurves.add(SimulationCurve(
@@ -70,6 +80,13 @@ SimulationRunResult generateSimulationDraft({
       ));
     }
     curves.addAll(driverCurves);
+
+    if (hasImportedFrd && hasPlaceholderDriver) {
+      warnings.add(
+          'Mixed simulation: some drivers use imported FRD data, '
+          'others use placeholder shapes. Import FRD for all channels for a '
+          'consistent simulation.');
+    }
   }
 
   // 3. Summed response
@@ -99,22 +116,30 @@ SimulationRunResult generateSimulationDraft({
   }
 
   // Standard warnings
-  warnings.add(
-      'Draft simulation. Placeholder response data until FRD import is available.');
+  if (!hasImportedFrd) {
+    warnings.add(
+        'Draft simulation. Placeholder response data — import FRD files to use measured data.');
+  } else {
+    warnings.add('Simulation uses imported FRD magnitude data. '
+        'Summed response is magnitude-only draft — full phase-aware summation not implemented.');
+  }
   warnings.add(
       'Simulation is draft-only and does not replace measured verification.');
 
   // ── Readiness ─────────────────────────────────────────────────────────────
 
   final readiness = curves.any(
+              (c) => c.status == SimulationCurveStatus.imported)
+      ? SimulationReadiness.estimated   // imported FRD = better than placeholder
+      : curves.any(
               (c) => c.status == SimulationCurveStatus.calculatedDraft)
-      ? SimulationReadiness.calculatedDraft
-      : curves.any((c) =>
-              c.status == SimulationCurveStatus.estimated)
-          ? SimulationReadiness.estimated
-          : curves.isNotEmpty
-              ? SimulationReadiness.placeholderOnly
-              : SimulationReadiness.noData;
+          ? SimulationReadiness.calculatedDraft
+          : curves.any((c) =>
+                  c.status == SimulationCurveStatus.estimated)
+              ? SimulationReadiness.estimated
+              : curves.isNotEmpty
+                  ? SimulationReadiness.placeholderOnly
+                  : SimulationReadiness.noData;
 
   final curveDescriptions = [
     if (cfg.includeTarget) 'target',
@@ -305,6 +330,89 @@ double _driverPlaceholderDb(DriverRole role, double f) {
     case DriverRole.unknown:
       return 0.0;
   }
+}
+
+// ── Imported FRD curve builder ────────────────────────────────────────────────
+
+SimulationCurve _buildImportedFrdCurve(
+    String id, DriverChannel driver, List<double> freqs, double gainOffsetDb) {
+  final frd = driver.frdData!;
+  final srcPts = frd.points;
+
+  final warnings = <String>[];
+  if (!frd.hasPhase) {
+    warnings.add('FRD has no phase data — magnitude only.');
+  }
+  if (frd.pointCount < 20) {
+    warnings.add('Sparse FRD data (${frd.pointCount} points) — interpolation may be imprecise.');
+  }
+
+  // Clamp note for out-of-range points
+  final frdMinF = frd.minFrequencyHz;
+  final frdMaxF = frd.maxFrequencyHz;
+
+  final points = freqs.map((f) {
+    double db;
+    if (f < frdMinF) {
+      // Clamp to first point value
+      db = (srcPts.first.magnitudeDb ?? 0.0) + gainOffsetDb;
+    } else if (f > frdMaxF) {
+      // Clamp to last point value
+      db = (srcPts.last.magnitudeDb ?? 0.0) + gainOffsetDb;
+    } else {
+      db = _interpolateMagnitude(srcPts, f) + gainOffsetDb;
+    }
+    return SimulationPoint(frequencyHz: f, value: db);
+  }).toList();
+
+  final hasOutOfRange = freqs.first < frdMinF || freqs.last > frdMaxF;
+  if (hasOutOfRange) {
+    warnings.add('Simulation range extends beyond FRD range '
+        '(${frd.freqRangeLabel}) — clamped at boundaries.');
+  }
+
+  return SimulationCurve(
+    id: id,
+    label: '${driver.name} (${driver.role.short}) [FRD]',
+    type: SimulationCurveType.driver,
+    status: SimulationCurveStatus.imported,
+    channelId: driver.id,
+    points: points,
+    warning: warnings.isNotEmpty ? warnings.join(' ') : null,
+    notes: 'Source: ${frd.sourceFileName}  ${frd.freqRangeLabel}  '
+        '${frd.pointCount} pts'
+        '${frd.hasPhase ? " mag+phase" : " mag only"}',
+  );
+}
+
+/// Linear interpolation of FRD magnitude at frequency [f].
+/// Assumes [pts] is sorted ascending by frequencyHz.
+double _interpolateMagnitude(List<MeasurementDataPoint> pts, double f) {
+  if (pts.isEmpty) return 0.0;
+  if (pts.length == 1) return pts.first.magnitudeDb ?? 0.0;
+
+  // Find surrounding points
+  int lo = 0;
+  int hi = pts.length - 1;
+  while (lo < hi - 1) {
+    final mid = (lo + hi) ~/ 2;
+    if (pts[mid].frequencyHz <= f) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+
+  final f0 = pts[lo].frequencyHz;
+  final f1 = pts[hi].frequencyHz;
+  final m0 = pts[lo].magnitudeDb ?? 0.0;
+  final m1 = pts[hi].magnitudeDb ?? 0.0;
+
+  if (f1 <= f0) return m0;
+
+  // Linear interpolation on log-frequency axis
+  final t = (math.log(f / f0)) / (math.log(f1 / f0));
+  return m0 + (m1 - m0) * t.clamp(0.0, 1.0);
 }
 
 // ── Summed curve builder ──────────────────────────────────────────────────────
