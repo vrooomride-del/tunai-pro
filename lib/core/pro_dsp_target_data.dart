@@ -337,6 +337,9 @@ class BiquadCoefficientSet {
   final double a2;
   final BiquadDraftStatus status;
   final String? warning;
+  // Phase J: optional metadata, backward-compatible
+  final bool normalized;
+  final String? source;
 
   const BiquadCoefficientSet({
     this.b0 = 1.0,
@@ -346,12 +349,16 @@ class BiquadCoefficientSet {
     this.a2 = 0.0,
     this.status = BiquadDraftStatus.placeholder,
     this.warning,
+    this.normalized = true,
+    this.source,
   });
 
   Map<String, dynamic> toJson() => {
     'b0': b0, 'b1': b1, 'b2': b2, 'a1': a1, 'a2': a2,
     'status': status.toJson(),
     if (warning != null) 'warning': warning,
+    'normalized': normalized,
+    if (source != null) 'source': source,
   };
 
   factory BiquadCoefficientSet.fromJson(Map<String, dynamic> j) =>
@@ -363,6 +370,8 @@ class BiquadCoefficientSet {
         a2: (j['a2'] as num?)?.toDouble() ?? 0.0,
         status: BiquadDraftStatus.fromJson(j['status'] as String? ?? 'placeholder'),
         warning: j['warning'] as String?,
+        normalized: j['normalized'] as bool? ?? true,
+        source: j['source'] as String?,
       );
 
   static const placeholder = BiquadCoefficientSet(
@@ -433,17 +442,22 @@ class DspImplementationDraft {
   int get slotCount => parameterSlots.length;
   int get stageCount => biquadStages.length;
 
+  int get calculatedCount => biquadStages
+      .where((s) => s.coefficients.status == BiquadDraftStatus.calculatedDraft)
+      .length;
+  int get placeholderCount => biquadStages
+      .where((s) => s.coefficients.status == BiquadDraftStatus.placeholder)
+      .length;
+  int get requiresVerificationCount => biquadStages
+      .where((s) => s.coefficients.status == BiquadDraftStatus.requiresVerification)
+      .length;
+
   String get readinessLabel {
     if (biquadStages.isEmpty && parameterSlots.isEmpty) return 'Target profile ready';
-    if (biquadStages.any((s) =>
-        s.coefficients.status == BiquadDraftStatus.placeholder)) {
-      return 'Biquad placeholders generated';
-    }
-    if (biquadStages.any((s) =>
-        s.coefficients.status == BiquadDraftStatus.requiresVerification)) {
-      return 'Ready for coefficient engine draft';
-    }
-    return 'Biquad draft complete';
+    if (placeholderCount > 0) return 'Biquad placeholders only';
+    if (requiresVerificationCount > 0) return 'Some coefficients require verification';
+    if (calculatedCount > 0) return 'Draft coefficients generated';
+    return 'Target profile ready';
   }
 
   DspImplementationDraft copyWith({

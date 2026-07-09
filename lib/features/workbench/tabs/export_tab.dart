@@ -696,6 +696,10 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
         ? draft.biquadStages
         : draft.biquadStages.take(previewCount).toList();
 
+    final calcCount = draft.calculatedCount;
+    final phCount = draft.placeholderCount;
+    final verCount = draft.requiresVerificationCount;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
@@ -715,19 +719,42 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
         Wrap(spacing: 10, runSpacing: 8, children: [
           _StatChip(label: 'PARAM SLOTS', value: '${draft.slotCount}'),
           _StatChip(label: 'BIQUAD STAGES', value: '${draft.stageCount}'),
+          if (calcCount > 0)
+            _StatChip(label: 'CALCULATED', value: '$calcCount',
+                color: kProGreen),
+          if (phCount > 0)
+            _StatChip(label: 'PLACEHOLDER', value: '$phCount',
+                color: kProAmber),
+          if (verCount > 0)
+            _StatChip(label: 'NEEDS VERIFY', value: '$verCount',
+                color: kProRed),
+        ]),
+
+        const SizedBox(height: 8),
+        const Row(children: [
+          Icon(Icons.warning_amber_outlined, color: kProAmber, size: 11),
+          SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Floating-point draft only. Not hardware-ready. '
+              'Not ADAU fixed-point. No hardware address.',
+              style: TextStyle(
+                  fontSize: 9, color: kProAmber,
+                  fontFamily: 'monospace'),
+            ),
+          ),
         ]),
 
         if (draft.warnings.isNotEmpty) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           ...draft.warnings.map((w) => Padding(
             padding: const EdgeInsets.only(bottom: 4),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Icon(Icons.warning_amber_outlined,
-                  color: kProAmber, size: 11),
+              const Icon(Icons.info_outline, color: Colors.white24, size: 11),
               const SizedBox(width: 6),
               Expanded(
                   child: Text(w, style: proSubtitle(size: 9,
-                      color: kProAmber.withValues(alpha: 0.85)))),
+                      color: Colors.white38))),
             ]),
           )),
         ],
@@ -756,33 +783,125 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
   }
 }
 
-class _BiquadStageRow extends StatelessWidget {
+class _BiquadStageRow extends StatefulWidget {
   final BiquadDraftStage stage;
   const _BiquadStageRow({required this.stage});
 
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 4),
-    padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-    decoration: BoxDecoration(
-      color: kProBg,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(3),
-    ),
-    child: Row(children: [
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(stage.title, style: proTitle(size: 10)),
-          const SizedBox(height: 2),
-          Text(stage.filterSummary,
-              style: proLabel(size: 9, color: Colors.white38, spacing: 0.2)),
-        ]),
+  State<_BiquadStageRow> createState() => _BiquadStageRowState();
+}
+
+class _BiquadStageRowState extends State<_BiquadStageRow> {
+  bool _expanded = false;
+
+  Color _statusColor(BiquadDraftStatus s) => switch (s) {
+    BiquadDraftStatus.calculatedDraft      => kProGreen,
+    BiquadDraftStatus.placeholder          => kProAmber,
+    BiquadDraftStatus.requiresVerification => kProRed,
+    BiquadDraftStatus.notRequired          => Colors.white24,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.stage.coefficients;
+    final isCalculated = c.status == BiquadDraftStatus.calculatedDraft;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      decoration: BoxDecoration(
+        color: kProBg,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(3),
       ),
-      ProStatusPill(
-        label: stage.coefficients.status.label,
-        color: stage.coefficients.status == BiquadDraftStatus.placeholder
-            ? kProAmber
-            : kProGreen,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        InkWell(
+          onTap: isCalculated
+              ? () => setState(() => _expanded = !_expanded)
+              : null,
+          borderRadius: BorderRadius.circular(3),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+            child: Row(children: [
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(widget.stage.title, style: proTitle(size: 10)),
+                  const SizedBox(height: 2),
+                  Text(widget.stage.filterSummary,
+                      style: proLabel(size: 9,
+                          color: Colors.white38, spacing: 0.2)),
+                ]),
+              ),
+              const SizedBox(width: 8),
+              ProStatusPill(
+                label: c.status.label,
+                color: _statusColor(c.status),
+              ),
+              if (isCalculated) ...[
+                const SizedBox(width: 6),
+                Icon(
+                  _expanded
+                      ? Icons.expand_less
+                      : Icons.expand_more,
+                  color: Colors.white24,
+                  size: 14,
+                ),
+              ],
+            ]),
+          ),
+        ),
+
+        if (_expanded && isCalculated) ...[
+          const Divider(height: 1, thickness: 1, color: Color(0xFF2A2A2A)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              _CoeffRow('b0', c.b0),
+              _CoeffRow('b1', c.b1),
+              _CoeffRow('b2', c.b2),
+              _CoeffRow('a1', c.a1),
+              _CoeffRow('a2', c.a2),
+              const SizedBox(height: 4),
+              Text(
+                'Floating-point  ·  a0 normalized to 1.0  ·  '
+                'Not ADAU fixed-point',
+                style: proLabel(size: 8, color: Colors.white24, spacing: 0.2),
+              ),
+              if (c.warning != null) ...[
+                const SizedBox(height: 4),
+                Text(c.warning!,
+                    style: proSubtitle(size: 9, color: Colors.white38)),
+              ],
+            ]),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
+class _CoeffRow extends StatelessWidget {
+  final String name;
+  final double value;
+  const _CoeffRow(this.name, this.value);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 1.5),
+    child: Row(children: [
+      SizedBox(
+        width: 24,
+        child: Text(name,
+            style: proLabel(size: 9,
+                color: Colors.white38, spacing: 0.5)),
+      ),
+      Text(
+        value.toStringAsFixed(8),
+        style: const TextStyle(
+            fontSize: 10,
+            color: Colors.white70,
+            fontFamily: 'monospace'),
       ),
     ]),
   );

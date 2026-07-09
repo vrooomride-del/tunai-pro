@@ -7,6 +7,7 @@ import 'pro_project.dart';
 import 'pro_protection_data.dart';
 import 'pro_export_data.dart';
 import 'pro_dsp_target_data.dart';
+import 'pro_biquad_engine.dart';
 
 DspExportPackage generateDspExportDraft({required ProProject project}) {
   final acoustic = project.acousticState;
@@ -219,15 +220,13 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     ));
   }
 
-  // ── Biquad draft stages (Phase I) ─────────────────────────────────────────
+  // ── Biquad draft stages (Phase J: real RBJ coefficients) ─────────────────
 
-  const coeffPlaceholderWarning =
-      'Coefficient placeholder only. Final biquad calculation will be added later.';
-  const placeholderCoeffs = BiquadCoefficientSet(
-    b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0,
-    status: BiquadDraftStatus.placeholder,
-    warning: coeffPlaceholderWarning,
-  );
+  // Default sample rate: first rate supported by target, otherwise 48 kHz.
+  final sampleRateHz =
+      targetProfile.supportedSampleRates.isNotEmpty
+          ? targetProfile.supportedSampleRates.first.hz.toDouble()
+          : 48000.0;
 
   final biquadStages = <BiquadDraftStage>[];
 
@@ -235,16 +234,22 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
   for (final ch in tuning.peqChannels) {
     int bandIdx = 0;
     for (final band in ch.bands.where((b) => b.enabled)) {
+      final result = ProBiquadEngine.calculate(BiquadDesignInput(
+        type: BiquadFilterType.peakingEq,
+        sampleRateHz: sampleRateHz,
+        frequencyHz: band.frequencyHz,
+        gainDb: band.gainDb,
+        q: band.q,
+        enabled: true,
+        sourceDescription: 'PEQ Band ${bandIdx + 1} — ${ch.channelId}',
+      ));
       biquadStages.add(BiquadDraftStage(
         id: nextId('bq'),
         channelId: ch.channelId,
         sourceBlockId: 'peq_${ch.channelId}',
         title: 'PEQ Band ${bandIdx + 1} — ${ch.channelId}',
-        filterSummary: '${band.type.name.toUpperCase()}  '
-            '${band.frequencyHz.toStringAsFixed(0)} Hz  '
-            '${band.gainDb >= 0 ? '+' : ''}${band.gainDb.toStringAsFixed(1)} dB  '
-            'Q${band.q.toStringAsFixed(2)}',
-        coefficients: placeholderCoeffs,
+        filterSummary: result.summary,
+        coefficients: result.coefficients,
       ));
       bandIdx++;
     }
@@ -254,26 +259,46 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
   for (final xo in tuning.crossoverChannels) {
     if (xo.hasHighPass) {
       final hp = xo.highPass!;
+      final result = ProBiquadEngine.calculate(BiquadDesignInput(
+        type: BiquadFilterType.highPass,
+        sampleRateHz: sampleRateHz,
+        frequencyHz: hp.frequencyHz,
+        q: 0.707,
+        enabled: hp.enabled,
+        sourceDescription: 'HPF — ${xo.channelId}',
+      ));
       biquadStages.add(BiquadDraftStage(
         id: nextId('bq'),
         channelId: xo.channelId,
         sourceBlockId: 'xo_${xo.channelId}',
         title: 'HPF — ${xo.channelId}',
-        filterSummary: 'HPF  ${hp.frequencyHz.toStringAsFixed(0)} Hz  '
-            '${hp.type.name}  ${hp.slope.name}',
-        coefficients: placeholderCoeffs,
+        filterSummary: '${result.summary}  [${hp.type.name} ${hp.slope.name}]'
+            '  Q=0.707 draft — final crossover topology to be refined',
+        coefficients: result.coefficients,
+        notes: 'Crossover topology (${hp.type.name} ${hp.slope.name}) uses Q=0.707 '
+            'draft. Final multi-pole crossover requires dedicated cascade design.',
       ));
     }
     if (xo.hasLowPass) {
       final lp = xo.lowPass!;
+      final result = ProBiquadEngine.calculate(BiquadDesignInput(
+        type: BiquadFilterType.lowPass,
+        sampleRateHz: sampleRateHz,
+        frequencyHz: lp.frequencyHz,
+        q: 0.707,
+        enabled: lp.enabled,
+        sourceDescription: 'LPF — ${xo.channelId}',
+      ));
       biquadStages.add(BiquadDraftStage(
         id: nextId('bq'),
         channelId: xo.channelId,
         sourceBlockId: 'xo_${xo.channelId}',
         title: 'LPF — ${xo.channelId}',
-        filterSummary: 'LPF  ${lp.frequencyHz.toStringAsFixed(0)} Hz  '
-            '${lp.type.name}  ${lp.slope.name}',
-        coefficients: placeholderCoeffs,
+        filterSummary: '${result.summary}  [${lp.type.name} ${lp.slope.name}]'
+            '  Q=0.707 draft — final crossover topology to be refined',
+        coefficients: result.coefficients,
+        notes: 'Crossover topology (${lp.type.name} ${lp.slope.name}) uses Q=0.707 '
+            'draft. Final multi-pole crossover requires dedicated cascade design.',
       ));
     }
   }
@@ -295,7 +320,20 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
   }
   if (biquadStages.isNotEmpty) {
     warnings.add(
-        'Biquad coefficients are placeholders and must not be used for hardware write.');
+        'Biquad coefficients are floating-point draft coefficients and are not yet '
+        'converted to ADAU target format. Not for hardware write.');
+    final anyPlaceholder = biquadStages
+        .any((s) => s.coefficients.status == BiquadDraftStatus.placeholder);
+    final anyVerify = biquadStages
+        .any((s) => s.coefficients.status == BiquadDraftStatus.requiresVerification);
+    if (anyPlaceholder) {
+      warnings.add('Some biquad stages still have placeholder coefficients '
+          'and require re-export after configuration is complete.');
+    }
+    if (anyVerify) {
+      warnings.add('Some biquad stages require additional verification '
+          '(e.g. frequency above Nyquist or degenerate filter).');
+    }
   }
   if (targetProfile.warning != null) {
     warnings.add(targetProfile.warning!);
@@ -308,7 +346,13 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
 
   final draftWarnings = <String>[];
   if (biquadStages.isNotEmpty) {
-    draftWarnings.add(coeffPlaceholderWarning);
+    draftWarnings.add(
+        'Biquad coefficients are floating-point draft only. '
+        'Not converted to ADAU fixed-point format. Not for hardware write.');
+    draftWarnings.add(
+        'Coefficient draft does not imply hardware deployment readiness.');
+    draftWarnings.add(
+        'No hardware address. No SigmaStudio register map. Requires expert verification.');
   }
   if (targetProfile.warning != null) {
     draftWarnings.add(targetProfile.warning!);

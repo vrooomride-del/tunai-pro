@@ -770,30 +770,25 @@ class _DspImplementationReadinessCard extends StatelessWidget {
   final ExportProjectState exportState;
   const _DspImplementationReadinessCard({required this.exportState});
 
-  String _readinessLabel(DspExportPackage? pkg) {
-    if (pkg == null) return 'No export package';
-    if (pkg.isBlocked) return 'Blocked by target capability';
-    final draftJson = pkg.implementationDraftJson;
-    if (draftJson == null) return 'Target profile ready';
-    final draft = DspImplementationDraft.fromJson(draftJson);
-    if (draft.biquadStages.isEmpty) return 'Target profile ready';
-    final hasPlaceholder = draft.biquadStages.any(
-        (s) => s.coefficients.status == BiquadDraftStatus.placeholder);
-    if (hasPlaceholder) return 'Biquad placeholders generated';
-    return 'Ready for coefficient engine draft';
-  }
-
   @override
   Widget build(BuildContext context) {
     final pkg = exportState.activePackage;
     final profile = DspTargetProfile.forPlatform(exportState.selectedTarget);
-    final label = _readinessLabel(pkg);
     final isBlocked = pkg?.isBlocked ?? false;
 
     DspImplementationDraft? draft;
     if (pkg?.implementationDraftJson != null) {
       draft = DspImplementationDraft.fromJson(pkg!.implementationDraftJson!);
     }
+
+    final readinessLabel = isBlocked
+        ? 'Blocked by target capability'
+        : draft?.readinessLabel ?? 'No export package';
+
+    final calcCount = draft?.calculatedCount ?? 0;
+    final phCount = draft?.placeholderCount ?? 0;
+    final verCount = draft?.requiresVerificationCount ?? 0;
+    final totalStages = draft?.stageCount ?? 0;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -809,7 +804,7 @@ class _DspImplementationReadinessCard extends StatelessWidget {
           const SizedBox(width: 8),
           Text('DSP IMPLEMENTATION', style: proLabel(size: 9, spacing: 2)),
           const Spacer(),
-          Text(label,
+          Text(readinessLabel,
               style: proLabel(
                   size: 9,
                   color: isBlocked ? kProRed : Colors.white38,
@@ -821,24 +816,36 @@ class _DspImplementationReadinessCard extends StatelessWidget {
           _DspImplChip(label: 'TARGET', value: profile.displayName),
           _DspImplChip(label: 'PRECISION', value: profile.precision.label),
           _DspImplChip(label: 'MAX CH', value: '${profile.maxChannels}'),
-          _DspImplChip(label: 'MAX PEQ/CH', value: '${profile.maxPeqBandsPerChannel}'),
+          _DspImplChip(label: 'MAX PEQ/CH',
+              value: '${profile.maxPeqBandsPerChannel}'),
           _DspImplChip(label: 'SAMPLE RATES', value: profile.sampleRateLabel),
           if (draft != null) ...[
-            _DspImplChip(label: 'PARAM SLOTS', value: '${draft.slotCount}'),
-            _DspImplChip(label: 'BIQUAD STAGES', value: '${draft.stageCount}'),
+            _DspImplChip(label: 'TOTAL STAGES', value: '$totalStages'),
+            if (calcCount > 0)
+              _DspImplChip(label: 'CALCULATED', value: '$calcCount',
+                  color: kProGreen),
+            if (phCount > 0)
+              _DspImplChip(label: 'PLACEHOLDER', value: '$phCount',
+                  color: kProAmber),
+            if (verCount > 0)
+              _DspImplChip(label: 'NEEDS VERIFY', value: '$verCount',
+                  color: kProRed),
           ],
         ]),
 
-        if (draft != null && draft.biquadStages.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Row(children: [
-            const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 11),
-            const SizedBox(width: 6),
+        if (draft != null && totalStages > 0) ...[
+          const SizedBox(height: 10),
+          const Row(children: [
+            Icon(Icons.warning_amber_outlined,
+                color: kProAmber, size: 11),
+            SizedBox(width: 6),
             Expanded(
               child: Text(
-                'Biquad coefficients are placeholders. '
-                'Not for hardware write.',
-                style: proSubtitle(size: 9, color: kProAmber),
+                'Coefficient draft does not imply hardware deployment readiness. '
+                'Not ADAU fixed-point. No hardware address.',
+                style: TextStyle(
+                    fontSize: 9, color: kProAmber,
+                    fontFamily: 'monospace'),
               ),
             ),
           ]),
@@ -857,7 +864,8 @@ class _DspImplementationReadinessCard extends StatelessWidget {
 class _DspImplChip extends StatelessWidget {
   final String label;
   final String value;
-  const _DspImplChip({required this.label, required this.value});
+  final Color? color;
+  const _DspImplChip({required this.label, required this.value, this.color});
 
   @override
   Widget build(BuildContext context) => Container(
@@ -870,7 +878,7 @@ class _DspImplChip extends StatelessWidget {
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(label, style: proLabel(size: 8, spacing: 1)),
       const SizedBox(height: 2),
-      Text(value, style: proValue(size: 11, color: Colors.white54)),
+      Text(value, style: proValue(size: 11, color: color ?? Colors.white54)),
     ]),
   );
 }
