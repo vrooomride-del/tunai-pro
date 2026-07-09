@@ -189,7 +189,7 @@ class _Sidebar extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-          child: Text('TUNAI PRO · Phase R', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
+          child: Text('TUNAI PRO · Phase S', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
         ),
       ]),
     );

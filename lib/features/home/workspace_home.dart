@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/pro_project.dart';
 import '../../core/pro_project_store.dart';
+import '../../core/pro_demo_project_factory.dart';
 import '../../shared/pro_widgets.dart';
 import '../workbench/workbench_shell.dart';
 import 'project_list_screen.dart';
@@ -83,6 +84,12 @@ class WorkspaceHome extends ConsumerWidget {
                     icon: Icons.folder_open_outlined,
                     onTap: () => _goToProjectList(context),
                   ),
+                  ProHomeCard(
+                    title: 'Open Demo Workstation',
+                    subtitle: 'TUNAI ONE Coax Demo — preloaded synthetic FRD/ZMA data, PEQ, XO, and deploy package.',
+                    icon: Icons.science_outlined,
+                    onTap: () => _openDemoProject(context, ref),
+                  ),
                 ]),
                 const SizedBox(height: 28),
 
@@ -122,7 +129,7 @@ class WorkspaceHome extends ConsumerWidget {
                 ]),
 
                 const SizedBox(height: 40),
-                Text('TUNAI PRO · Phase B · Project System',
+                Text('TUNAI PRO · Phase S',
                     style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
               ]),
             ),
@@ -130,6 +137,12 @@ class WorkspaceHome extends ConsumerWidget {
         ]),
       ),
     );
+  }
+
+  Future<void> _openDemoProject(BuildContext context, WidgetRef ref) async {
+    final demo = createTunaiProDemoProject();
+    await ref.read(proProjectStoreProvider.notifier).addProject(demo);
+    if (context.mounted) _openWorkbench(context, demo.id);
   }
 
   Future<void> _showNewProjectDialog(BuildContext context, WidgetRef ref) async {
