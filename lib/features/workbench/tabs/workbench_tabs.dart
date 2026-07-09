@@ -1,6 +1,8 @@
 // Re-export tabs that have been split into dedicated files
 export 'measure_tab.dart';
 export 'analyze_tab.dart';
+export 'import_tab.dart';
+export 'target_tab.dart';
 export 'report_tab.dart';
 
 import 'package:flutter/material.dart';

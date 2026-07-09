@@ -4,6 +4,7 @@ import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_measurement.dart';
 import '../../../core/pro_measurement_store.dart';
+import '../../../core/pro_acoustic_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -44,6 +45,12 @@ class ReportTab extends ConsumerWidget {
         // Project summary
         if (project != null) ...[
           _ProjectSummaryCard(project: project),
+          const SizedBox(height: 16),
+        ],
+
+        // Phase C: Driver / acoustic readiness
+        if (project != null) ...[
+          _AcousticReadinessCard(acoustic: project.acousticState),
           const SizedBox(height: 16),
         ],
 
@@ -224,3 +231,57 @@ class _StatChipWidget extends StatelessWidget {
   );
 }
 
+
+// ── Phase C: Acoustic Readiness Card ─────────────────────────────────────────
+
+class _AcousticReadinessCard extends StatelessWidget {
+  final MeasurementProjectState acoustic;
+  const _AcousticReadinessCard({required this.acoustic});
+
+  Color _readinessColor() {
+    if (acoustic.importedFrdCount == 0) return const Color(0xFF6B7280);
+    if (acoustic.hasMissingMeasurements) return kProAmber;
+    return kProGreen;
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('MEASUREMENT READINESS (PHASE C)', style: proLabel(size: 9, spacing: 1.8)),
+      const SizedBox(height: 12),
+      _row('Driver channels', '${acoustic.totalDrivers}'),
+      _row('FRD imported', '${acoustic.importedFrdCount} / ${acoustic.totalDrivers}'),
+      _row('ZMA imported', '${acoustic.importedZmaCount} / ${acoustic.totalDrivers}'),
+      _row('Target curve', acoustic.targetCurve.selectedPreset.label),
+      const SizedBox(height: 8),
+      Row(children: [
+        SizedBox(width: 130, child: Text('Ready for PEQ / XO', style: proLabel(size: 10, spacing: 0.3))),
+        ProStatusPill(label: acoustic.readinessLabel, color: _readinessColor()),
+      ]),
+      if (acoustic.hasMissingMeasurements) ...[
+        const SizedBox(height: 8),
+        Row(children: [
+          const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+          const SizedBox(width: 6),
+          Text('Missing FRD data on ${acoustic.totalDrivers - acoustic.importedFrdCount} channel(s). '
+               'Import before optimization.',
+              style: proSubtitle(size: 10)),
+        ]),
+      ],
+    ]),
+  );
+
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(children: [
+      SizedBox(width: 130, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
+      Text(value, style: proValue(size: 11, color: Colors.white60)),
+    ]),
+  );
+}

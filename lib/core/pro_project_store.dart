@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'pro_project.dart';
+import 'pro_acoustic_data.dart';
 
 const _kProjectsKey = 'tunai_pro_projects';
 const _kCurrentIdKey = 'tunai_pro_current_project_id';
@@ -99,6 +100,7 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
       profileStatus: ProfileStatus.draft,
       safetyStatus: SafetyStatus.notVerified,
       connection: HardwareConnection.disconnected,
+      acousticState: original.acousticState,
     );
     await addProject(dup);
     return dup;
@@ -122,6 +124,11 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
   Future<void> updateHardwareConnection(String id, HardwareConnection conn) async {
     final project = state.projects.firstWhere((p) => p.id == id);
     await updateProject(project.copyWith(connection: conn, updatedAt: DateTime.now()));
+  }
+
+  Future<void> updateAcousticState(String id, MeasurementProjectState acousticState) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(project.copyWith(acousticState: acousticState, updatedAt: DateTime.now()));
   }
 }
 

@@ -4,6 +4,7 @@ import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_measurement.dart';
 import '../../../core/pro_measurement_store.dart';
+import '../../../core/pro_acoustic_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -39,7 +40,12 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
 
     final selectedSession = mStore.selectedSession;
 
-    return Row(children: [
+    final acoustic = project.acousticState;
+
+    return Column(children: [
+      // ── Phase C: Driver readiness overview bar ────────────────────────────
+      _DriverReadinessBar(acoustic: acoustic),
+      Expanded(child: Row(children: [
       // ── Session list panel (left) ────────────────────────────────────────
       SizedBox(
         width: 280,
@@ -76,7 +82,8 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
                 onMarkComplete: () => _confirmMarkComplete(project, selectedSession),
               ),
       ),
-    ]);
+    ])),   // closes Expanded + Row
+    ]);    // closes Column
   }
 
   // ── Dialogs ───────────────────────────────────────────────────────────────
@@ -1266,5 +1273,96 @@ class _ProDropdown<T> extends StatelessWidget {
       )).toList(),
       onChanged: (v) { if (v != null) onChanged(v); },
     ),
+  );
+}
+
+// ── Phase C: Driver Readiness Bar ─────────────────────────────────────────────
+
+class _DriverReadinessBar extends StatelessWidget {
+  final MeasurementProjectState acoustic;
+  const _DriverReadinessBar({required this.acoustic});
+
+  Color _statusColor(MeasurementStatus s) => switch (s) {
+    MeasurementStatus.validated   => kProGreen,
+    MeasurementStatus.imported    => kProAccent,
+    MeasurementStatus.needsReview => kProAmber,
+    MeasurementStatus.missingFile => kProRed,
+    MeasurementStatus.empty       => const Color(0xFF6B7280),
+  };
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+    decoration: const BoxDecoration(
+      color: kProPanel,
+      border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Text('DRIVER CHANNELS', style: proLabel(size: 9, color: Colors.white24, spacing: 2)),
+        const Spacer(),
+        Text(acoustic.readinessLabel, style: proSubtitle(size: 9)),
+      ]),
+      const SizedBox(height: 8),
+      Row(
+        children: acoustic.driverChannels.map((ch) => Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: _ChannelPill(channel: ch, color: _statusColor(ch.measurementStatus)),
+          ),
+        )).toList(),
+      ),
+    ]),
+  );
+}
+
+class _ChannelPill extends StatelessWidget {
+  final DriverChannel channel;
+  final Color color;
+  const _ChannelPill({required this.channel, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.06),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Text(channel.role.short,
+            style: TextStyle(color: color, fontSize: 9, letterSpacing: 1, fontWeight: FontWeight.w500)),
+        const Spacer(),
+        Text(channel.side.label, style: proLabel(size: 8, color: Colors.white24, spacing: 0.5)),
+      ]),
+      const SizedBox(height: 3),
+      Text(channel.name, style: proTitle(size: 10, color: Colors.white60), overflow: TextOverflow.ellipsis),
+      const SizedBox(height: 4),
+      Row(children: [
+        _FileIndicator(label: 'FRD', present: channel.hasFrd, color: kProAccent),
+        const SizedBox(width: 4),
+        _FileIndicator(label: 'ZMA', present: channel.hasZma, color: kProAmber),
+      ]),
+    ]),
+  );
+}
+
+class _FileIndicator extends StatelessWidget {
+  final String label;
+  final bool present;
+  final Color color;
+  const _FileIndicator({required this.label, required this.present, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+    decoration: BoxDecoration(
+      color: present ? color.withValues(alpha: 0.1) : Colors.transparent,
+      border: Border.all(color: present ? color.withValues(alpha: 0.4) : Colors.white12),
+      borderRadius: BorderRadius.circular(2),
+    ),
+    child: Text(label,
+        style: TextStyle(color: present ? color : Colors.white24, fontSize: 8, letterSpacing: 0.5)),
   );
 }

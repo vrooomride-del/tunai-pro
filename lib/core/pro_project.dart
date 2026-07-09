@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'pro_acoustic_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 enum SafetyStatus { notVerified, verified, warning, blocked }
@@ -62,6 +63,7 @@ class ProProject {
   final String? notes;
   final int measurementCount;
   final String? activeProfileName;
+  final MeasurementProjectState acousticState;
 
   ProProject({
     required this.id,
@@ -79,7 +81,8 @@ class ProProject {
     this.notes,
     this.measurementCount = 0,
     this.activeProfileName,
-  });
+    MeasurementProjectState? acousticState,
+  }) : acousticState = acousticState ?? MeasurementProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -117,6 +120,7 @@ class ProProject {
     String? notes,
     int? measurementCount,
     String? activeProfileName,
+    MeasurementProjectState? acousticState,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -133,6 +137,7 @@ class ProProject {
     notes: notes ?? this.notes,
     measurementCount: measurementCount ?? this.measurementCount,
     activeProfileName: activeProfileName ?? this.activeProfileName,
+    acousticState: acousticState ?? this.acousticState,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -156,6 +161,7 @@ class ProProject {
     if (notes != null) 'notes': notes,
     'measurementCount': measurementCount,
     if (activeProfileName != null) 'activeProfileName': activeProfileName,
+    'acousticState': acousticState.toJson(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -174,6 +180,9 @@ class ProProject {
     notes: j['notes'] as String?,
     measurementCount: j['measurementCount'] as int? ?? 0,
     activeProfileName: j['activeProfileName'] as String?,
+    acousticState: j['acousticState'] != null
+        ? MeasurementProjectState.fromJson(Map<String, dynamic>.from(j['acousticState'] as Map))
+        : null,
   );
 
   static String encodeList(List<ProProject> list) =>
