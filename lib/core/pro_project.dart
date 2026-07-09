@@ -6,6 +6,7 @@ import 'pro_optimizer_data.dart';
 import 'pro_export_data.dart';
 import 'pro_simulation_data.dart';
 import 'pro_hardware_connection_data.dart';
+import 'pro_deploy_package_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 enum SafetyStatus { notVerified, verified, warning, blocked }
@@ -76,6 +77,7 @@ class ProProject {
   final ExportProjectState exportState;
   final SimulationProjectState simulationState;
   final HardwareProjectState hardwareState;
+  final DeployProjectState deployState;
 
   ProProject({
     required this.id,
@@ -100,13 +102,15 @@ class ProProject {
     ExportProjectState? exportState,
     SimulationProjectState? simulationState,
     HardwareProjectState? hardwareState,
+    DeployProjectState? deployState,
   }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
        tuningState = tuningState ?? TuningProjectState.createDefault(),
        protectionState = protectionState ?? ProtectionProjectState.createDefault(),
        optimizerState = optimizerState ?? OptimizerProjectState.createDefault(),
        exportState = exportState ?? ExportProjectState.createDefault(),
        simulationState = simulationState ?? SimulationProjectState.createDefault(),
-       hardwareState = hardwareState ?? HardwareProjectState.createDefault();
+       hardwareState = hardwareState ?? HardwareProjectState.createDefault(),
+       deployState = deployState ?? DeployProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -151,6 +155,7 @@ class ProProject {
     ExportProjectState? exportState,
     SimulationProjectState? simulationState,
     HardwareProjectState? hardwareState,
+    DeployProjectState? deployState,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -174,6 +179,7 @@ class ProProject {
     exportState: exportState ?? this.exportState,
     simulationState: simulationState ?? this.simulationState,
     hardwareState: hardwareState ?? this.hardwareState,
+    deployState: deployState ?? this.deployState,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -204,6 +210,7 @@ class ProProject {
     'exportState': exportState.toJson(),
     'simulationState': simulationState.toJson(),
     'hardwareState': hardwareState.toJson(),
+    'deployState': deployState.toJson(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -244,6 +251,10 @@ class ProProject {
     hardwareState: j['hardwareState'] != null
         ? HardwareProjectState.fromJson(
             Map<String, dynamic>.from(j['hardwareState'] as Map))
+        : null,
+    deployState: j['deployState'] != null
+        ? DeployProjectState.fromJson(
+            Map<String, dynamic>.from(j['deployState'] as Map))
         : null,
   );
 

@@ -15,6 +15,7 @@ import '../../../core/pro_impedance_analysis.dart';
 import '../../../core/pro_dsp_address_registry.dart';
 import '../../../core/pro_sigma_mapping_data.dart';
 import '../../../core/pro_hardware_connection_data.dart';
+import '../../../core/pro_deploy_package_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -127,6 +128,9 @@ class ReportTab extends ConsumerWidget {
           const SizedBox(height: 16),
 
           _HardwareReadinessCard(hardwareState: project.hardwareState),
+          const SizedBox(height: 16),
+
+          _DeployReadinessCard(deployState: project.deployState),
           const SizedBox(height: 16),
         ],
 
@@ -1525,6 +1529,94 @@ class _HardwareReadinessCard extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           'No hardware write is enabled in Phase Q.',
+          style: proSubtitle(size: 9),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── _DeployReadinessCard ──────────────────────────────────────────────────────
+
+class _DeployReadinessCard extends StatelessWidget {
+  final DeployProjectState deployState;
+  const _DeployReadinessCard({required this.deployState});
+
+  @override
+  Widget build(BuildContext context) {
+    final activePkg = deployState.activePackage;
+    final activePreset = deployState.activePreset;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.inventory_2_outlined,
+              color: Color(0xFF34D399), size: 13),
+          const SizedBox(width: 8),
+          Text('DEPLOY READINESS', style: proLabel(size: 9, spacing: 2)),
+        ]),
+        const SizedBox(height: 10),
+        _ReportChip(
+            label: 'PACKAGES',
+            value: '${deployState.packageCount}',
+            color: kProAccent),
+        const SizedBox(height: 6),
+        _ReportChip(
+            label: 'PRESETS',
+            value: '${deployState.presetCount}',
+            color: kProAccent),
+        const SizedBox(height: 6),
+        _ReportChip(
+            label: 'READY',
+            value: '${deployState.readyPackageCount}',
+            color: kProGreen),
+        const SizedBox(height: 6),
+        _ReportChip(
+            label: 'BLOCKED',
+            value: '${deployState.blockedPackageCount}',
+            color: const Color(0xFFEF4444)),
+        if (activePkg != null) ...[
+          const SizedBox(height: 6),
+          _ReportChip(
+              label: 'VERSION',
+              value: activePkg.version,
+              color: Colors.white54),
+          const SizedBox(height: 6),
+          _ReportChip(
+              label: 'STATUS',
+              value: activePkg.status.label,
+              color: Colors.white54),
+          const SizedBox(height: 6),
+          _ReportChip(
+              label: 'READINESS',
+              value: activePkg.readinessLevel.label,
+              color: Colors.white54),
+          const SizedBox(height: 6),
+          _ReportChip(
+              label: 'WARNINGS',
+              value: '${activePkg.snapshot.warnings.length}',
+              color: kProAmber),
+        ],
+        if (activePreset != null) ...[
+          const SizedBox(height: 6),
+          _ReportChip(
+              label: 'ACTIVE PRESET',
+              value: activePreset.name,
+              color: Colors.white54),
+        ],
+        const SizedBox(height: 6),
+        _ReportChip(
+            label: 'READINESS LABEL',
+            value: deployState.readinessLabel,
+            color: Colors.white38),
+        const SizedBox(height: 8),
+        Text(
+          'Deploy package is review/dry-run only. No hardware write performed.',
           style: proSubtitle(size: 9),
         ),
       ]),

@@ -14,6 +14,7 @@ export 'export_tab.dart';
 export 'optimizer_tab.dart';
 export 'simulation_tab.dart';
 export 'hardware_tab.dart';
+export 'deploy_tab.dart';
 
 // ── Individual Tab Widgets ────────────────────────────────────────────────────
 // All tabs have been moved to dedicated files (re-exported above).
