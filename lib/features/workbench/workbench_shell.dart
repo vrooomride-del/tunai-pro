@@ -52,7 +52,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     GainTab(projectId: projectId),
     ProtectionTab(projectId: projectId),
     TargetTab(projectId: projectId),
-    DeployTab(projectId: projectId),       // Export
+    ExportTab(projectId: projectId),
     ReportTab(projectId: projectId),
   ];
 
@@ -181,7 +181,7 @@ class _Sidebar extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-          child: Text('TUNAI PRO · Phase E', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
+          child: Text('TUNAI PRO · Phase F', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
         ),
       ]),
     );

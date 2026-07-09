@@ -6,6 +6,7 @@ import '../../../core/pro_measurement.dart';
 import '../../../core/pro_measurement_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
+import '../../../core/pro_protection_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -70,6 +71,12 @@ class ReportTab extends ConsumerWidget {
             tuning: project.tuningState,
             acoustic: project.acousticState,
           ),
+          const SizedBox(height: 16),
+        ],
+
+        // Phase F: Protection / verification readiness
+        if (project != null) ...[
+          _ProtectionReadinessCard(protection: project.protectionState),
           const SizedBox(height: 16),
         ],
 
@@ -444,6 +451,84 @@ class _ChannelControlReadinessCard extends StatelessWidget {
       ],
     ]),
   );
+
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(children: [
+      SizedBox(width: 130, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
+      Text(value, style: proValue(size: 11, color: Colors.white60)),
+    ]),
+  );
+}
+
+// ── Phase F: Protection Readiness Card ───────────────────────────────────────
+
+class _ProtectionReadinessCard extends StatelessWidget {
+  final ProtectionProjectState protection;
+  const _ProtectionReadinessCard({required this.protection});
+
+  Color _statusColor() => switch (protection.verificationStatus) {
+    VerificationStatus.passed             => kProGreen,
+    VerificationStatus.passedWithWarnings => kProAmber,
+    VerificationStatus.failed             => kProRed,
+    VerificationStatus.notReady           => const Color(0xFF6B7280),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final topIssues = protection.issues.take(3).toList();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('PROTECTION / VERIFICATION (PHASE F)',
+            style: proLabel(size: 9, spacing: 1.8)),
+        const SizedBox(height: 12),
+        _row('Active rules', '${protection.activeRuleCount}'),
+        _row('Warnings', '${protection.warningCount}'),
+        _row('Critical issues', '${protection.criticalCount}'),
+        _row('Total issues', '${protection.triggeredIssueCount}'),
+        _row('Export locked', protection.exportLocked ? 'Yes' : 'No'),
+        const SizedBox(height: 8),
+        Row(children: [
+          SizedBox(
+              width: 130,
+              child: Text('Verification', style: proLabel(size: 10, spacing: 0.3))),
+          ProStatusPill(
+              label: protection.verificationStatus.label,
+              color: _statusColor()),
+        ]),
+        if (topIssues.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text('TOP ISSUES', style: proLabel(size: 9, spacing: 1.5)),
+          const SizedBox(height: 6),
+          ...topIssues.map((issue) {
+            final color = switch (issue.severity) {
+              ProtectionSeverity.critical => kProRed,
+              ProtectionSeverity.warning  => kProAmber,
+              ProtectionSeverity.info     => kProAccent,
+            };
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(Icons.circle, color: color, size: 6),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Text(issue.message,
+                        style: proSubtitle(size: 10),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis)),
+              ]),
+            );
+          }),
+        ],
+      ]),
+    );
+  }
 
   Widget _row(String label, String value) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 4),

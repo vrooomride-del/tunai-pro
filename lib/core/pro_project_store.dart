@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'pro_project.dart';
 import 'pro_acoustic_data.dart';
 import 'pro_tuning_data.dart';
+import 'pro_protection_data.dart';
 
 const _kProjectsKey = 'tunai_pro_projects';
 const _kCurrentIdKey = 'tunai_pro_current_project_id';
@@ -103,6 +104,7 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
       connection: HardwareConnection.disconnected,
       acousticState: original.acousticState,
       tuningState: original.tuningState,
+      protectionState: original.protectionState,
     );
     await addProject(dup);
     return dup;
@@ -136,6 +138,11 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
   Future<void> updateTuningState(String id, TuningProjectState tuningState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
     await updateProject(project.copyWith(tuningState: tuningState, updatedAt: DateTime.now()));
+  }
+
+  Future<void> updateProtectionState(String id, ProtectionProjectState protectionState) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(project.copyWith(protectionState: protectionState, updatedAt: DateTime.now()));
   }
 }
 

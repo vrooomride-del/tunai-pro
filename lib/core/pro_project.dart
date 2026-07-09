@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'pro_acoustic_data.dart';
 import 'pro_tuning_data.dart';
+import 'pro_protection_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 enum SafetyStatus { notVerified, verified, warning, blocked }
@@ -66,6 +67,7 @@ class ProProject {
   final String? activeProfileName;
   final MeasurementProjectState acousticState;
   final TuningProjectState tuningState;
+  final ProtectionProjectState protectionState;
 
   ProProject({
     required this.id,
@@ -85,8 +87,10 @@ class ProProject {
     this.activeProfileName,
     MeasurementProjectState? acousticState,
     TuningProjectState? tuningState,
+    ProtectionProjectState? protectionState,
   }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
-       tuningState = tuningState ?? TuningProjectState.createDefault();
+       tuningState = tuningState ?? TuningProjectState.createDefault(),
+       protectionState = protectionState ?? ProtectionProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -126,6 +130,7 @@ class ProProject {
     String? activeProfileName,
     MeasurementProjectState? acousticState,
     TuningProjectState? tuningState,
+    ProtectionProjectState? protectionState,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -144,6 +149,7 @@ class ProProject {
     activeProfileName: activeProfileName ?? this.activeProfileName,
     acousticState: acousticState ?? this.acousticState,
     tuningState: tuningState ?? this.tuningState,
+    protectionState: protectionState ?? this.protectionState,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -169,6 +175,7 @@ class ProProject {
     if (activeProfileName != null) 'activeProfileName': activeProfileName,
     'acousticState': acousticState.toJson(),
     'tuningState': tuningState.toJson(),
+    'protectionState': protectionState.toJson(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -192,6 +199,9 @@ class ProProject {
         : null,
     tuningState: j['tuningState'] != null
         ? TuningProjectState.fromJson(Map<String, dynamic>.from(j['tuningState'] as Map))
+        : null,
+    protectionState: j['protectionState'] != null
+        ? ProtectionProjectState.fromJson(Map<String, dynamic>.from(j['protectionState'] as Map))
         : null,
   );
 
