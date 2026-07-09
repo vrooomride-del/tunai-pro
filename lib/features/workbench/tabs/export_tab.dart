@@ -1,4 +1,4 @@
-// ── Export Tab — Phase H ──────────────────────────────────────────────────────
+// ── Export Tab — Phase H/I ────────────────────────────────────────────────────
 // DSP Export Architecture Foundation.
 // No hardware write. No USBi. No SafeLoad. No register addresses.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
@@ -11,6 +11,7 @@ import '../../../core/pro_project_store.dart';
 import '../../../core/pro_protection_data.dart';
 import '../../../core/pro_export_data.dart';
 import '../../../core/pro_export_engine.dart';
+import '../../../core/pro_dsp_target_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ExportTab extends ConsumerStatefulWidget {
@@ -161,6 +162,12 @@ class _ExportTabState extends ConsumerState<ExportTab> {
         ),
         const SizedBox(height: 20),
 
+        // DSP Target Profile (Phase I) — always shown based on selection
+        _TargetProfilePanel(
+          profile: DspTargetProfile.forPlatform(exportState.selectedTarget),
+        ),
+        const SizedBox(height: 16),
+
         // Active package
         if (activePkg != null) ...[
           _PackageSummary(pkg: activePkg),
@@ -181,6 +188,15 @@ class _ExportTabState extends ConsumerState<ExportTab> {
             const SizedBox(height: 8),
             ...activePkg.parameterBlocks.map(
                 (b) => _ParameterBlockCard(block: b)),
+            const SizedBox(height: 16),
+          ],
+
+          // Implementation Draft (Phase I)
+          if (activePkg.implementationDraftJson != null) ...[
+            _ImplementationDraftPanel(
+              draft: DspImplementationDraft.fromJson(
+                  activePkg.implementationDraftJson!),
+            ),
             const SizedBox(height: 16),
           ],
 
@@ -597,6 +613,177 @@ class _StatChip extends StatelessWidget {
       const SizedBox(height: 4),
       Text(value,
           style: proValue(size: 12, color: color ?? Colors.white70)),
+    ]),
+  );
+}
+
+// ── Phase I: DSP Target Profile Panel ────────────────────────────────────────
+
+class _TargetProfilePanel extends StatelessWidget {
+  final DspTargetProfile profile;
+  const _TargetProfilePanel({required this.profile});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('DSP TARGET PROFILE', style: proLabel(size: 9, spacing: 2)),
+      const SizedBox(height: 10),
+
+      Wrap(spacing: 10, runSpacing: 8, children: [
+        _StatChip(label: 'TARGET', value: profile.displayName),
+        _StatChip(label: 'PRECISION', value: profile.precision.label),
+        _StatChip(label: 'MAX CHANNELS', value: '${profile.maxChannels}'),
+        _StatChip(label: 'MAX PEQ/CH', value: '${profile.maxPeqBandsPerChannel}'),
+        _StatChip(label: 'SAMPLE RATES', value: profile.sampleRateLabel),
+      ]),
+      const SizedBox(height: 12),
+
+      Text('CAPABILITIES', style: proLabel(size: 9, spacing: 1.5)),
+      const SizedBox(height: 6),
+      Wrap(spacing: 6, runSpacing: 6,
+        children: profile.capabilities.map((c) => ProStatusPill(
+          label: c.type.label,
+          color: c.supported ? kProGreen : Colors.white24,
+        )).toList(),
+      ),
+
+      if (profile.warning != null) ...[
+        const SizedBox(height: 10),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(profile.warning!,
+                style: proSubtitle(size: 9, color: kProAmber)),
+          ),
+        ]),
+      ],
+
+      if (profile.notes != null) ...[
+        const SizedBox(height: 6),
+        Text(profile.notes!,
+            style: proLabel(size: 9, color: Colors.white24, spacing: 0.2)),
+      ],
+    ]),
+  );
+}
+
+// ── Phase I: Implementation Draft Panel ──────────────────────────────────────
+
+class _ImplementationDraftPanel extends StatefulWidget {
+  final DspImplementationDraft draft;
+  const _ImplementationDraftPanel({required this.draft});
+
+  @override
+  State<_ImplementationDraftPanel> createState() =>
+      _ImplementationDraftPanelState();
+}
+
+class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
+  bool _showAllStages = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final draft = widget.draft;
+    const previewCount = 6;
+    final stages = _showAllStages
+        ? draft.biquadStages
+        : draft.biquadStages.take(previewCount).toList();
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text('IMPLEMENTATION DRAFT', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          Text(draft.readinessLabel,
+              style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
+        ]),
+        const SizedBox(height: 10),
+
+        Wrap(spacing: 10, runSpacing: 8, children: [
+          _StatChip(label: 'PARAM SLOTS', value: '${draft.slotCount}'),
+          _StatChip(label: 'BIQUAD STAGES', value: '${draft.stageCount}'),
+        ]),
+
+        if (draft.warnings.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          ...draft.warnings.map((w) => Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.warning_amber_outlined,
+                  color: kProAmber, size: 11),
+              const SizedBox(width: 6),
+              Expanded(
+                  child: Text(w, style: proSubtitle(size: 9,
+                      color: kProAmber.withValues(alpha: 0.85)))),
+            ]),
+          )),
+        ],
+
+        if (draft.biquadStages.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text('BIQUAD STAGES', style: proLabel(size: 9, spacing: 1.5)),
+          const SizedBox(height: 6),
+          ...stages.map((s) => _BiquadStageRow(stage: s)),
+          if (draft.biquadStages.length > previewCount) ...[
+            const SizedBox(height: 6),
+            GestureDetector(
+              onTap: () => setState(() => _showAllStages = !_showAllStages),
+              child: Text(
+                _showAllStages
+                    ? 'Show fewer'
+                    : 'Show all ${draft.biquadStages.length} stages',
+                style: TextStyle(
+                    color: kProAccent.withValues(alpha: 0.7), fontSize: 10),
+              ),
+            ),
+          ],
+        ],
+      ]),
+    );
+  }
+}
+
+class _BiquadStageRow extends StatelessWidget {
+  final BiquadDraftStage stage;
+  const _BiquadStageRow({required this.stage});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 4),
+    padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+    decoration: BoxDecoration(
+      color: kProBg,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Row(children: [
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(stage.title, style: proTitle(size: 10)),
+          const SizedBox(height: 2),
+          Text(stage.filterSummary,
+              style: proLabel(size: 9, color: Colors.white38, spacing: 0.2)),
+        ]),
+      ),
+      ProStatusPill(
+        label: stage.coefficients.status.label,
+        color: stage.coefficients.status == BiquadDraftStatus.placeholder
+            ? kProAmber
+            : kProGreen,
+      ),
     ]),
   );
 }

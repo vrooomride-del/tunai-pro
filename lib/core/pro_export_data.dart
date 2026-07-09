@@ -1,4 +1,4 @@
-// ── TUNAI PRO Phase H — DSP Export Architecture Data Models ──────────────────
+// ── TUNAI PRO Phase H/I — DSP Export Architecture Data Models ────────────────
 // Draft export packages only. No hardware write. No USBi. No SafeLoad.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
@@ -192,6 +192,8 @@ class DspExportPackage {
   final List<String> warnings;
   final String? blockedReason;
   final String? notes;
+  // Phase I: serialized DspImplementationDraft (avoids circular import)
+  final Map<String, dynamic>? implementationDraftJson;
 
   DspExportPackage({
     required this.id,
@@ -208,12 +210,38 @@ class DspExportPackage {
     this.warnings = const [],
     this.blockedReason,
     this.notes,
+    this.implementationDraftJson,
   }) : createdAt = createdAt ?? DateTime.now();
 
   int get blockCount => parameterBlocks.length;
   int get warningCount => warnings.length;
   bool get isBlocked => status == ExportStatus.blocked;
   bool get isDraftReady => status == ExportStatus.draftReady;
+
+  DspExportPackage copyWith({
+    ExportStatus? status,
+    List<ExportChannelMap>? channelMaps,
+    List<ExportParameterBlock>? parameterBlocks,
+    List<String>? warnings,
+    String? blockedReason,
+    Map<String, dynamic>? implementationDraftJson,
+  }) => DspExportPackage(
+    id: id,
+    targetPlatform: targetPlatform,
+    format: format,
+    status: status ?? this.status,
+    createdAt: createdAt,
+    projectName: projectName,
+    tuningRevision: tuningRevision,
+    protectionRevision: protectionRevision,
+    optimizerRevision: optimizerRevision,
+    channelMaps: channelMaps ?? this.channelMaps,
+    parameterBlocks: parameterBlocks ?? this.parameterBlocks,
+    warnings: warnings ?? this.warnings,
+    blockedReason: blockedReason ?? this.blockedReason,
+    notes: notes,
+    implementationDraftJson: implementationDraftJson ?? this.implementationDraftJson,
+  );
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -230,6 +258,8 @@ class DspExportPackage {
     'warnings': warnings,
     if (blockedReason != null) 'blockedReason': blockedReason,
     if (notes != null) 'notes': notes,
+    if (implementationDraftJson != null)
+      'implementationDraft': implementationDraftJson,
   };
 
   factory DspExportPackage.fromJson(Map<String, dynamic> j) => DspExportPackage(
@@ -251,6 +281,9 @@ class DspExportPackage {
     warnings: List<String>.from(j['warnings'] as List? ?? []),
     blockedReason: j['blockedReason'] as String?,
     notes: j['notes'] as String?,
+    implementationDraftJson: j['implementationDraft'] != null
+        ? Map<String, dynamic>.from(j['implementationDraft'] as Map)
+        : null,
   );
 }
 

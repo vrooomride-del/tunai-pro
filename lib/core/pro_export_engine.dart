@@ -1,4 +1,4 @@
-// ── TUNAI PRO Phase H — DSP Export Engine ────────────────────────────────────
+// ── TUNAI PRO Phase H/I — DSP Export Engine ──────────────────────────────────
 // Generates draft export packages from project state.
 // No hardware write. No USBi. No SafeLoad. No DSP register addresses.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
@@ -6,6 +6,7 @@
 import 'pro_project.dart';
 import 'pro_protection_data.dart';
 import 'pro_export_data.dart';
+import 'pro_dsp_target_data.dart';
 
 DspExportPackage generateDspExportDraft({required ProProject project}) {
   final acoustic = project.acousticState;
@@ -15,10 +16,15 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
   final exportState = project.exportState;
 
   int seq = 0;
-  String nextId() => 'blk_${DateTime.now().millisecondsSinceEpoch}_${seq++}';
+  String nextId(String prefix) =>
+      '${prefix}_${DateTime.now().millisecondsSinceEpoch}_${seq++}';
+
+  // ── Target profile ────────────────────────────────────────────────────────
+
+  final targetProfile = DspTargetProfile.forPlatform(exportState.selectedTarget);
 
   DspExportPackage blocked(String reason) => DspExportPackage(
-    id: 'pkg_${DateTime.now().millisecondsSinceEpoch}',
+    id: nextId('pkg'),
     targetPlatform: exportState.selectedTarget,
     format: exportState.selectedFormat,
     status: ExportStatus.blocked,
@@ -27,6 +33,10 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     protectionRevision: protection.revision,
     optimizerRevision: optimizer.revision,
     blockedReason: reason,
+    implementationDraftJson: DspImplementationDraft(
+      targetProfile: targetProfile,
+      warnings: [reason],
+    ).toJson(),
   );
 
   // ── Guards ────────────────────────────────────────────────────────────────
@@ -39,6 +49,27 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
   }
   if (acoustic.driverChannels.isEmpty) {
     return blocked('No driver channels configured.');
+  }
+
+  // ── Target capability checks ──────────────────────────────────────────────
+
+  final channelCount = acoustic.driverChannels.length;
+  if (channelCount > targetProfile.maxChannels) {
+    return blocked(
+      'Channel count ($channelCount) exceeds target maximum '
+      '(${targetProfile.maxChannels}) for ${targetProfile.displayName}.',
+    );
+  }
+
+  for (final ch in tuning.peqChannels) {
+    final enabled = ch.bands.where((b) => b.enabled).length;
+    if (enabled > targetProfile.maxPeqBandsPerChannel) {
+      return blocked(
+        'Channel ${ch.channelId} has $enabled active PEQ bands, '
+        'exceeding target limit of ${targetProfile.maxPeqBandsPerChannel} '
+        'for ${targetProfile.displayName}.',
+      );
+    }
   }
 
   // ── Channel maps ──────────────────────────────────────────────────────────
@@ -66,7 +97,7 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
       'type': b.type.name,
     }));
     blocks.add(ExportParameterBlock(
-      id: nextId(),
+      id: nextId('blk'),
       type: ExportBlockType.peq,
       channelId: ch.channelId,
       title: 'PEQ — ${ch.channelId}',
@@ -99,7 +130,7 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     }
     if (xo.polarityInverted) params['polarityInverted'] = true;
     blocks.add(ExportParameterBlock(
-      id: nextId(),
+      id: nextId('blk'),
       type: ExportBlockType.crossover,
       channelId: xo.channelId,
       title: 'Crossover — ${xo.channelId}',
@@ -129,7 +160,8 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     }
     if (ctrl.phaseOffsetDeg != 0.0) {
       params['phaseOffsetDeg'] = ctrl.phaseOffsetDeg;
-      summary += 'Phase ${ctrl.phaseOffsetDeg >= 0 ? '+' : ''}${ctrl.phaseOffsetDeg.toStringAsFixed(0)}°  ';
+      summary +=
+          'Phase ${ctrl.phaseOffsetDeg >= 0 ? '+' : ''}${ctrl.phaseOffsetDeg.toStringAsFixed(0)}°  ';
     }
     if (ctrl.muted) params['muted'] = true;
     if (ctrl.solo) params['solo'] = true;
@@ -141,7 +173,7 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
             : ExportBlockType.gain;
 
     blocks.add(ExportParameterBlock(
-      id: nextId(),
+      id: nextId('blk'),
       type: blockType,
       channelId: ctrl.channelId,
       title: '${blockType.label} — ${ctrl.channelId}',
@@ -152,7 +184,7 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
 
   // Protection summary block
   blocks.add(ExportParameterBlock(
-    id: nextId(),
+    id: nextId('blk'),
     type: ExportBlockType.protection,
     channelId: 'system',
     title: 'Protection Summary',
@@ -170,24 +202,127 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     warning: protection.exportLocked ? 'Export is locked by protection rules.' : null,
   ));
 
+  // ── Parameter slots (Phase I) ─────────────────────────────────────────────
+
+  final slots = <DspParameterSlot>[];
+  int slotIdx = 0;
+  for (final blk in blocks) {
+    slots.add(DspParameterSlot(
+      id: nextId('slot'),
+      channelId: blk.channelId,
+      blockType: blk.type,
+      logicalName: blk.title,
+      slotIndex: slotIdx++,
+      addressPlaceholder: '0x????',
+      notes: 'Address requires SigmaStudio capture for '
+          '${targetProfile.displayName}.',
+    ));
+  }
+
+  // ── Biquad draft stages (Phase I) ─────────────────────────────────────────
+
+  const coeffPlaceholderWarning =
+      'Coefficient placeholder only. Final biquad calculation will be added later.';
+  const placeholderCoeffs = BiquadCoefficientSet(
+    b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0,
+    status: BiquadDraftStatus.placeholder,
+    warning: coeffPlaceholderWarning,
+  );
+
+  final biquadStages = <BiquadDraftStage>[];
+
+  // PEQ bands → biquad stages
+  for (final ch in tuning.peqChannels) {
+    int bandIdx = 0;
+    for (final band in ch.bands.where((b) => b.enabled)) {
+      biquadStages.add(BiquadDraftStage(
+        id: nextId('bq'),
+        channelId: ch.channelId,
+        sourceBlockId: 'peq_${ch.channelId}',
+        title: 'PEQ Band ${bandIdx + 1} — ${ch.channelId}',
+        filterSummary: '${band.type.name.toUpperCase()}  '
+            '${band.frequencyHz.toStringAsFixed(0)} Hz  '
+            '${band.gainDb >= 0 ? '+' : ''}${band.gainDb.toStringAsFixed(1)} dB  '
+            'Q${band.q.toStringAsFixed(2)}',
+        coefficients: placeholderCoeffs,
+      ));
+      bandIdx++;
+    }
+  }
+
+  // XO filters → biquad stages
+  for (final xo in tuning.crossoverChannels) {
+    if (xo.hasHighPass) {
+      final hp = xo.highPass!;
+      biquadStages.add(BiquadDraftStage(
+        id: nextId('bq'),
+        channelId: xo.channelId,
+        sourceBlockId: 'xo_${xo.channelId}',
+        title: 'HPF — ${xo.channelId}',
+        filterSummary: 'HPF  ${hp.frequencyHz.toStringAsFixed(0)} Hz  '
+            '${hp.type.name}  ${hp.slope.name}',
+        coefficients: placeholderCoeffs,
+      ));
+    }
+    if (xo.hasLowPass) {
+      final lp = xo.lowPass!;
+      biquadStages.add(BiquadDraftStage(
+        id: nextId('bq'),
+        channelId: xo.channelId,
+        sourceBlockId: 'xo_${xo.channelId}',
+        title: 'LPF — ${xo.channelId}',
+        filterSummary: 'LPF  ${lp.frequencyHz.toStringAsFixed(0)} Hz  '
+            '${lp.type.name}  ${lp.slope.name}',
+        coefficients: placeholderCoeffs,
+      ));
+    }
+  }
+
   // ── Collect warnings ──────────────────────────────────────────────────────
 
   final warnings = <String>[];
   if (protection.verificationStatus == VerificationStatus.passedWithWarnings) {
-    warnings.add('Verification passed with ${protection.warningCount} warning(s). Expert review required.');
+    warnings.add(
+        'Verification passed with ${protection.warningCount} warning(s). Expert review required.');
   }
   if (acoustic.hasMissingMeasurements) {
-    warnings.add('FRD data missing on ${acoustic.totalDrivers - acoustic.importedFrdCount} channel(s).');
+    warnings.add(
+        'FRD data missing on ${acoustic.totalDrivers - acoustic.importedFrdCount} channel(s).');
   }
   if (optimizer.acceptedSuggestionCount > 0) {
-    warnings.add('${optimizer.acceptedSuggestionCount} optimizer suggestion(s) accepted. Re-verify before export.');
+    warnings.add(
+        '${optimizer.acceptedSuggestionCount} optimizer suggestion(s) accepted. Re-verify before export.');
+  }
+  if (biquadStages.isNotEmpty) {
+    warnings.add(
+        'Biquad coefficients are placeholders and must not be used for hardware write.');
+  }
+  if (targetProfile.warning != null) {
+    warnings.add(targetProfile.warning!);
   }
   for (final blk in blocks) {
     if (blk.warning != null) warnings.add(blk.warning!);
   }
 
+  // ── Implementation draft ──────────────────────────────────────────────────
+
+  final draftWarnings = <String>[];
+  if (biquadStages.isNotEmpty) {
+    draftWarnings.add(coeffPlaceholderWarning);
+  }
+  if (targetProfile.warning != null) {
+    draftWarnings.add(targetProfile.warning!);
+  }
+
+  final implDraft = DspImplementationDraft(
+    targetProfile: targetProfile,
+    parameterSlots: slots,
+    biquadStages: biquadStages,
+    warnings: draftWarnings,
+  );
+
   return DspExportPackage(
-    id: 'pkg_${DateTime.now().millisecondsSinceEpoch}',
+    id: nextId('pkg'),
     targetPlatform: exportState.selectedTarget,
     format: exportState.selectedFormat,
     status: ExportStatus.draftReady,
@@ -198,5 +333,6 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
     channelMaps: channelMaps,
     parameterBlocks: blocks,
     warnings: warnings,
+    implementationDraftJson: implDraft.toJson(),
   );
 }

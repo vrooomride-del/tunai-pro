@@ -9,6 +9,7 @@ import '../../../core/pro_tuning_data.dart';
 import '../../../core/pro_protection_data.dart';
 import '../../../core/pro_optimizer_data.dart';
 import '../../../core/pro_export_data.dart';
+import '../../../core/pro_dsp_target_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -91,6 +92,12 @@ class ReportTab extends ConsumerWidget {
         // Phase H: Export readiness
         if (project != null) ...[
           _ExportReadinessCard(exportState: project.exportState),
+          const SizedBox(height: 16),
+        ],
+
+        // Phase I: DSP implementation readiness
+        if (project != null) ...[
+          _DspImplementationReadinessCard(exportState: project.exportState),
           const SizedBox(height: 16),
         ],
 
@@ -753,6 +760,117 @@ class _ExportMiniChip extends StatelessWidget {
       Text(label, style: proLabel(size: 8, spacing: 1)),
       const SizedBox(height: 2),
       Text(value, style: proValue(size: 11, color: color ?? Colors.white54)),
+    ]),
+  );
+}
+
+// ── Phase I: DSP Implementation Readiness Card ────────────────────────────────
+
+class _DspImplementationReadinessCard extends StatelessWidget {
+  final ExportProjectState exportState;
+  const _DspImplementationReadinessCard({required this.exportState});
+
+  String _readinessLabel(DspExportPackage? pkg) {
+    if (pkg == null) return 'No export package';
+    if (pkg.isBlocked) return 'Blocked by target capability';
+    final draftJson = pkg.implementationDraftJson;
+    if (draftJson == null) return 'Target profile ready';
+    final draft = DspImplementationDraft.fromJson(draftJson);
+    if (draft.biquadStages.isEmpty) return 'Target profile ready';
+    final hasPlaceholder = draft.biquadStages.any(
+        (s) => s.coefficients.status == BiquadDraftStatus.placeholder);
+    if (hasPlaceholder) return 'Biquad placeholders generated';
+    return 'Ready for coefficient engine draft';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pkg = exportState.activePackage;
+    final profile = DspTargetProfile.forPlatform(exportState.selectedTarget);
+    final label = _readinessLabel(pkg);
+    final isBlocked = pkg?.isBlocked ?? false;
+
+    DspImplementationDraft? draft;
+    if (pkg?.implementationDraftJson != null) {
+      draft = DspImplementationDraft.fromJson(pkg!.implementationDraftJson!);
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.memory_outlined,
+              color: Color(0xFF4A9EFF), size: 13),
+          const SizedBox(width: 8),
+          Text('DSP IMPLEMENTATION', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          Text(label,
+              style: proLabel(
+                  size: 9,
+                  color: isBlocked ? kProRed : Colors.white38,
+                  spacing: 0.3)),
+        ]),
+        const SizedBox(height: 10),
+
+        Wrap(spacing: 10, runSpacing: 8, children: [
+          _DspImplChip(label: 'TARGET', value: profile.displayName),
+          _DspImplChip(label: 'PRECISION', value: profile.precision.label),
+          _DspImplChip(label: 'MAX CH', value: '${profile.maxChannels}'),
+          _DspImplChip(label: 'MAX PEQ/CH', value: '${profile.maxPeqBandsPerChannel}'),
+          _DspImplChip(label: 'SAMPLE RATES', value: profile.sampleRateLabel),
+          if (draft != null) ...[
+            _DspImplChip(label: 'PARAM SLOTS', value: '${draft.slotCount}'),
+            _DspImplChip(label: 'BIQUAD STAGES', value: '${draft.stageCount}'),
+          ],
+        ]),
+
+        if (draft != null && draft.biquadStages.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 11),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Biquad coefficients are placeholders. '
+                'Not for hardware write.',
+                style: proSubtitle(size: 9, color: kProAmber),
+              ),
+            ),
+          ]),
+        ],
+
+        if (profile.warning != null) ...[
+          const SizedBox(height: 6),
+          Text(profile.warning!,
+              style: proLabel(size: 9, color: Colors.white24, spacing: 0.2)),
+        ],
+      ]),
+    );
+  }
+}
+
+class _DspImplChip extends StatelessWidget {
+  final String label;
+  final String value;
+  const _DspImplChip({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    decoration: BoxDecoration(
+      color: kProBg,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: proLabel(size: 8, spacing: 1)),
+      const SizedBox(height: 2),
+      Text(value, style: proValue(size: 11, color: Colors.white54)),
     ]),
   );
 }
