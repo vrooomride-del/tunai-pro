@@ -3,6 +3,7 @@ import 'pro_acoustic_data.dart';
 import 'pro_tuning_data.dart';
 import 'pro_protection_data.dart';
 import 'pro_optimizer_data.dart';
+import 'pro_export_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 enum SafetyStatus { notVerified, verified, warning, blocked }
@@ -70,6 +71,7 @@ class ProProject {
   final TuningProjectState tuningState;
   final ProtectionProjectState protectionState;
   final OptimizerProjectState optimizerState;
+  final ExportProjectState exportState;
 
   ProProject({
     required this.id,
@@ -91,10 +93,12 @@ class ProProject {
     TuningProjectState? tuningState,
     ProtectionProjectState? protectionState,
     OptimizerProjectState? optimizerState,
+    ExportProjectState? exportState,
   }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
        tuningState = tuningState ?? TuningProjectState.createDefault(),
        protectionState = protectionState ?? ProtectionProjectState.createDefault(),
-       optimizerState = optimizerState ?? OptimizerProjectState.createDefault();
+       optimizerState = optimizerState ?? OptimizerProjectState.createDefault(),
+       exportState = exportState ?? ExportProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -136,6 +140,7 @@ class ProProject {
     TuningProjectState? tuningState,
     ProtectionProjectState? protectionState,
     OptimizerProjectState? optimizerState,
+    ExportProjectState? exportState,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -156,6 +161,7 @@ class ProProject {
     tuningState: tuningState ?? this.tuningState,
     protectionState: protectionState ?? this.protectionState,
     optimizerState: optimizerState ?? this.optimizerState,
+    exportState: exportState ?? this.exportState,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -183,6 +189,7 @@ class ProProject {
     'tuningState': tuningState.toJson(),
     'protectionState': protectionState.toJson(),
     'optimizerState': optimizerState.toJson(),
+    'exportState': exportState.toJson(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -212,6 +219,9 @@ class ProProject {
         : null,
     optimizerState: j['optimizerState'] != null
         ? OptimizerProjectState.fromJson(Map<String, dynamic>.from(j['optimizerState'] as Map))
+        : null,
+    exportState: j['exportState'] != null
+        ? ExportProjectState.fromJson(Map<String, dynamic>.from(j['exportState'] as Map))
         : null,
   );
 

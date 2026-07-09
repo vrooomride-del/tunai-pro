@@ -1,24 +1,83 @@
-// ── Export Tab — Phase F ──────────────────────────────────────────────────────
-// DSP export readiness gate. No actual export implemented yet.
-// Export is gated on Protection verification status.
+// ── Export Tab — Phase H ──────────────────────────────────────────────────────
+// DSP Export Architecture Foundation.
+// No hardware write. No USBi. No SafeLoad. No register addresses.
+// AI suggests. Expert verifies. AOS protects. DSP executes.
 
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_protection_data.dart';
+import '../../../core/pro_export_data.dart';
+import '../../../core/pro_export_engine.dart';
 import '../../../shared/pro_widgets.dart';
 
-class ExportTab extends ConsumerWidget {
+class ExportTab extends ConsumerStatefulWidget {
   final String projectId;
   const ExportTab({super.key, required this.projectId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final store = ref.watch(proProjectStoreProvider);
-    final project =
-        store.projects.where((p) => p.id == projectId).firstOrNull;
-    final protection =
-        project?.protectionState ?? ProtectionProjectState.createDefault();
+  ConsumerState<ExportTab> createState() => _ExportTabState();
+}
+
+class _ExportTabState extends ConsumerState<ExportTab> {
+  bool _generating = false;
+
+  ProProject? get _project => ref
+      .read(proProjectStoreProvider)
+      .projects
+      .where((p) => p.id == widget.projectId)
+      .firstOrNull;
+
+  Future<void> _generate() async {
+    final project = _project;
+    if (project == null) return;
+    setState(() => _generating = true);
+    await Future.delayed(const Duration(milliseconds: 80));
+
+    final pkg = generateDspExportDraft(project: project);
+    final exportState = project.exportState;
+    final updated = exportState.copyWith(
+      packages: [...exportState.packages, pkg],
+      activePackageId: pkg.id,
+      revision: exportState.revision + 1,
+    );
+
+    await ref
+        .read(proProjectStoreProvider.notifier)
+        .updateExportState(widget.projectId, updated);
+
+    if (mounted) setState(() => _generating = false);
+  }
+
+  Future<void> _setTarget(DspTargetPlatform target) async {
+    final project = _project;
+    if (project == null) return;
+    await ref.read(proProjectStoreProvider.notifier).updateExportState(
+          widget.projectId,
+          project.exportState.copyWith(selectedTarget: target),
+        );
+  }
+
+  Future<void> _setFormat(ExportFormat format) async {
+    final project = _project;
+    if (project == null) return;
+    await ref.read(proProjectStoreProvider.notifier).updateExportState(
+          widget.projectId,
+          project.exportState.copyWith(selectedFormat: format),
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final project = ref.watch(proProjectStoreProvider)
+        .projects
+        .where((p) => p.id == widget.projectId)
+        .firstOrNull;
+    final exportState = project?.exportState ?? ExportProjectState.createDefault();
+    final protection = project?.protectionState ?? ProtectionProjectState.createDefault();
+    final activePkg = exportState.activePackage;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
@@ -29,170 +88,515 @@ class ExportTab extends ConsumerWidget {
               color: kProAccent.withValues(alpha: 0.6), size: 18),
           const SizedBox(width: 10),
           Text('DSP Export', style: proTitle(size: 16)),
+          const Spacer(),
+          if (exportState.packageCount > 0)
+            Text('${exportState.packageCount} package(s)',
+                style: proLabel(size: 9, color: Colors.white38, spacing: 0.5)),
         ]),
         const SizedBox(height: 4),
-        Text('Export verified tuning to DSP profile format. '
-            'Actual hardware write will be added in a later phase.',
+        Text('Draft export packages for DSP implementation. '
+            'Hardware write is not enabled yet.',
             style: proSubtitle()),
         const SizedBox(height: 20),
 
-        // Export gate status
-        _ExportGate(protection: protection),
+        // Target selector
+        _SelectorSection(
+          label: 'DSP TARGET',
+          children: DspTargetPlatform.values.map((t) => _Chip(
+            label: t.label,
+            selected: exportState.selectedTarget == t,
+            onTap: () => _setTarget(t),
+          )).toList(),
+        ),
+        const SizedBox(height: 12),
+
+        // Format selector
+        _SelectorSection(
+          label: 'EXPORT FORMAT',
+          children: ExportFormat.values.map((f) => _Chip(
+            label: f.label,
+            selected: exportState.selectedFormat == f,
+            onTap: () => _setFormat(f),
+          )).toList(),
+        ),
         const SizedBox(height: 20),
 
-        // Export format info
-        Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: kProSurface,
-            border: Border.all(color: kProBorder),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('EXPORT FORMATS (PLANNED)', style: proLabel(size: 9, spacing: 1.8)),
-            const SizedBox(height: 10),
-            const _FormatRow(label: 'SigmaStudio Parameter File', status: 'Planned'),
-            const _FormatRow(label: 'ADAU1701 / ADAU1466 Binary', status: 'Planned'),
-            const _FormatRow(label: 'TUNAI PRO JSON Archive', status: 'Planned'),
-            const _FormatRow(label: 'Verification Report (PDF)', status: 'Planned'),
-          ]),
-        ),
+        // Protection gate
+        _ProtectionGateSummary(protection: protection),
         const SizedBox(height: 16),
 
-        const Wrap(spacing: 10, runSpacing: 10, children: [
-          _StatChip(label: 'TARGET DSP', value: '—'),
-          _StatChip(label: 'CHECKSUM', value: '—'),
-          _StatChip(label: 'LAST EXPORT', value: 'Never'),
-          _StatChip(label: 'SIGNED BY', value: '—'),
-        ]),
+        // Generate button
+        GestureDetector(
+          onTap: _generating ? null : _generate,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            decoration: BoxDecoration(
+              color: _generating
+                  ? kProSurface
+                  : kProAccent.withValues(alpha: 0.08),
+              border: Border.all(
+                  color: _generating
+                      ? kProBorder
+                      : kProAccent.withValues(alpha: 0.4)),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(
+                _generating
+                    ? Icons.hourglass_empty_outlined
+                    : Icons.play_arrow_outlined,
+                color: _generating ? Colors.white24 : kProAccent,
+                size: 16,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _generating ? 'Generating...' : 'Generate Export Draft',
+                style: TextStyle(
+                    color: _generating ? Colors.white24 : kProAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500),
+              ),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Active package
+        if (activePkg != null) ...[
+          _PackageSummary(pkg: activePkg),
+          const SizedBox(height: 16),
+
+          // Channel map
+          if (activePkg.channelMaps.isNotEmpty) ...[
+            Text('CHANNEL MAP', style: proLabel(size: 9, spacing: 2)),
+            const SizedBox(height: 8),
+            _ChannelMapCard(maps: activePkg.channelMaps),
+            const SizedBox(height: 16),
+          ],
+
+          // Parameter blocks
+          if (activePkg.parameterBlocks.isNotEmpty) ...[
+            Text('PARAMETER BLOCKS (${activePkg.blockCount})',
+                style: proLabel(size: 9, spacing: 2)),
+            const SizedBox(height: 8),
+            ...activePkg.parameterBlocks.map(
+                (b) => _ParameterBlockCard(block: b)),
+            const SizedBox(height: 16),
+          ],
+
+          // JSON preview
+          _JsonPreviewCard(pkg: activePkg),
+        ] else
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            decoration: BoxDecoration(
+              color: kProSurface,
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(children: [
+              const Icon(Icons.info_outline, color: Colors.white24, size: 13),
+              const SizedBox(width: 10),
+              Text('Generate an export draft to preview the DSP parameter structure.',
+                  style: proSubtitle()),
+            ]),
+          ),
       ]),
     );
   }
 }
 
-// ── Sub-widgets ───────────────────────────────────────────────────────────────
+// ── Selector Section ──────────────────────────────────────────────────────────
 
-class _ExportGate extends StatelessWidget {
-  final ProtectionProjectState protection;
-  const _ExportGate({required this.protection});
+class _SelectorSection extends StatelessWidget {
+  final String label;
+  final List<Widget> children;
+  const _SelectorSection({required this.label, required this.children});
 
   @override
-  Widget build(BuildContext context) {
-    final status = protection.verificationStatus;
-
-    // Not yet verified
-    if (status == VerificationStatus.notReady) {
-      return const _GateBanner(
-        icon: Icons.lock_outline,
-        color: Color(0xFF6B7280),
-        title: 'Export locked — run Protection verification first.',
-        subtitle:
-            'Open the Protection tab and run verification to check your tuning '
-            'before export is available.',
-      );
-    }
-
-    // Failed — critical issues block export
-    if (status == VerificationStatus.failed) {
-      return _GateBanner(
-        icon: Icons.block_outlined,
-        color: kProRed,
-        title: 'Export blocked by critical protection issues.',
-        subtitle: '${protection.criticalCount} critical issue(s) must be resolved before export. '
-            'Open the Protection tab to review.',
-      );
-    }
-
-    // Passed with warnings — draft available
-    if (status == VerificationStatus.passedWithWarnings) {
-      return _GateBanner(
-        icon: Icons.warning_amber_outlined,
-        color: kProAmber,
-        title: 'Export draft available with warnings.',
-        subtitle:
-            '${protection.warningCount} warning(s) noted. Expert review is required before '
-            'writing to hardware. Actual export will be available in a later phase.',
-      );
-    }
-
-    // Fully passed
-    return const _GateBanner(
-      icon: Icons.check_circle_outline,
-      color: kProGreen,
-      title: 'Ready for DSP export draft.',
-      subtitle: 'Verification passed. Actual DSP write will be available after '
-          'hardware integration is complete in a later phase.',
-    );
-  }
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: proLabel(size: 9, spacing: 2)),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, runSpacing: 6, children: children),
+    ],
+  );
 }
 
-class _GateBanner extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String subtitle;
-  const _GateBanner({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.subtitle,
-  });
+class _Chip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _Chip({required this.label, required this.selected, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.06),
-      border: Border.all(color: color.withValues(alpha: 0.3)),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Icon(icon, color: color, size: 18),
-      const SizedBox(width: 12),
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title,
-              style: proTitle(size: 12, color: color)),
-          const SizedBox(height: 4),
-          Text(subtitle, style: proSubtitle(size: 11)),
-        ]),
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: selected ? kProAccent.withValues(alpha: 0.1) : Colors.transparent,
+        border: Border.all(
+            color: selected
+                ? kProAccent.withValues(alpha: 0.5)
+                : kProBorder),
+        borderRadius: BorderRadius.circular(3),
       ),
-    ]),
+      child: Text(label,
+          style: TextStyle(
+              color: selected ? kProAccent : Colors.white38,
+              fontSize: 10,
+              fontWeight: selected ? FontWeight.w500 : FontWeight.normal)),
+    ),
   );
 }
 
-class _FormatRow extends StatelessWidget {
-  final String label;
-  final String status;
-  const _FormatRow({required this.label, required this.status});
+// ── Protection Gate Summary ───────────────────────────────────────────────────
 
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Row(children: [
-      Expanded(child: Text(label, style: proTitle(size: 11, color: Colors.white60))),
-      Text(status, style: proLabel(size: 9, color: Colors.white24, spacing: 0.5)),
-    ]),
-  );
-}
+class _ProtectionGateSummary extends StatelessWidget {
+  final ProtectionProjectState protection;
+  const _ProtectionGateSummary({required this.protection});
 
-class _StatChip extends StatelessWidget {
-  final String label;
-  final String value;
-  const _StatChip({required this.label, required this.value});
+  Color _statusColor() => switch (protection.verificationStatus) {
+    VerificationStatus.passed             => kProGreen,
+    VerificationStatus.passedWithWarnings => kProAmber,
+    VerificationStatus.failed             => kProRed,
+    VerificationStatus.notReady           => const Color(0xFF6B7280),
+  };
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
     decoration: BoxDecoration(
       color: kProSurface,
       border: Border.all(color: kProBorder),
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('PROTECTION GATE', style: proLabel(size: 9, spacing: 2)),
+      const SizedBox(height: 10),
+      Wrap(spacing: 10, runSpacing: 8, children: [
+        _StatChip(
+          label: 'STATUS',
+          value: protection.verificationStatus.label,
+          color: _statusColor(),
+        ),
+        _StatChip(
+          label: 'EXPORT',
+          value: protection.exportLocked ? 'Locked' : 'Allowed',
+          color: protection.exportLocked ? kProRed : kProGreen,
+        ),
+        _StatChip(
+          label: 'WARNINGS',
+          value: '${protection.warningCount}',
+          color: protection.warningCount > 0 ? kProAmber : Colors.white38,
+        ),
+        _StatChip(
+          label: 'CRITICAL',
+          value: '${protection.criticalCount}',
+          color: protection.criticalCount > 0 ? kProRed : Colors.white38,
+        ),
+      ]),
+    ]),
+  );
+}
+
+// ── Package Summary ───────────────────────────────────────────────────────────
+
+class _PackageSummary extends StatelessWidget {
+  final DspExportPackage pkg;
+  const _PackageSummary({required this.pkg});
+
+  Color _statusColor() => switch (pkg.status) {
+    ExportStatus.draftReady => kProGreen,
+    ExportStatus.blocked    => kProRed,
+    ExportStatus.exported   => kProAccent,
+    ExportStatus.notReady   => Colors.white38,
+  };
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(
+          color: pkg.isBlocked
+              ? kProRed.withValues(alpha: 0.3)
+              : pkg.isDraftReady
+                  ? kProGreen.withValues(alpha: 0.2)
+                  : kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Text('ACTIVE PACKAGE', style: proLabel(size: 9, spacing: 2)),
+        const Spacer(),
+        ProStatusPill(label: pkg.status.label, color: _statusColor()),
+      ]),
+      const SizedBox(height: 10),
+
+      if (pkg.isBlocked && pkg.blockedReason != null) ...[
+        Row(children: [
+          const Icon(Icons.block_outlined, color: kProRed, size: 13),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(pkg.blockedReason!,
+                style: proSubtitle(size: 10, color: kProRed.withValues(alpha: 0.8))),
+          ),
+        ]),
+        const SizedBox(height: 10),
+      ],
+
+      Wrap(spacing: 10, runSpacing: 8, children: [
+        _StatChip(label: 'TARGET', value: pkg.targetPlatform.label),
+        _StatChip(label: 'FORMAT', value: pkg.format.label),
+        _StatChip(label: 'BLOCKS', value: '${pkg.blockCount}'),
+        _StatChip(label: 'CHANNELS', value: '${pkg.channelMaps.length}'),
+        _StatChip(
+          label: 'WARNINGS',
+          value: '${pkg.warningCount}',
+          color: pkg.warningCount > 0 ? kProAmber : null,
+        ),
+      ]),
+
+      const SizedBox(height: 8),
+      Text(
+        'Created: ${_fmt(pkg.createdAt)}  ·  '
+        'Tuning rev ${pkg.tuningRevision}  ·  '
+        'Protection rev ${pkg.protectionRevision}',
+        style: proLabel(size: 9, color: Colors.white24, spacing: 0.2),
+      ),
+
+      if (pkg.warnings.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        Text('WARNINGS', style: proLabel(size: 9, spacing: 1.5)),
+        const SizedBox(height: 6),
+        ...pkg.warnings.map((w) => Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.warning_amber_outlined,
+                color: kProAmber, size: 12),
+            const SizedBox(width: 6),
+            Expanded(child: Text(w, style: proSubtitle(size: 10))),
+          ]),
+        )),
+      ],
+    ]),
+  );
+
+  String _fmt(DateTime dt) =>
+      '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} '
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+}
+
+// ── Channel Map Card ──────────────────────────────────────────────────────────
+
+class _ChannelMapCard extends StatelessWidget {
+  final List<ExportChannelMap> maps;
+  const _ChannelMapCard({required this.maps});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: maps.map((m) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(children: [
+          SizedBox(
+            width: 80,
+            child: Text(m.channelId,
+                style: proValue(size: 10, color: kProAccent)),
+          ),
+          SizedBox(
+            width: 80,
+            child: Text(m.logicalName, style: proSubtitle(size: 10)),
+          ),
+          SizedBox(
+            width: 70,
+            child: Text(m.role.toUpperCase(),
+                style: proLabel(size: 8, color: Colors.white38, spacing: 0.5)),
+          ),
+          Text(m.side,
+              style: proLabel(size: 8, color: Colors.white24, spacing: 0.3)),
+          if (m.outputIndex != null) ...[
+            const SizedBox(width: 12),
+            Text('out ${m.outputIndex}',
+                style: proLabel(size: 8, color: Colors.white24, spacing: 0.2)),
+          ],
+        ]),
+      )).toList(),
+    ),
+  );
+}
+
+// ── Parameter Block Card ──────────────────────────────────────────────────────
+
+class _ParameterBlockCard extends StatelessWidget {
+  final ExportParameterBlock block;
+  const _ParameterBlockCard({required this.block});
+
+  Color _typeColor() => switch (block.type) {
+    ExportBlockType.peq        => kProAccent,
+    ExportBlockType.crossover  => const Color(0xFFB47FFF),
+    ExportBlockType.gain       => kProGreen,
+    ExportBlockType.delay      => kProAmber,
+    ExportBlockType.phase      => const Color(0xFF4DD9E8),
+    ExportBlockType.protection => kProRed,
+  };
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 6),
+    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Row(children: [
+      Container(
+        width: 3,
+        height: 32,
+        decoration: BoxDecoration(
+          color: _typeColor().withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text(block.title, style: proTitle(size: 11)),
+            const SizedBox(width: 8),
+            ProStatusPill(label: block.type.label, color: _typeColor()),
+            if (block.channelId.isNotEmpty && block.channelId != 'system') ...[
+              const SizedBox(width: 6),
+              Text('ch: ${block.channelId}',
+                  style: proLabel(size: 8, color: Colors.white24, spacing: 0.3)),
+            ],
+          ]),
+          const SizedBox(height: 3),
+          Text(block.summary, style: proSubtitle(size: 10)),
+          if (block.warning != null) ...[
+            const SizedBox(height: 4),
+            Text('⚠ ${block.warning}',
+                style: proSubtitle(size: 9, color: kProAmber)),
+          ],
+        ]),
+      ),
+    ]),
+  );
+}
+
+// ── JSON Preview Card ─────────────────────────────────────────────────────────
+
+class _JsonPreviewCard extends StatefulWidget {
+  final DspExportPackage pkg;
+  const _JsonPreviewCard({required this.pkg});
+
+  @override
+  State<_JsonPreviewCard> createState() => _JsonPreviewCardState();
+}
+
+class _JsonPreviewCardState extends State<_JsonPreviewCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const encoder = JsonEncoder.withIndent('  ');
+    // Compact preview: top-level keys only + first 40 chars of values
+    final full = widget.pkg.toJson();
+    final preview = {
+      'id': full['id'],
+      'status': full['status'],
+      'targetPlatform': full['targetPlatform'],
+      'format': full['format'],
+      'projectName': full['projectName'],
+      'tuningRevision': full['tuningRevision'],
+      'protectionRevision': full['protectionRevision'],
+      'channelMaps': '[ ${widget.pkg.channelMaps.length} channels ]',
+      'parameterBlocks': '[ ${widget.pkg.blockCount} blocks ]',
+      'warnings': widget.pkg.warnings,
+      if (full['blockedReason'] != null) 'blockedReason': full['blockedReason'],
+    };
+    final previewJson = encoder.convert(preview);
+    final fullJson = encoder.convert(full);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text('JSON PREVIEW', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Text(
+              _expanded ? 'Collapse' : 'Show full',
+              style: TextStyle(
+                  color: kProAccent.withValues(alpha: 0.7),
+                  fontSize: 10),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: kProBg,
+            border: Border.all(color: kProBorder),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            _expanded ? fullJson : previewJson,
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 9,
+              color: Color(0xFF9CA3AF),
+              height: 1.5,
+            ),
+            maxLines: _expanded ? null : 30,
+            overflow: _expanded ? TextOverflow.visible : TextOverflow.fade,
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Shared sub-widgets ────────────────────────────────────────────────────────
+
+class _StatChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? color;
+  const _StatChip({required this.label, required this.value, this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: kProBg,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(label, style: proLabel(size: 9)),
       const SizedBox(height: 4),
-      Text(value, style: proValue(size: 12, color: Colors.white70)),
+      Text(value,
+          style: proValue(size: 12, color: color ?? Colors.white70)),
     ]),
   );
 }

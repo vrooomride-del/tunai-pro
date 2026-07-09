@@ -8,6 +8,7 @@ import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../core/pro_protection_data.dart';
 import '../../../core/pro_optimizer_data.dart';
+import '../../../core/pro_export_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -84,6 +85,12 @@ class ReportTab extends ConsumerWidget {
         // Phase F: Protection / verification readiness
         if (project != null) ...[
           _ProtectionReadinessCard(protection: project.protectionState),
+          const SizedBox(height: 16),
+        ],
+
+        // Phase H: Export readiness
+        if (project != null) ...[
+          _ExportReadinessCard(exportState: project.exportState),
           const SizedBox(height: 16),
         ],
 
@@ -632,6 +639,107 @@ class _MiniChip extends StatelessWidget {
   final String value;
   final Color? color;
   const _MiniChip({required this.label, required this.value, this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    decoration: BoxDecoration(
+      color: kProBg,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: proLabel(size: 8, spacing: 1)),
+      const SizedBox(height: 2),
+      Text(value, style: proValue(size: 11, color: color ?? Colors.white54)),
+    ]),
+  );
+}
+
+// ── Phase H: Export Readiness Card ────────────────────────────────────────────
+
+class _ExportReadinessCard extends StatelessWidget {
+  final ExportProjectState exportState;
+  const _ExportReadinessCard({required this.exportState});
+
+  @override
+  Widget build(BuildContext context) {
+    final pkg = exportState.activePackage;
+    final hasPackage = pkg != null;
+
+    Color statusColor = switch (pkg?.status) {
+      ExportStatus.draftReady => kProGreen,
+      ExportStatus.blocked    => kProRed,
+      ExportStatus.exported   => kProAccent,
+      _                       => Colors.white38,
+    };
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.upload_outlined,
+              color: Color(0xFF4A9EFF), size: 13),
+          const SizedBox(width: 8),
+          Text('DSP EXPORT', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          Text(exportState.readinessLabel,
+              style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
+        ]),
+        const SizedBox(height: 10),
+
+        if (!hasPackage)
+          Row(children: [
+            const Icon(Icons.info_outline, color: Colors.white24, size: 12),
+            const SizedBox(width: 8),
+            Text('No export package generated yet. Open Export tab.',
+                style: proSubtitle(size: 10)),
+          ])
+        else ...[
+          Wrap(spacing: 10, runSpacing: 8, children: [
+            _ExportMiniChip(label: 'TARGET', value: exportState.selectedTarget.label),
+            _ExportMiniChip(label: 'FORMAT', value: exportState.selectedFormat.label),
+            _ExportMiniChip(label: 'PACKAGES', value: '${exportState.packageCount}'),
+            _ExportMiniChip(
+              label: 'STATUS',
+              value: pkg.status.label,
+              color: statusColor,
+            ),
+            _ExportMiniChip(label: 'BLOCKS', value: '${pkg.blockCount}'),
+            _ExportMiniChip(
+              label: 'WARNINGS',
+              value: '${pkg.warningCount}',
+              color: pkg.warningCount > 0 ? kProAmber : null,
+            ),
+          ]),
+          if (pkg.blockedReason != null) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              const Icon(Icons.block_outlined, color: kProRed, size: 11),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(pkg.blockedReason!,
+                    style: proSubtitle(size: 9,
+                        color: kProRed.withValues(alpha: 0.8))),
+              ),
+            ]),
+          ],
+        ],
+      ]),
+    );
+  }
+}
+
+class _ExportMiniChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? color;
+  const _ExportMiniChip({required this.label, required this.value, this.color});
 
   @override
   Widget build(BuildContext context) => Container(
