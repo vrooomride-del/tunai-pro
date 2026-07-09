@@ -257,7 +257,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Hardware write disabled in Phase Q. '
+                'Hardware write remains disabled. '
                 'No USBi/BLE packets are sent. No SafeLoad is executed. '
                 'No EEPROM/Selfboot write is performed.',
                 style: proSubtitle(size: 9),
@@ -380,7 +380,7 @@ class _ConnectionPanel extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        Text('Phase Q: simulated status only. No real hardware scan.',
+        Text('Simulated status only. No real hardware scan.',
             style: proSubtitle(size: 9)),
       ]),
     );
