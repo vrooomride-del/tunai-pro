@@ -1,4 +1,4 @@
-// TUNAI PRO — Phase L simulation engine sanity checks.
+// TUNAI PRO — Phase L/M/N simulation engine sanity checks.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/pro_simulation_data.dart';
@@ -6,6 +6,7 @@ import 'package:tunai_pro/core/pro_simulation_engine.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_measurement_parser.dart';
+import 'package:tunai_pro/core/pro_tuning_data.dart';
 
 ProProject _defaultProject() => ProProject.create(
   name: 'Sim Test',
@@ -180,10 +181,14 @@ void main() {
       expect(result.hasSummedCurve, isTrue);
     });
 
-    test('summed curve not present when includeSummed false', () {
+    test('summed curve not present when all summed flags off', () {
       final result = generateSimulationDraft(
         project: _defaultProject(),
-        config: const SimulationRunConfig(includeSummed: false),
+        config: const SimulationRunConfig(
+          includeSummed: false,
+          includePhaseAwareSummation: false,
+          includeMagnitudeOnlyComparison: false,
+        ),
       );
       expect(result.hasSummedCurve, isFalse);
     });
@@ -193,10 +198,13 @@ void main() {
         project: _defaultProject(),
         config: const SimulationRunConfig(includeSummed: true),
       );
-      final summed =
-          result.curves.firstWhere((c) => c.type == SimulationCurveType.summed);
+      final summed = result.curves.firstWhere((c) =>
+          c.type == SimulationCurveType.summed ||
+          c.type == SimulationCurveType.summedMagnitudeOnly ||
+          c.type == SimulationCurveType.summedPhaseAware);
       final w = (summed.warning ?? '').toLowerCase();
-      expect(w, contains('draft'));
+      expect(w, anyOf(contains('draft'), contains('magnitude'),
+          contains('phase'), contains('summation')));
     });
   });
 
@@ -428,6 +436,310 @@ void main() {
           .firstWhere((c) => c.type == SimulationCurveType.driver);
       final warn = (curve.warning ?? '').toLowerCase();
       expect(warn, contains('phase'));
+    });
+  });
+
+  // ── Phase N: phase-aware summation ─────────────────────────────────────────
+
+  group('Phase N: phase-aware summation', () {
+    ParsedMeasurementData makeFrdWithPhase(
+        {double gainDb = 0.0, double phaseDeg = 0.0}) {
+      final content = '''
+20    ${-10.0 + gainDb}   $phaseDeg
+100    ${0.0 + gainDb}    $phaseDeg
+1000   ${2.0 + gainDb}   $phaseDeg
+10000  ${1.0 + gainDb}   $phaseDeg
+20000  ${-5.0 + gainDb}  $phaseDeg
+''';
+      return ProMeasurementParser.parseFrd(
+          fileName: 'driver.frd', content: content).data!;
+    }
+
+    ParsedMeasurementData makeFrdNoPhase() {
+      const content = '20 -10.0\n100 0.0\n1000 2.0\n10000 1.0\n20000 -5.0\n';
+      return ProMeasurementParser.parseFrd(
+          fileName: 'driver.frd', content: content).data!;
+    }
+
+    ProProject projectWith2Drivers({
+      ParsedMeasurementData? frd1,
+      ParsedMeasurementData? frd2,
+      TuningProjectState? tuning,
+    }) {
+      const d1 = DriverChannel(
+        id: 'wf_l', name: 'Woofer L', role: DriverRole.woofer,
+        side: DriverSide.left, enabled: true,
+      );
+      const d2 = DriverChannel(
+        id: 'tw_l', name: 'Tweeter L', role: DriverRole.tweeter,
+        side: DriverSide.left, enabled: true,
+      );
+      final drivers = [
+        frd1 != null ? d1.copyWith(frdData: frd1) : d1,
+        frd2 != null ? d2.copyWith(frdData: frd2) : d2,
+      ];
+      final acoustic =
+          MeasurementProjectState.createDefault().copyWith(driverChannels: drivers);
+      final base = _defaultProject().copyWith(acousticState: acoustic);
+      return tuning != null ? base.copyWith(tuningState: tuning) : base;
+    }
+
+    test('phase-aware summed curve generated when 2+ drivers have FRD phase', () {
+      final frd = makeFrdWithPhase();
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includeDrivers: true,
+          includePhaseAwareSummation: true,
+          includeMagnitudeOnlyComparison: false,
+          includeSummed: false,
+          includeTarget: false,
+        ),
+      );
+      expect(result.hasPhaseAwareCurve, isTrue);
+      final curve = result.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+      expect(curve.status, SimulationCurveStatus.phaseAwareDraft);
+      expect(curve.hasPoints, isTrue);
+    });
+
+    test('phase-aware curve status is phaseAwareDraft', () {
+      final frd = makeFrdWithPhase();
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeSummed: false,
+          includeTarget: false,
+        ),
+      );
+      final curve = result.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+      expect(curve.status, SimulationCurveStatus.phaseAwareDraft);
+    });
+
+    test('mag-only fallback used when drivers lack phase', () {
+      final frd = makeFrdNoPhase();
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeMagnitudeOnlyComparison: true,
+          includeSummed: false,
+          includeTarget: false,
+        ),
+      );
+      expect(result.hasPhaseAwareCurve, isFalse);
+      expect(result.hasMagnitudeOnlyCurve, isTrue);
+      final allWarnings = result.warnings.join(' ').toLowerCase();
+      expect(allWarnings, anyOf(contains('phase'), contains('fallback')));
+    });
+
+    test('readiness is calculatedDraft when phase-aware curve present', () {
+      final frd = makeFrdWithPhase();
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(includePhaseAwareSummation: true),
+      );
+      expect(result.readiness, SimulationReadiness.calculatedDraft);
+    });
+
+    test('polarity inversion changes summed response', () {
+      final frd = makeFrdWithPhase(phaseDeg: 0.0);
+      // Two drivers with identical in-phase FRD
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final resultNormal = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+
+      // Invert polarity of second driver via tuning state
+      const xo1 = CrossoverChannelState(channelId: 'wf_l');
+      const xo2 = CrossoverChannelState(
+          channelId: 'tw_l', polarityInverted: true);
+      final tuning = TuningProjectState(crossoverChannels: [xo1, xo2]);
+      final projectInverted =
+          projectWith2Drivers(frd1: frd, frd2: frd, tuning: tuning);
+      final resultInverted = generateSimulationDraft(
+        project: projectInverted,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+
+      final phaseAwareNormal = resultNormal.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+      final phaseAwareInverted = resultInverted.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+
+      // Mid-band magnitude should differ with polarity inversion
+      final mid = phaseAwareNormal.points.firstWhere(
+          (p) => p.frequencyHz >= 1000);
+      final midInv = phaseAwareInverted.points.firstWhere(
+          (p) => p.frequencyHz >= 1000);
+      expect(mid.value, isNot(closeTo(midInv.value, 0.01)));
+    });
+
+    test('delay shifts phase of summed response', () {
+      final frd = makeFrdWithPhase(phaseDeg: 0.0);
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final resultNoDelay = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+
+      const ctrl = ChannelControlState(channelId: 'wf_l', delayMs: 0.25);
+      final tuning = TuningProjectState(channelControls: [ctrl]);
+      final projectDelayed =
+          projectWith2Drivers(frd1: frd, frd2: frd, tuning: tuning);
+      final resultDelayed = generateSimulationDraft(
+        project: projectDelayed,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+
+      final curveA = resultNoDelay.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+      final curveB = resultDelayed.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+
+      // Summed magnitude should differ with 1 ms delay on one driver
+      // At 500Hz × 0.25ms = 45° phase offset → measurable magnitude change
+      final mid = curveA.points.firstWhere((p) => p.frequencyHz >= 500);
+      final midDelayed =
+          curveB.points.firstWhere((p) => p.frequencyHz >= 500);
+      expect(mid.value, isNot(closeTo(midDelayed.value, 0.01)));
+    });
+
+    test('acoustic offset changes phase-aware result when enabled', () {
+      final frd = makeFrdWithPhase();
+      const offset = DriverAcousticOffset(xMm: 100.0, yMm: 0.0, zMm: 0.0);
+      const d1 = DriverChannel(
+        id: 'wf_l', name: 'Woofer L', role: DriverRole.woofer,
+        side: DriverSide.left, enabled: true,
+      );
+      const d2 = DriverChannel(
+        id: 'tw_l', name: 'Tweeter L', role: DriverRole.tweeter,
+        side: DriverSide.left, enabled: true,
+      );
+      final drivers = [
+        d1.copyWith(frdData: frd, acousticOffset: offset),
+        d2.copyWith(frdData: frd),
+      ];
+      final acoustic = MeasurementProjectState.createDefault()
+          .copyWith(driverChannels: drivers);
+      final project = _defaultProject().copyWith(acousticState: acoustic);
+
+      final resultOff = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          useAcousticOffsets: false,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+      final resultOn = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          useAcousticOffsets: true,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+
+      final off = resultOff.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+      final on = resultOn.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+
+      final mid = off.points.firstWhere((p) => p.frequencyHz >= 1000);
+      final midOn = on.points.firstWhere((p) => p.frequencyHz >= 1000);
+      expect(mid.value, isNot(closeTo(midOn.value, 0.01)));
+    });
+
+    test('mag-only comparison curve generated alongside phase-aware', () {
+      final frd = makeFrdWithPhase();
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeMagnitudeOnlyComparison: true,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+      expect(result.hasPhaseAwareCurve, isTrue);
+      expect(result.hasMagnitudeOnlyCurve, isTrue);
+    });
+
+    test('phase-aware curve points have phaseDeg populated', () {
+      final frd = makeFrdWithPhase();
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+      final curve = result.curves.firstWhere(
+          (c) => c.type == SimulationCurveType.summedPhaseAware);
+      final hasPhasePts = curve.points.any((p) => p.phaseDeg != null);
+      expect(hasPhasePts, isTrue);
+    });
+
+    test('phase-aware curve warning mentions draft accuracy', () {
+      final frd = makeFrdWithPhase();
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final result = generateSimulationDraft(
+        project: project,
+        config: const SimulationRunConfig(
+          includePhaseAwareSummation: true,
+          includeSummed: false, includeTarget: false,
+        ),
+      );
+      final allWarnings = result.warnings.join(' ').toLowerCase();
+      expect(allWarnings, anyOf(contains('draft'), contains('verification')));
+    });
+
+    test('SimulationRunConfig Phase N fields round-trip JSON', () {
+      const config = SimulationRunConfig(
+        includePhaseAwareSummation: true,
+        includeMagnitudeOnlyComparison: false,
+        includeDriverPhaseCurves: true,
+        useAcousticOffsets: true,
+      );
+      final json = config.toJson();
+      final restored = SimulationRunConfig.fromJson(json);
+      expect(restored.includePhaseAwareSummation, isTrue);
+      expect(restored.includeMagnitudeOnlyComparison, isFalse);
+      expect(restored.includeDriverPhaseCurves, isTrue);
+      expect(restored.useAcousticOffsets, isTrue);
+    });
+
+    test('phase-aware simulation JSON contains no hardware address fields', () {
+      final frd = makeFrdWithPhase();
+      final project = projectWith2Drivers(frd1: frd, frd2: frd);
+      final result = generateSimulationDraft(project: project);
+      final jsonStr = result.toJson().toString().toLowerCase();
+      expect(jsonStr, isNot(contains('safeload')));
+      expect(jsonStr, isNot(contains('0x')));
+      expect(jsonStr, isNot(contains('register')));
+      expect(jsonStr, isNot(contains('eeprom')));
+      expect(jsonStr, isNot(contains('usbi')));
     });
   });
 

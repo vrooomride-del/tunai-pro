@@ -1,4 +1,4 @@
-// ── TUNAI PRO Phase L — Acoustic Simulation Tab ───────────────────────────────
+// ── TUNAI PRO Phase N — Acoustic Simulation Tab ───────────────────────────────
 // Draft response preview. Not final acoustic simulation. No hardware write.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
@@ -24,6 +24,10 @@ class _SimulationTabState extends ConsumerState<SimulationTab> {
   bool _includeDrivers = true;
   bool _includeSummed = true;
   bool _includePhase = false;
+  bool _phaseAware = true;
+  bool _magOnlyComparison = true;
+  bool _driverPhaseTraces = false;
+  bool _acousticOffsets = false;
   bool _running = false;
 
   @override
@@ -66,12 +70,20 @@ class _SimulationTabState extends ConsumerState<SimulationTab> {
           includeDrivers: _includeDrivers,
           includeSummed: _includeSummed,
           includePhase: _includePhase,
+          phaseAware: _phaseAware,
+          magOnlyComparison: _magOnlyComparison,
+          driverPhaseTraces: _driverPhaseTraces,
+          acousticOffsets: _acousticOffsets,
           running: _running,
           project: project,
           onTargetChanged: (v) => setState(() => _includeTarget = v),
           onDriversChanged: (v) => setState(() => _includeDrivers = v),
           onSummedChanged: (v) => setState(() => _includeSummed = v),
           onPhaseChanged: (v) => setState(() => _includePhase = v),
+          onPhaseAwareChanged: (v) => setState(() => _phaseAware = v),
+          onMagOnlyComparisonChanged: (v) => setState(() => _magOnlyComparison = v),
+          onDriverPhaseTracesChanged: (v) => setState(() => _driverPhaseTraces = v),
+          onAcousticOffsetsChanged: (v) => setState(() => _acousticOffsets = v),
           onGenerate: () => _generate(project),
         ),
         const SizedBox(height: 16),
@@ -104,6 +116,10 @@ class _SimulationTabState extends ConsumerState<SimulationTab> {
         includeDrivers: _includeDrivers,
         includeSummed: _includeSummed,
         includePhasePlaceholder: _includePhase,
+        includePhaseAwareSummation: _phaseAware,
+        includeMagnitudeOnlyComparison: _magOnlyComparison,
+        includeDriverPhaseCurves: _driverPhaseTraces,
+        useAcousticOffsets: _acousticOffsets,
       );
       final result = generateSimulationDraft(project: project, config: config);
 
@@ -128,12 +144,20 @@ class _ControlPanel extends StatelessWidget {
   final bool includeDrivers;
   final bool includeSummed;
   final bool includePhase;
+  final bool phaseAware;
+  final bool magOnlyComparison;
+  final bool driverPhaseTraces;
+  final bool acousticOffsets;
   final bool running;
   final ProProject project;
   final ValueChanged<bool> onTargetChanged;
   final ValueChanged<bool> onDriversChanged;
   final ValueChanged<bool> onSummedChanged;
   final ValueChanged<bool> onPhaseChanged;
+  final ValueChanged<bool> onPhaseAwareChanged;
+  final ValueChanged<bool> onMagOnlyComparisonChanged;
+  final ValueChanged<bool> onDriverPhaseTracesChanged;
+  final ValueChanged<bool> onAcousticOffsetsChanged;
   final VoidCallback onGenerate;
 
   const _ControlPanel({
@@ -141,12 +165,20 @@ class _ControlPanel extends StatelessWidget {
     required this.includeDrivers,
     required this.includeSummed,
     required this.includePhase,
+    required this.phaseAware,
+    required this.magOnlyComparison,
+    required this.driverPhaseTraces,
+    required this.acousticOffsets,
     required this.running,
     required this.project,
     required this.onTargetChanged,
     required this.onDriversChanged,
     required this.onSummedChanged,
     required this.onPhaseChanged,
+    required this.onPhaseAwareChanged,
+    required this.onMagOnlyComparisonChanged,
+    required this.onDriverPhaseTracesChanged,
+    required this.onAcousticOffsetsChanged,
     required this.onGenerate,
   });
 
@@ -174,12 +206,24 @@ class _ControlPanel extends StatelessWidget {
         ]),
         const SizedBox(height: 12),
 
-        // Toggles
+        // Toggles — row 1: content
         Wrap(spacing: 8, runSpacing: 8, children: [
           _Toggle(label: 'Target', value: includeTarget, onChanged: onTargetChanged),
           _Toggle(label: 'Drivers', value: includeDrivers, onChanged: onDriversChanged),
           _Toggle(label: 'Summed', value: includeSummed, onChanged: onSummedChanged),
           _Toggle(label: 'Phase Placeholder', value: includePhase, onChanged: onPhaseChanged),
+        ]),
+        const SizedBox(height: 8),
+        // Toggles — row 2: Phase N summation options
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          _Toggle(label: 'Phase-aware Summed', value: phaseAware,
+              onChanged: onPhaseAwareChanged),
+          _Toggle(label: 'Mag-only Reference', value: magOnlyComparison,
+              onChanged: onMagOnlyComparisonChanged),
+          _Toggle(label: 'Driver Phase Traces', value: driverPhaseTraces,
+              onChanged: onDriverPhaseTracesChanged),
+          _Toggle(label: 'Acoustic Offsets', value: acousticOffsets,
+              onChanged: onAcousticOffsetsChanged),
         ]),
         const SizedBox(height: 14),
 
@@ -335,7 +379,12 @@ Color _curveColor(int index, SimulationCurveType type) {
     case SimulationCurveType.target:
       return const Color(0xFFFFB74D); // amber
     case SimulationCurveType.summed:
+    case SimulationCurveType.summedPhaseAware:
       return const Color(0xFF4A9EFF); // accent blue
+    case SimulationCurveType.summedMagnitudeOnly:
+      return const Color(0xFF94A3B8); // muted slate
+    case SimulationCurveType.phaseTrace:
+      return const Color(0xFFA78BFA); // violet
     case SimulationCurveType.driver:
       const driverColors = [
         Color(0xFF22C55E), // green
@@ -349,6 +398,24 @@ Color _curveColor(int index, SimulationCurveType type) {
     default:
       return Colors.white38;
   }
+}
+
+class _CurveBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _CurveBadge(this.label, this.color);
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(left: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(2),
+    ),
+    child: Text(label,
+        style: TextStyle(color: color, fontSize: 8, letterSpacing: 0.3)),
+  );
 }
 
 class _LegendItem extends StatelessWidget {
@@ -578,33 +645,15 @@ class _CurveRow extends StatelessWidget {
               Expanded(
                   child: Text(curve.label, style: proTitle(size: 10))),
               if (curve.status == SimulationCurveStatus.imported)
-                Container(
-                  margin: const EdgeInsets.only(left: 6),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: kProGreen.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                  child: const Text('FRD',
-                      style: TextStyle(
-                          color: kProGreen, fontSize: 8,
-                          letterSpacing: 0.5)),
-                )
+                const _CurveBadge('FRD', kProGreen)
+              else if (curve.type == SimulationCurveType.summedPhaseAware)
+                const _CurveBadge('phase-aware', kProAccent)
+              else if (curve.type == SimulationCurveType.summedMagnitudeOnly)
+                const _CurveBadge('mag-only', kProAmber)
+              else if (curve.status == SimulationCurveStatus.missingPhaseFallback)
+                const _CurveBadge('fallback', kProAmber)
               else if (curve.type == SimulationCurveType.driver)
-                Container(
-                  margin: const EdgeInsets.only(left: 6),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: kProAmber.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                  child: const Text('placeholder',
-                      style: TextStyle(
-                          color: kProAmber, fontSize: 8,
-                          letterSpacing: 0.3)),
-                ),
+                const _CurveBadge('placeholder', kProAmber),
             ]),
             if (curve.notes != null) ...[
               const SizedBox(height: 1),
@@ -625,12 +674,14 @@ class _CurveRow extends StatelessWidget {
         ProStatusPill(
           label: curve.status.label,
           color: switch (curve.status) {
-            SimulationCurveStatus.imported        => kProGreen,
-            SimulationCurveStatus.calculatedDraft => kProAccent,
-            SimulationCurveStatus.estimated       => kProAccent,
-            SimulationCurveStatus.placeholder     => kProAmber,
-            SimulationCurveStatus.empty           => Colors.white24,
-            _                                     => kProAmber,
+            SimulationCurveStatus.imported             => kProGreen,
+            SimulationCurveStatus.phaseAwareDraft      => kProAccent,
+            SimulationCurveStatus.calculatedDraft      => kProAccent,
+            SimulationCurveStatus.estimated            => kProAccent,
+            SimulationCurveStatus.missingPhaseFallback => kProAmber,
+            SimulationCurveStatus.placeholder          => kProAmber,
+            SimulationCurveStatus.empty                => Colors.white24,
+            _                                          => kProAmber,
           },
         ),
       ]),

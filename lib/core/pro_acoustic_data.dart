@@ -1,6 +1,6 @@
-// ── TUNAI PRO Phase M — Acoustic Data Models ─────────────────────────────────
+// ── TUNAI PRO Phase N — Acoustic Data Models ─────────────────────────────────
 // Driver channels, FRD/ZMA file references, measurement status, target curve,
-// parsed measurement data. No DSP writes. No hardware access. Data-layer only.
+// parsed measurement data, acoustic offset. No DSP writes. No hardware access.
 
 import 'dart:convert';
 
@@ -275,6 +275,82 @@ class MeasurementParseResult {
   });
 }
 
+/// Approximate 3-D position of a driver's acoustic center relative to a
+/// reference point (e.g. listening axis). Used to compute path-length delay
+/// for phase-aware summation. Values in millimetres. All fields optional.
+class DriverAcousticOffset {
+  final double xMm;
+  final double yMm;
+  final double zMm;
+  final double? distanceMm;
+  final String? notes;
+
+  const DriverAcousticOffset({
+    this.xMm = 0.0,
+    this.yMm = 0.0,
+    this.zMm = 0.0,
+    this.distanceMm,
+    this.notes,
+  });
+
+  /// Euclidean distance in mm from origin if distanceMm not explicitly set.
+  double get effectiveDistanceMm =>
+      distanceMm ?? _sqrt(xMm * xMm + yMm * yMm + zMm * zMm);
+
+  /// One-way path delay in seconds: d[mm] / 1000 / 343 m/s.
+  double get pathDelaySeconds => effectiveDistanceMm / 1000.0 / 343.0;
+
+  static double _sqrt(double v) {
+    if (v <= 0) return 0.0;
+    return v < 1e-12 ? 0.0 : v == 0 ? 0 : _sqrtImpl(v);
+  }
+
+  static double _sqrtImpl(double v) {
+    // Use iterative Newton for minimal dart:math dependency
+    double x = v / 2;
+    for (var i = 0; i < 32; i++) {
+      final xn = (x + v / x) / 2;
+      if ((xn - x).abs() < 1e-9) return xn;
+      x = xn;
+    }
+    return x;
+  }
+
+  bool get isZero => xMm == 0.0 && yMm == 0.0 && zMm == 0.0 && distanceMm == null;
+
+  DriverAcousticOffset copyWith({
+    double? xMm,
+    double? yMm,
+    double? zMm,
+    double? distanceMm,
+    String? notes,
+  }) =>
+      DriverAcousticOffset(
+        xMm: xMm ?? this.xMm,
+        yMm: yMm ?? this.yMm,
+        zMm: zMm ?? this.zMm,
+        distanceMm: distanceMm ?? this.distanceMm,
+        notes: notes ?? this.notes,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'xMm': xMm,
+        'yMm': yMm,
+        'zMm': zMm,
+        if (distanceMm != null) 'distanceMm': distanceMm,
+        if (notes != null) 'notes': notes,
+      };
+
+  factory DriverAcousticOffset.fromJson(Map<String, dynamic> j) =>
+      DriverAcousticOffset(
+        xMm: (j['xMm'] as num?)?.toDouble() ?? 0.0,
+        yMm: (j['yMm'] as num?)?.toDouble() ?? 0.0,
+        zMm: (j['zMm'] as num?)?.toDouble() ?? 0.0,
+        distanceMm: (j['distanceMm'] as num?)?.toDouble(),
+        notes: j['notes'] as String?,
+      );
+}
+
 class AcousticFileRef {
   final String id;
   final String fileName;
@@ -374,6 +450,8 @@ class DriverChannel {
   // Phase M: parsed data, stored inline per driver
   final ParsedMeasurementData? frdData;
   final ParsedMeasurementData? zmaData;
+  // Phase N: acoustic offset (3-D position relative to reference axis)
+  final DriverAcousticOffset? acousticOffset;
 
   const DriverChannel({
     required this.id,
@@ -388,6 +466,7 @@ class DriverChannel {
     this.notes,
     this.frdData,
     this.zmaData,
+    this.acousticOffset,
   });
 
   String get shortLabel => '${role.short} · ${side.label}';
@@ -412,6 +491,8 @@ class DriverChannel {
     bool clearFrdData = false,
     ParsedMeasurementData? zmaData,
     bool clearZmaData = false,
+    DriverAcousticOffset? acousticOffset,
+    bool clearAcousticOffset = false,
   }) => DriverChannel(
     id: id,
     name: name ?? this.name,
@@ -425,6 +506,7 @@ class DriverChannel {
     notes: notes ?? this.notes,
     frdData: clearFrdData ? null : (frdData ?? this.frdData),
     zmaData: clearZmaData ? null : (zmaData ?? this.zmaData),
+    acousticOffset: clearAcousticOffset ? null : (acousticOffset ?? this.acousticOffset),
   );
 
   Map<String, dynamic> toJson() => {
@@ -440,6 +522,7 @@ class DriverChannel {
     if (notes != null) 'notes': notes,
     if (frdData != null) 'frdData': frdData!.toJson(),
     if (zmaData != null) 'zmaData': zmaData!.toJson(),
+    if (acousticOffset != null) 'acousticOffset': acousticOffset!.toJson(),
   };
 
   factory DriverChannel.fromJson(Map<String, dynamic> j) => DriverChannel(
@@ -462,6 +545,10 @@ class DriverChannel {
         : null,
     zmaData: j['zmaData'] != null
         ? ParsedMeasurementData.fromJson(Map<String, dynamic>.from(j['zmaData'] as Map))
+        : null,
+    acousticOffset: j['acousticOffset'] != null
+        ? DriverAcousticOffset.fromJson(
+            Map<String, dynamic>.from(j['acousticOffset'] as Map))
         : null,
   );
 }

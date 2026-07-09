@@ -1,4 +1,4 @@
-// ── TUNAI PRO Phase L — Acoustic Simulation Graph Foundation ─────────────────
+// ── TUNAI PRO Phase N — Acoustic Simulation Data ─────────────────────────────
 // Draft response data structures for workstation-style frequency response
 // preview. Not final acoustic simulation. Not hardware write.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
@@ -8,6 +8,10 @@
 enum SimulationCurveType {
   target,
   summed,
+  summedMagnitudeOnly,
+  summedPhaseAware,
+  phaseTrace,
+  delayTrace,
   driver,
   peqTransfer,
   crossoverTransfer,
@@ -17,15 +21,19 @@ enum SimulationCurveType {
   warning;
 
   String get label => switch (this) {
-    SimulationCurveType.target             => 'Target',
-    SimulationCurveType.summed             => 'Summed',
-    SimulationCurveType.driver             => 'Driver',
-    SimulationCurveType.peqTransfer        => 'PEQ Transfer',
-    SimulationCurveType.crossoverTransfer  => 'XO Transfer',
-    SimulationCurveType.gainAdjusted       => 'Gain Adjusted',
-    SimulationCurveType.phasePlaceholder   => 'Phase (Placeholder)',
-    SimulationCurveType.reference          => 'Reference',
-    SimulationCurveType.warning            => 'Warning',
+    SimulationCurveType.target              => 'Target',
+    SimulationCurveType.summed              => 'Summed',
+    SimulationCurveType.summedMagnitudeOnly => 'Summed (Mag-only)',
+    SimulationCurveType.summedPhaseAware    => 'Summed (Phase-aware)',
+    SimulationCurveType.phaseTrace          => 'Phase Trace',
+    SimulationCurveType.delayTrace          => 'Delay Trace',
+    SimulationCurveType.driver              => 'Driver',
+    SimulationCurveType.peqTransfer         => 'PEQ Transfer',
+    SimulationCurveType.crossoverTransfer   => 'XO Transfer',
+    SimulationCurveType.gainAdjusted        => 'Gain Adjusted',
+    SimulationCurveType.phasePlaceholder    => 'Phase (Placeholder)',
+    SimulationCurveType.reference           => 'Reference',
+    SimulationCurveType.warning             => 'Warning',
   };
 
   String toJson() => name;
@@ -40,6 +48,8 @@ enum SimulationCurveStatus {
   estimated,
   imported,
   calculatedDraft,
+  phaseAwareDraft,
+  missingPhaseFallback,
   requiresMeasurement,
   requiresVerification;
 
@@ -49,6 +59,8 @@ enum SimulationCurveStatus {
     SimulationCurveStatus.estimated            => 'Estimated',
     SimulationCurveStatus.imported             => 'Imported',
     SimulationCurveStatus.calculatedDraft      => 'Calculated Draft',
+    SimulationCurveStatus.phaseAwareDraft      => 'Phase-aware Draft',
+    SimulationCurveStatus.missingPhaseFallback => 'Mag-only Fallback',
     SimulationCurveStatus.requiresMeasurement  => 'Requires Measurement',
     SimulationCurveStatus.requiresVerification => 'Requires Verification',
   };
@@ -196,6 +208,11 @@ class SimulationRunConfig {
   final bool includeDrivers;
   final bool includeSummed;
   final bool includePhasePlaceholder;
+  // Phase N additions
+  final bool includePhaseAwareSummation;
+  final bool includeMagnitudeOnlyComparison;
+  final bool includeDriverPhaseCurves;
+  final bool useAcousticOffsets;
   final String? notes;
 
   const SimulationRunConfig({
@@ -207,6 +224,10 @@ class SimulationRunConfig {
     this.includeDrivers = true,
     this.includeSummed = true,
     this.includePhasePlaceholder = false,
+    this.includePhaseAwareSummation = true,
+    this.includeMagnitudeOnlyComparison = true,
+    this.includeDriverPhaseCurves = false,
+    this.useAcousticOffsets = false,
     this.notes,
   });
 
@@ -219,6 +240,10 @@ class SimulationRunConfig {
     bool? includeDrivers,
     bool? includeSummed,
     bool? includePhasePlaceholder,
+    bool? includePhaseAwareSummation,
+    bool? includeMagnitudeOnlyComparison,
+    bool? includeDriverPhaseCurves,
+    bool? useAcousticOffsets,
     String? notes,
   }) => SimulationRunConfig(
     sampleRateHz: sampleRateHz ?? this.sampleRateHz,
@@ -230,6 +255,13 @@ class SimulationRunConfig {
     includeSummed: includeSummed ?? this.includeSummed,
     includePhasePlaceholder:
         includePhasePlaceholder ?? this.includePhasePlaceholder,
+    includePhaseAwareSummation:
+        includePhaseAwareSummation ?? this.includePhaseAwareSummation,
+    includeMagnitudeOnlyComparison:
+        includeMagnitudeOnlyComparison ?? this.includeMagnitudeOnlyComparison,
+    includeDriverPhaseCurves:
+        includeDriverPhaseCurves ?? this.includeDriverPhaseCurves,
+    useAcousticOffsets: useAcousticOffsets ?? this.useAcousticOffsets,
     notes: notes ?? this.notes,
   );
 
@@ -242,6 +274,10 @@ class SimulationRunConfig {
     'includeDrivers': includeDrivers,
     'includeSummed': includeSummed,
     'includePhasePlaceholder': includePhasePlaceholder,
+    'includePhaseAwareSummation': includePhaseAwareSummation,
+    'includeMagnitudeOnlyComparison': includeMagnitudeOnlyComparison,
+    'includeDriverPhaseCurves': includeDriverPhaseCurves,
+    'useAcousticOffsets': useAcousticOffsets,
     if (notes != null) 'notes': notes,
   };
 
@@ -256,6 +292,13 @@ class SimulationRunConfig {
         includeSummed: j['includeSummed'] as bool? ?? true,
         includePhasePlaceholder:
             j['includePhasePlaceholder'] as bool? ?? false,
+        includePhaseAwareSummation:
+            j['includePhaseAwareSummation'] as bool? ?? true,
+        includeMagnitudeOnlyComparison:
+            j['includeMagnitudeOnlyComparison'] as bool? ?? true,
+        includeDriverPhaseCurves:
+            j['includeDriverPhaseCurves'] as bool? ?? false,
+        useAcousticOffsets: j['useAcousticOffsets'] as bool? ?? false,
         notes: j['notes'] as String?,
       );
 }
@@ -283,9 +326,23 @@ class SimulationRunResult {
   bool get hasTargetCurve =>
       curves.any((c) => c.type == SimulationCurveType.target);
   bool get hasSummedCurve =>
-      curves.any((c) => c.type == SimulationCurveType.summed);
+      curves.any((c) => c.type == SimulationCurveType.summed ||
+          c.type == SimulationCurveType.summedPhaseAware ||
+          c.type == SimulationCurveType.summedMagnitudeOnly);
   bool get hasDriverCurves =>
       curves.any((c) => c.type == SimulationCurveType.driver);
+  bool get hasPhaseAwareCurve =>
+      curves.any((c) => c.type == SimulationCurveType.summedPhaseAware);
+  bool get hasMagnitudeOnlyCurve =>
+      curves.any((c) => c.type == SimulationCurveType.summedMagnitudeOnly ||
+          (c.type == SimulationCurveType.summed &&
+              c.status == SimulationCurveStatus.missingPhaseFallback));
+  int get importedFrdCurveCount =>
+      curves.where((c) => c.type == SimulationCurveType.driver &&
+          c.status == SimulationCurveStatus.imported).length;
+  int get placeholderDriverCurveCount =>
+      curves.where((c) => c.type == SimulationCurveType.driver &&
+          c.status != SimulationCurveStatus.imported).length;
   int get warningCount => warnings.length;
 
   Map<String, dynamic> toJson() => {

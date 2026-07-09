@@ -1,8 +1,9 @@
-// ── TUNAI PRO Phase M — Acoustic Simulation Engine (Draft) ───────────────────
+// ── TUNAI PRO Phase N — Acoustic Simulation Engine (Draft) ───────────────────
 // Generates draft frequency response preview curves from project state.
 // Uses imported FRD data when available; falls back to placeholder shapes.
-// Not final acoustic simulation. No hardware write. No DSP addresses.
-// Phase-aware summation is NOT implemented. Placeholder summation only.
+// Phase N: complex (phase-aware) summation using FRD phase + delay + polarity.
+// NOT final acoustic simulation. No hardware write. No DSP addresses.
+// Phase-accurate baffle/enclosure diffraction NOT implemented.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
 import 'dart:math' as math;
@@ -10,6 +11,8 @@ import 'pro_project.dart';
 import 'pro_acoustic_data.dart';
 import 'pro_simulation_data.dart';
 import 'pro_tuning_data.dart';
+
+// ── Public entry point ────────────────────────────────────────────────────────
 
 SimulationRunResult generateSimulationDraft({
   required ProProject project,
@@ -24,7 +27,6 @@ SimulationRunResult generateSimulationDraft({
       '${prefix}_${DateTime.now().millisecondsSinceEpoch}_${seq++}';
 
   // ── Validate frequency range ───────────────────────────────────────────────
-
   final warnings = <String>[];
   double minF = cfg.minFrequencyHz;
   double maxF = cfg.maxFrequencyHz;
@@ -38,26 +40,24 @@ SimulationRunResult generateSimulationDraft({
   }
 
   // ── Frequency grid: log-spaced ─────────────────────────────────────────────
-
   final freqs = _logGrid(minF, maxF, cfg.pointsPerOctave);
 
   // ── Curves ────────────────────────────────────────────────────────────────
-
   final curves = <SimulationCurve>[];
 
   // 1. Target curve
   if (cfg.includeTarget) {
-    final target = _buildTargetCurve(
-        nextId('curve'), acoustic.targetCurve, freqs);
-    curves.add(target);
+    curves.add(_buildTargetCurve(nextId('curve'), acoustic.targetCurve, freqs));
   }
 
   // 2. Per-driver curves — use imported FRD when available
   final driverCurves = <SimulationCurve>[];
   bool hasImportedFrd = false;
   bool hasPlaceholderDriver = false;
+
   if (cfg.includeDrivers) {
     for (final driver in acoustic.driverChannels) {
+      if (!driver.enabled) continue;
       final gainOffset = _channelGainDb(tuning, driver.id);
       if (driver.hasParsedFrd && driver.frdData != null) {
         hasImportedFrd = true;
@@ -65,8 +65,8 @@ SimulationRunResult generateSimulationDraft({
             nextId('curve'), driver, freqs, gainOffset));
       } else {
         hasPlaceholderDriver = true;
-        driverCurves.add(_buildDriverCurve(
-            nextId('curve'), driver, freqs, gainOffset));
+        driverCurves.add(
+            _buildDriverCurve(nextId('curve'), driver, freqs, gainOffset));
       }
     }
     if (acoustic.driverChannels.isEmpty) {
@@ -89,16 +89,111 @@ SimulationRunResult generateSimulationDraft({
     }
   }
 
-  // 3. Summed response
-  if (cfg.includeSummed) {
-    final summed = _buildSummedCurve(nextId('curve'), driverCurves, freqs);
-    curves.add(summed);
-    warnings.add(
-        'Summed response is a visual draft only. '
-        'Full acoustic phase-aware summation is not implemented.');
+  // 3. Driver phase trace curves
+  if (cfg.includeDriverPhaseCurves) {
+    for (final driver in acoustic.driverChannels) {
+      if (!driver.enabled) continue;
+      final frd = driver.frdData;
+      if (frd == null || !frd.hasPhase) continue;
+      final pts = freqs.map((f) {
+        final ph = _interpolatePhase(frd.points, f);
+        return SimulationPoint(frequencyHz: f, value: ph, phaseDeg: ph);
+      }).toList();
+      curves.add(SimulationCurve(
+        id: nextId('curve'),
+        label: '${driver.name} Phase',
+        type: SimulationCurveType.phaseTrace,
+        status: SimulationCurveStatus.imported,
+        scale: SimulationScale.phaseDeg,
+        channelId: driver.id,
+        points: pts,
+        warning: 'Phase unwrap is simplified in Phase N.',
+        notes: 'Source: ${frd.sourceFileName}',
+      ));
+    }
   }
 
-  // 4. Phase placeholder
+  // 4. Phase-aware summed response and magnitude-only comparison
+  final activeDriversWithPhase = acoustic.driverChannels
+      .where((d) => d.enabled && d.hasParsedFrd && d.frdData!.hasPhase)
+      .toList();
+  final canPhaseAware =
+      cfg.includePhaseAwareSummation && activeDriversWithPhase.length >= 2;
+
+  if (cfg.includePhaseAwareSummation || cfg.includeMagnitudeOnlyComparison) {
+    if (canPhaseAware) {
+      // Build phase-aware complex summation
+      final phaseAwareCurve = _buildPhaseAwareSummedCurve(
+        id: nextId('curve'),
+        drivers: activeDriversWithPhase,
+        tuning: tuning,
+        freqs: freqs,
+        useAcousticOffsets: cfg.useAcousticOffsets,
+      );
+      curves.add(phaseAwareCurve);
+
+      if (cfg.includeDriverPhaseCurves) {
+        // Phase trace of summed response
+        final phaseTracePts = freqs.asMap().entries.map((e) {
+          final f = e.value;
+          final pt = phaseAwareCurve.points[e.key];
+          return SimulationPoint(
+              frequencyHz: f, value: pt.phaseDeg ?? 0.0, phaseDeg: pt.phaseDeg);
+        }).toList();
+        curves.add(SimulationCurve(
+          id: nextId('curve'),
+          label: 'Summed Phase (Phase-aware Draft)',
+          type: SimulationCurveType.phaseTrace,
+          status: SimulationCurveStatus.phaseAwareDraft,
+          scale: SimulationScale.phaseDeg,
+          points: phaseTracePts,
+          warning: 'Summed phase is draft only. Phase-accurate verification required.',
+        ));
+      }
+
+      warnings.add(
+          'Phase-aware summation draft uses imported FRD phase, delay, and polarity. '
+          'Full acoustic verification is still required.');
+      if (cfg.useAcousticOffsets) {
+        warnings.add(
+            'Acoustic offset delays applied. Distance measured to listening axis.');
+      }
+    } else if (cfg.includePhaseAwareSummation) {
+      // Explain why we fell back
+      final missingPhaseCount = acoustic.driverChannels
+          .where((d) => d.enabled && d.hasParsedFrd && !d.frdData!.hasPhase)
+          .length;
+      final noFrdCount =
+          acoustic.driverChannels.where((d) => d.enabled && !d.hasParsedFrd).length;
+      warnings.add(
+          'Phase-aware summation requires FRD phase for all active drivers. '
+          'Magnitude-only fallback used.'
+          '${missingPhaseCount > 0 ? " ($missingPhaseCount driver(s) have FRD without phase.)" : ""}'
+          '${noFrdCount > 0 ? " ($noFrdCount driver(s) have no FRD.)" : ""}');
+    }
+
+    // Magnitude-only comparison (or sole summed if phase not available)
+    if (cfg.includeMagnitudeOnlyComparison || !canPhaseAware) {
+      final magOnlyCurve = _buildMagnitudeOnlySummedCurve(
+          nextId('curve'), driverCurves, freqs,
+          fallback: !canPhaseAware && cfg.includeSummed);
+      curves.add(magOnlyCurve);
+    }
+  } else if (cfg.includeSummed) {
+    // Legacy summed path (includeSummed flag, no phase config)
+    curves.add(_buildMagnitudeOnlySummedCurve(
+        nextId('curve'), driverCurves, freqs,
+        fallback: true));
+    if (!hasImportedFrd) {
+      warnings.add(
+          'Draft simulation. Placeholder response data — import FRD files to use measured data.');
+    } else {
+      warnings.add('Simulation uses imported FRD magnitude data. '
+          'Summed response is magnitude-only draft — full phase-aware summation not implemented.');
+    }
+  }
+
+  // 5. Phase placeholder (legacy)
   if (cfg.includePhasePlaceholder) {
     curves.add(SimulationCurve(
       id: nextId('curve'),
@@ -110,42 +205,35 @@ SimulationRunResult generateSimulationDraft({
           .map((f) => SimulationPoint(frequencyHz: f, value: 0.0))
           .toList(),
       warning: 'Phase placeholder — 0° across all frequencies. '
-          'Phase-aware summation not implemented.',
+          'Use imported FRD with phase for Phase-aware draft.',
     ));
-    warnings.add('Phase data is a flat placeholder — not acoustically valid.');
+    warnings.add('Phase placeholder is flat 0° — not acoustically valid.');
   }
 
-  // Standard warnings
-  if (!hasImportedFrd) {
-    warnings.add(
-        'Draft simulation. Placeholder response data — import FRD files to use measured data.');
-  } else {
-    warnings.add('Simulation uses imported FRD magnitude data. '
-        'Summed response is magnitude-only draft — full phase-aware summation not implemented.');
-  }
+  // Standard trailing warnings
   warnings.add(
-      'Simulation is draft-only and does not replace measured verification.');
+      'Simulation is draft-only and does not replace measured acoustic verification.');
 
   // ── Readiness ─────────────────────────────────────────────────────────────
+  final hasPhaseAware =
+      curves.any((c) => c.status == SimulationCurveStatus.phaseAwareDraft);
+  final hasImported =
+      curves.any((c) => c.status == SimulationCurveStatus.imported);
 
-  final readiness = curves.any(
-              (c) => c.status == SimulationCurveStatus.imported)
-      ? SimulationReadiness.estimated   // imported FRD = better than placeholder
-      : curves.any(
-              (c) => c.status == SimulationCurveStatus.calculatedDraft)
-          ? SimulationReadiness.calculatedDraft
-          : curves.any((c) =>
-                  c.status == SimulationCurveStatus.estimated)
-              ? SimulationReadiness.estimated
-              : curves.isNotEmpty
-                  ? SimulationReadiness.placeholderOnly
-                  : SimulationReadiness.noData;
+  final readiness = hasPhaseAware
+      ? SimulationReadiness.calculatedDraft
+      : hasImported
+          ? SimulationReadiness.estimated
+          : curves.isNotEmpty
+              ? SimulationReadiness.placeholderOnly
+              : SimulationReadiness.noData;
 
   final curveDescriptions = [
     if (cfg.includeTarget) 'target',
     if (cfg.includeDrivers)
-      '${acoustic.driverChannels.length} driver(s)',
-    if (cfg.includeSummed) 'summed',
+      '${acoustic.driverChannels.where((d) => d.enabled).length} driver(s)',
+    if (canPhaseAware) 'phase-aware summed',
+    if (cfg.includeMagnitudeOnlyComparison) 'mag-only ref',
     if (cfg.includePhasePlaceholder) 'phase placeholder',
   ];
 
@@ -155,8 +243,8 @@ SimulationRunResult generateSimulationDraft({
     curves: curves,
     warnings: warnings,
     readiness: readiness,
-    summary: 'Draft simulation: ${curveDescriptions.join(', ')}  '
-        '${freqs.length} frequency points  '
+    summary: 'Draft simulation: ${curveDescriptions.join(", ")}  '
+        '${freqs.length} pts  '
         '${minF.toStringAsFixed(0)}–${maxF.toStringAsFixed(0)} Hz',
   );
 }
@@ -174,13 +262,12 @@ List<double> _logGrid(double minF, double maxF, int ppo) {
     if (f > maxF * 1.001) break;
     result.add(f.clamp(minF, maxF));
   }
-  // Always include exact endpoints
   if (result.isEmpty || result.first > minF + 0.01) result.insert(0, minF);
   if (result.last < maxF - 0.01) result.add(maxF);
   return result;
 }
 
-/// Simple gain trim from channel control, or 0 dB.
+/// Gain trim from channel control, or 0 dB.
 double _channelGainDb(TuningProjectState tuning, String channelId) {
   try {
     final ctrl = tuning.channelControls
@@ -191,74 +278,78 @@ double _channelGainDb(TuningProjectState tuning, String channelId) {
   }
 }
 
+/// Delay in milliseconds from channel control, or 0.
+double _channelDelayMs(TuningProjectState tuning, String channelId) {
+  try {
+    final ctrl = tuning.channelControls
+        .firstWhere((c) => c.channelId == channelId);
+    return ctrl.delayMs;
+  } catch (_) {
+    return 0.0;
+  }
+}
+
+/// Polarity inversion from crossover channel state.
+bool _channelPolarityInverted(TuningProjectState tuning, String channelId) {
+  try {
+    final xo = tuning.crossoverChannels
+        .firstWhere((c) => c.channelId == channelId);
+    return xo.polarityInverted;
+  } catch (_) {
+    return false;
+  }
+}
+
 // ── Target curve builder ──────────────────────────────────────────────────────
 
 SimulationCurve _buildTargetCurve(
     String id, TargetCurveState targetState, List<double> freqs) {
   final preset = targetState.selectedPreset;
-
   List<SimulationPoint> points;
   String label;
-  String warning;
+  const String warning = 'Target curve is a draft placeholder.';
 
   switch (preset) {
     case TargetCurvePreset.flat:
       label = 'Target: Flat';
-      warning = 'Target curve is a draft placeholder.';
-      points = freqs
-          .map((f) => SimulationPoint(frequencyHz: f, value: 0.0))
-          .toList();
+      points = freqs.map((f) => SimulationPoint(frequencyHz: f, value: 0.0)).toList();
 
     case TargetCurvePreset.warm:
       label = 'Target: Warm';
-      warning = 'Target curve is a draft placeholder.';
-      // Gentle bass lift below 200 Hz, mild treble rolloff above 8 kHz
       points = freqs.map((f) {
         double db = 0.0;
         if (f < 200) {
-          db = 2.0 * (1.0 - f / 200.0); // up to +2 dB at 20 Hz
+          db = 2.0 * (1.0 - f / 200.0);
         } else if (f > 8000) {
-          db = -1.5 * math.log(f / 8000) / math.ln2; // gentle rolloff
+          db = -1.5 * math.log(f / 8000) / math.ln2;
         }
         return SimulationPoint(frequencyHz: f, value: db);
       }).toList();
 
     case TargetCurvePreset.studio:
       label = 'Target: Studio';
-      warning = 'Target curve is a draft placeholder.';
-      // Near-flat with slight HF rolloff above 10 kHz
       points = freqs.map((f) {
         double db = 0.0;
-        if (f > 10000) {
-          db = -1.0 * math.log(f / 10000) / math.ln2;
-        }
+        if (f > 10000) db = -1.0 * math.log(f / 10000) / math.ln2;
         return SimulationPoint(frequencyHz: f, value: db);
       }).toList();
 
     case TargetCurvePreset.nearfield:
       label = 'Target: Nearfield';
-      warning = 'Target curve is a draft placeholder.';
-      // Elevated presence region around 2–4 kHz
       points = freqs.map((f) {
         double db = 0.0;
         if (f >= 1500 && f <= 5000) {
           const center = 2800.0;
-          final x = (math.log(f / center) / math.ln2);
+          final x = math.log(f / center) / math.ln2;
           db = 1.5 * math.exp(-x * x * 2.0);
         }
-        if (f < 80) {
-          db -= 3.0 * (1.0 - f / 80.0);
-        }
+        if (f < 80) db -= 3.0 * (1.0 - f / 80.0);
         return SimulationPoint(frequencyHz: f, value: db);
       }).toList();
 
     case TargetCurvePreset.custom:
       label = 'Target: Custom';
-      warning =
-          'Custom target — using 0 dB placeholder. Import or define target curve.';
-      points = freqs
-          .map((f) => SimulationPoint(frequencyHz: f, value: 0.0))
-          .toList();
+      points = freqs.map((f) => SimulationPoint(frequencyHz: f, value: 0.0)).toList();
   }
 
   return SimulationCurve(
@@ -271,7 +362,60 @@ SimulationCurve _buildTargetCurve(
   );
 }
 
-// ── Driver curve builder ──────────────────────────────────────────────────────
+// ── Imported FRD curve builder ────────────────────────────────────────────────
+
+SimulationCurve _buildImportedFrdCurve(
+    String id, DriverChannel driver, List<double> freqs, double gainOffsetDb) {
+  final frd = driver.frdData!;
+  final srcPts = frd.points;
+  final extraWarnings = <String>[];
+
+  if (!frd.hasPhase) {
+    extraWarnings.add('FRD has no phase data — magnitude only.');
+  }
+  if (frd.pointCount < 20) {
+    extraWarnings.add(
+        'Sparse FRD data (${frd.pointCount} pts) — interpolation may be imprecise.');
+  }
+
+  final frdMinF = frd.minFrequencyHz;
+  final frdMaxF = frd.maxFrequencyHz;
+  bool outOfRange = false;
+
+  final points = freqs.map((f) {
+    double db;
+    if (f < frdMinF) {
+      db = (srcPts.first.magnitudeDb ?? 0.0) + gainOffsetDb;
+      outOfRange = true;
+    } else if (f > frdMaxF) {
+      db = (srcPts.last.magnitudeDb ?? 0.0) + gainOffsetDb;
+      outOfRange = true;
+    } else {
+      db = _interpolateMagnitude(srcPts, f) + gainOffsetDb;
+    }
+    return SimulationPoint(frequencyHz: f, value: db);
+  }).toList();
+
+  if (outOfRange) {
+    extraWarnings.add('Simulation range extends beyond FRD range '
+        '(${frd.freqRangeLabel}) — clamped at boundaries.');
+  }
+
+  return SimulationCurve(
+    id: id,
+    label: '${driver.name} (${driver.role.short}) [FRD]',
+    type: SimulationCurveType.driver,
+    status: SimulationCurveStatus.imported,
+    channelId: driver.id,
+    points: points,
+    warning: extraWarnings.isNotEmpty ? extraWarnings.join(' ') : null,
+    notes: 'Source: ${frd.sourceFileName}  ${frd.freqRangeLabel}  '
+        '${frd.pointCount} pts'
+        '${frd.hasPhase ? " mag+phase" : " mag only"}',
+  );
+}
+
+// ── Placeholder driver curve builder ─────────────────────────────────────────
 
 SimulationCurve _buildDriverCurve(
     String id, DriverChannel driver, List<double> freqs, double gainOffsetDb) {
@@ -288,154 +432,142 @@ SimulationCurve _buildDriverCurve(
     status: SimulationCurveStatus.placeholder,
     channelId: driver.id,
     points: points,
-    warning: 'Driver response uses placeholder data until FRD import is implemented.',
+    warning: 'Driver response uses placeholder shape until FRD import.',
     notes: 'Role: ${role.label}  Channel: ${driver.id}',
   );
 }
 
-/// Rough placeholder dB shape per driver role.
-/// All values are illustrative — not acoustically accurate.
+/// Rough illustrative placeholder dB per driver role.
 double _driverPlaceholderDb(DriverRole role, double f) {
   switch (role) {
     case DriverRole.woofer:
     case DriverRole.coaxWoofer:
-      // Broad LPF shape — flat below 800 Hz, rolls off above
       if (f <= 800) return 0.0;
       return -20.0 * math.log(f / 800) / math.log(10);
-
     case DriverRole.subwoofer:
-      // Very low pass — flat below 200 Hz
       if (f <= 200) return 0.0;
       return -24.0 * math.log(f / 200) / math.log(10);
-
     case DriverRole.tweeter:
     case DriverRole.coaxTweeter:
-      // HPF shape — flat above 2000 Hz, rolls off below
       if (f >= 2000) return 0.0;
       return -18.0 * math.log(2000 / f) / math.log(10);
-
     case DriverRole.midrange:
-      // Bandpass-ish — peaks 500–3000 Hz
       if (f < 200) return -18.0 * math.log(200 / f) / math.log(10);
       if (f > 3000) return -12.0 * math.log(f / 3000) / math.log(10);
       return 0.0;
-
     case DriverRole.fullrange:
     case DriverRole.passiveRadiator:
-      // Broad response with gentle roll-offs at extremes
       if (f < 60) return -12.0 * math.log(60 / f) / math.log(10);
       if (f > 12000) return -6.0 * math.log(f / 12000) / math.log(10);
       return 0.0;
-
     case DriverRole.unknown:
       return 0.0;
   }
 }
 
-// ── Imported FRD curve builder ────────────────────────────────────────────────
+// ── Phase-aware complex summation ─────────────────────────────────────────────
 
-SimulationCurve _buildImportedFrdCurve(
-    String id, DriverChannel driver, List<double> freqs, double gainOffsetDb) {
-  final frd = driver.frdData!;
-  final srcPts = frd.points;
+SimulationCurve _buildPhaseAwareSummedCurve({
+  required String id,
+  required List<DriverChannel> drivers,
+  required TuningProjectState tuning,
+  required List<double> freqs,
+  required bool useAcousticOffsets,
+}) {
+  final points = <SimulationPoint>[];
 
-  final warnings = <String>[];
-  if (!frd.hasPhase) {
-    warnings.add('FRD has no phase data — magnitude only.');
-  }
-  if (frd.pointCount < 20) {
-    warnings.add('Sparse FRD data (${frd.pointCount} points) — interpolation may be imprecise.');
-  }
+  for (final f in freqs) {
+    double sumReal = 0.0;
+    double sumImag = 0.0;
 
-  // Clamp note for out-of-range points
-  final frdMinF = frd.minFrequencyHz;
-  final frdMaxF = frd.maxFrequencyHz;
+    for (final driver in drivers) {
+      final frd = driver.frdData!;
+      final gainDb = _channelGainDb(tuning, driver.id);
+      final delayMs = _channelDelayMs(tuning, driver.id);
+      final polarity = _channelPolarityInverted(tuning, driver.id);
 
-  final points = freqs.map((f) {
-    double db;
-    if (f < frdMinF) {
-      // Clamp to first point value
-      db = (srcPts.first.magnitudeDb ?? 0.0) + gainOffsetDb;
-    } else if (f > frdMaxF) {
-      // Clamp to last point value
-      db = (srcPts.last.magnitudeDb ?? 0.0) + gainOffsetDb;
-    } else {
-      db = _interpolateMagnitude(srcPts, f) + gainOffsetDb;
+      // Magnitude
+      double magDb;
+      final frdMinF = frd.minFrequencyHz;
+      final frdMaxF = frd.maxFrequencyHz;
+      if (f < frdMinF) {
+        magDb = (frd.points.first.magnitudeDb ?? 0.0) + gainDb;
+      } else if (f > frdMaxF) {
+        magDb = (frd.points.last.magnitudeDb ?? 0.0) + gainDb;
+      } else {
+        magDb = _interpolateMagnitude(frd.points, f) + gainDb;
+      }
+      final magLinear = math.pow(10.0, magDb / 20.0).toDouble();
+
+      // Phase from FRD
+      double phaseDeg;
+      if (f < frdMinF) {
+        phaseDeg = frd.points.first.phaseDeg ?? 0.0;
+      } else if (f > frdMaxF) {
+        phaseDeg = frd.points.last.phaseDeg ?? 0.0;
+      } else {
+        phaseDeg = _interpolatePhase(frd.points, f);
+      }
+
+      // Polarity inversion = +180°
+      if (polarity) phaseDeg += 180.0;
+
+      // Delay phase shift: φ = -360° × f × delay_s
+      final delayS = delayMs / 1000.0;
+      phaseDeg += -360.0 * f * delayS;
+
+      // Acoustic offset path delay
+      if (useAcousticOffsets && driver.acousticOffset != null) {
+        final pathDelay = driver.acousticOffset!.pathDelaySeconds;
+        phaseDeg += -360.0 * f * pathDelay;
+      }
+
+      // Complex conversion
+      final phaseRad = phaseDeg * math.pi / 180.0;
+      sumReal += magLinear * math.cos(phaseRad);
+      sumImag += magLinear * math.sin(phaseRad);
     }
-    return SimulationPoint(frequencyHz: f, value: db);
-  }).toList();
 
-  final hasOutOfRange = freqs.first < frdMinF || freqs.last > frdMaxF;
-  if (hasOutOfRange) {
-    warnings.add('Simulation range extends beyond FRD range '
-        '(${frd.freqRangeLabel}) — clamped at boundaries.');
+    // Reconstruct magnitude and phase
+    final magnitude = math.sqrt(sumReal * sumReal + sumImag * sumImag);
+    final magDb = magnitude > 1e-12
+        ? 20.0 * math.log(magnitude) / math.ln10
+        : -120.0;
+    final phaseDeg = math.atan2(sumImag, sumReal) * 180.0 / math.pi;
+
+    points.add(SimulationPoint(
+        frequencyHz: f, value: magDb, phaseDeg: phaseDeg));
   }
 
   return SimulationCurve(
     id: id,
-    label: '${driver.name} (${driver.role.short}) [FRD]',
-    type: SimulationCurveType.driver,
-    status: SimulationCurveStatus.imported,
-    channelId: driver.id,
+    label: 'Summed phase-aware draft',
+    type: SimulationCurveType.summedPhaseAware,
+    status: SimulationCurveStatus.phaseAwareDraft,
     points: points,
-    warning: warnings.isNotEmpty ? warnings.join(' ') : null,
-    notes: 'Source: ${frd.sourceFileName}  ${frd.freqRangeLabel}  '
-        '${frd.pointCount} pts'
-        '${frd.hasPhase ? " mag+phase" : " mag only"}',
+    warning: 'Phase-aware summation draft — not final acoustic accuracy. '
+        'Phase unwrap is simplified in Phase N.',
+    notes: '${drivers.length} drivers  polarity+delay applied  '
+        '${useAcousticOffsets ? "acoustic offset: on" : "acoustic offset: off"}',
   );
 }
 
-/// Linear interpolation of FRD magnitude at frequency [f].
-/// Assumes [pts] is sorted ascending by frequencyHz.
-double _interpolateMagnitude(List<MeasurementDataPoint> pts, double f) {
-  if (pts.isEmpty) return 0.0;
-  if (pts.length == 1) return pts.first.magnitudeDb ?? 0.0;
+// ── Magnitude-only summed curve ───────────────────────────────────────────────
 
-  // Find surrounding points
-  int lo = 0;
-  int hi = pts.length - 1;
-  while (lo < hi - 1) {
-    final mid = (lo + hi) ~/ 2;
-    if (pts[mid].frequencyHz <= f) {
-      lo = mid;
-    } else {
-      hi = mid;
-    }
-  }
-
-  final f0 = pts[lo].frequencyHz;
-  final f1 = pts[hi].frequencyHz;
-  final m0 = pts[lo].magnitudeDb ?? 0.0;
-  final m1 = pts[hi].magnitudeDb ?? 0.0;
-
-  if (f1 <= f0) return m0;
-
-  // Linear interpolation on log-frequency axis
-  final t = (math.log(f / f0)) / (math.log(f1 / f0));
-  return m0 + (m1 - m0) * t.clamp(0.0, 1.0);
-}
-
-// ── Summed curve builder ──────────────────────────────────────────────────────
-
-SimulationCurve _buildSummedCurve(
-    String id, List<SimulationCurve> driverCurves, List<double> freqs) {
+SimulationCurve _buildMagnitudeOnlySummedCurve(
+    String id, List<SimulationCurve> driverCurves, List<double> freqs,
+    {bool fallback = false}) {
   if (driverCurves.isEmpty || driverCurves.every((c) => c.points.isEmpty)) {
     return SimulationCurve(
       id: id,
-      label: 'Summed Response (Placeholder)',
-      type: SimulationCurveType.summed,
-      status: SimulationCurveStatus.placeholder,
-      points: freqs
-          .map((f) => SimulationPoint(frequencyHz: f, value: 0.0))
-          .toList(),
-      warning:
-          'Summed response is a visual draft only. '
-          'Full acoustic phase-aware summation is not implemented.',
+      label: 'Summed magnitude-only reference',
+      type: SimulationCurveType.summedMagnitudeOnly,
+      status: SimulationCurveStatus.missingPhaseFallback,
+      points: freqs.map((f) => SimulationPoint(frequencyHz: f, value: 0.0)).toList(),
+      warning: 'No driver curves available for summation.',
     );
   }
 
-  // Power-sum approximation: 10 * log10(sum of linear power per curve)
-  // This is a rough conservative placeholder — NOT phase-accurate.
   final points = <SimulationPoint>[];
   for (var i = 0; i < freqs.length; i++) {
     double powerSum = 0.0;
@@ -445,21 +577,73 @@ SimulationCurve _buildSummedCurve(
         powerSum += math.pow(10.0, db / 10.0);
       }
     }
-    final sumDb = powerSum > 0
-        ? 10.0 * math.log(powerSum) / math.ln10
-        : -60.0;
+    final sumDb =
+        powerSum > 0 ? 10.0 * math.log(powerSum) / math.ln10 : -60.0;
     points.add(SimulationPoint(frequencyHz: freqs[i], value: sumDb));
   }
 
   return SimulationCurve(
     id: id,
-    label: 'Summed Response (Draft)',
-    type: SimulationCurveType.summed,
-    status: SimulationCurveStatus.placeholder,
+    label: fallback
+        ? 'Summed response (Mag-only draft)'
+        : 'Summed magnitude-only reference',
+    type: SimulationCurveType.summedMagnitudeOnly,
+    status: fallback
+        ? SimulationCurveStatus.missingPhaseFallback
+        : SimulationCurveStatus.placeholder,
     points: points,
-    warning:
-        'Summed response is a visual draft only. '
-        'Full acoustic phase-aware summation is not implemented.',
+    warning: 'Magnitude-only comparison ignores phase cancellation and reinforcement.',
     notes: 'Power-sum approximation — not phase-accurate.',
   );
+}
+
+// ── Interpolation ─────────────────────────────────────────────────────────────
+
+/// Log-frequency linear interpolation of FRD magnitude at [f].
+/// Assumes [pts] is sorted ascending by frequencyHz.
+double _interpolateMagnitude(List<MeasurementDataPoint> pts, double f) {
+  if (pts.isEmpty) return 0.0;
+  if (pts.length == 1) return pts.first.magnitudeDb ?? 0.0;
+  final bounds = _findBounds(pts, f);
+  final lo = bounds.$1;
+  final hi = bounds.$2;
+  final f0 = pts[lo].frequencyHz;
+  final f1 = pts[hi].frequencyHz;
+  final m0 = pts[lo].magnitudeDb ?? 0.0;
+  final m1 = pts[hi].magnitudeDb ?? 0.0;
+  if (f1 <= f0) return m0;
+  final t = f0 > 0 && f1 > 0
+      ? (math.log(f / f0)) / (math.log(f1 / f0))
+      : (f - f0) / (f1 - f0);
+  return m0 + (m1 - m0) * t.clamp(0.0, 1.0);
+}
+
+/// Log-frequency linear interpolation of FRD phase at [f].
+/// Simple continuous interpolation — no phase unwrap in Phase N.
+double _interpolatePhase(List<MeasurementDataPoint> pts, double f) {
+  if (pts.isEmpty) return 0.0;
+  if (pts.length == 1) return pts.first.phaseDeg ?? 0.0;
+  final bounds = _findBounds(pts, f);
+  final lo = bounds.$1;
+  final hi = bounds.$2;
+  final f0 = pts[lo].frequencyHz;
+  final f1 = pts[hi].frequencyHz;
+  final p0 = pts[lo].phaseDeg ?? 0.0;
+  final p1 = pts[hi].phaseDeg ?? 0.0;
+  if (f1 <= f0) return p0;
+  final t = f0 > 0 && f1 > 0
+      ? (math.log(f / f0)) / (math.log(f1 / f0))
+      : (f - f0) / (f1 - f0);
+  return p0 + (p1 - p0) * t.clamp(0.0, 1.0);
+}
+
+/// Binary search: returns indices of the two surrounding points for [f].
+(int, int) _findBounds(List<MeasurementDataPoint> pts, double f) {
+  int lo = 0;
+  int hi = pts.length - 1;
+  while (lo < hi - 1) {
+    final mid = (lo + hi) ~/ 2;
+    if (pts[mid].frequencyHz <= f) { lo = mid; } else { hi = mid; }
+  }
+  return (lo, hi);
 }
