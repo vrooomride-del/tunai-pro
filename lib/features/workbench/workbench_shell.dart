@@ -27,31 +27,33 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
   }
 
   static const _tabs = [
-    _TabDef('Project',    Icons.folder_outlined),
-    _TabDef('Measure',    Icons.mic_none_outlined),
-    _TabDef('Import',     Icons.folder_open_outlined),
-    _TabDef('PEQ',        Icons.tune_outlined),
-    _TabDef('XO',         Icons.device_hub_outlined),
-    _TabDef('Phase',      Icons.timeline_outlined),
-    _TabDef('Delay',      Icons.access_time_outlined),
-    _TabDef('Gain',       Icons.bar_chart_outlined),
-    _TabDef('Protection', Icons.verified_user_outlined),
-    _TabDef('Target',     Icons.track_changes_outlined),
-    _TabDef('Export',     Icons.upload_outlined),
-    _TabDef('Report',     Icons.summarize_outlined),
+    _TabDef('Project',   Icons.folder_outlined),
+    _TabDef('Measure',   Icons.mic_none_outlined),
+    _TabDef('Import',    Icons.folder_open_outlined),
+    _TabDef('Target',    Icons.track_changes_outlined),
+    _TabDef('Optimizer', Icons.auto_awesome_outlined),
+    _TabDef('PEQ',       Icons.tune_outlined),
+    _TabDef('XO',        Icons.device_hub_outlined),
+    _TabDef('Phase',     Icons.timeline_outlined),
+    _TabDef('Delay',     Icons.access_time_outlined),
+    _TabDef('Gain',      Icons.bar_chart_outlined),
+    _TabDef('Protection',Icons.verified_user_outlined),
+    _TabDef('Export',    Icons.upload_outlined),
+    _TabDef('Report',    Icons.summarize_outlined),
   ];
 
   List<Widget> _screens(String projectId) => [
     ProjectTab(projectId: projectId),
     MeasureTab(projectId: projectId),
     ImportTab(projectId: projectId),
+    TargetTab(projectId: projectId),
+    OptimizerTab(projectId: projectId),
     PeqTab(projectId: projectId),
     XoTab(projectId: projectId),
     PhaseTab(projectId: projectId),
     DelayTab(projectId: projectId),
     GainTab(projectId: projectId),
     ProtectionTab(projectId: projectId),
-    TargetTab(projectId: projectId),
     ExportTab(projectId: projectId),
     ReportTab(projectId: projectId),
   ];
@@ -181,7 +183,7 @@ class _Sidebar extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-          child: Text('TUNAI PRO · Phase F', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
+          child: Text('TUNAI PRO · Phase G', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
         ),
       ]),
     );

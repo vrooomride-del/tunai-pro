@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'pro_acoustic_data.dart';
 import 'pro_tuning_data.dart';
 import 'pro_protection_data.dart';
+import 'pro_optimizer_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 enum SafetyStatus { notVerified, verified, warning, blocked }
@@ -68,6 +69,7 @@ class ProProject {
   final MeasurementProjectState acousticState;
   final TuningProjectState tuningState;
   final ProtectionProjectState protectionState;
+  final OptimizerProjectState optimizerState;
 
   ProProject({
     required this.id,
@@ -88,9 +90,11 @@ class ProProject {
     MeasurementProjectState? acousticState,
     TuningProjectState? tuningState,
     ProtectionProjectState? protectionState,
+    OptimizerProjectState? optimizerState,
   }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
        tuningState = tuningState ?? TuningProjectState.createDefault(),
-       protectionState = protectionState ?? ProtectionProjectState.createDefault();
+       protectionState = protectionState ?? ProtectionProjectState.createDefault(),
+       optimizerState = optimizerState ?? OptimizerProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -131,6 +135,7 @@ class ProProject {
     MeasurementProjectState? acousticState,
     TuningProjectState? tuningState,
     ProtectionProjectState? protectionState,
+    OptimizerProjectState? optimizerState,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -150,6 +155,7 @@ class ProProject {
     acousticState: acousticState ?? this.acousticState,
     tuningState: tuningState ?? this.tuningState,
     protectionState: protectionState ?? this.protectionState,
+    optimizerState: optimizerState ?? this.optimizerState,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -176,6 +182,7 @@ class ProProject {
     'acousticState': acousticState.toJson(),
     'tuningState': tuningState.toJson(),
     'protectionState': protectionState.toJson(),
+    'optimizerState': optimizerState.toJson(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -202,6 +209,9 @@ class ProProject {
         : null,
     protectionState: j['protectionState'] != null
         ? ProtectionProjectState.fromJson(Map<String, dynamic>.from(j['protectionState'] as Map))
+        : null,
+    optimizerState: j['optimizerState'] != null
+        ? OptimizerProjectState.fromJson(Map<String, dynamic>.from(j['optimizerState'] as Map))
         : null,
   );
 

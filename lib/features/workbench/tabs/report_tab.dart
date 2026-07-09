@@ -7,6 +7,7 @@ import '../../../core/pro_measurement_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../core/pro_protection_data.dart';
+import '../../../core/pro_optimizer_data.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -71,6 +72,12 @@ class ReportTab extends ConsumerWidget {
             tuning: project.tuningState,
             acoustic: project.acousticState,
           ),
+          const SizedBox(height: 16),
+        ],
+
+        // Phase G: Optimizer readiness
+        if (project != null) ...[
+          _OptimizerReadinessCard(optimizer: project.optimizerState),
           const SizedBox(height: 16),
         ],
 
@@ -535,6 +542,109 @@ class _ProtectionReadinessCard extends StatelessWidget {
     child: Row(children: [
       SizedBox(width: 130, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
       Text(value, style: proValue(size: 11, color: Colors.white60)),
+    ]),
+  );
+}
+
+// ── Phase G: Optimizer Readiness Card ─────────────────────────────────────────
+
+class _OptimizerReadinessCard extends StatelessWidget {
+  final OptimizerProjectState optimizer;
+  const _OptimizerReadinessCard({required this.optimizer});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasRuns = optimizer.runs.isNotEmpty;
+    final activeRun = optimizer.activeRun;
+    final accepted = optimizer.acceptedSuggestionCount;
+    final pending = optimizer.pendingSuggestionCount;
+    final staleWarning = accepted > 0;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.auto_awesome_outlined,
+              color: kProAccent.withValues(alpha: 0.5), size: 13),
+          const SizedBox(width: 8),
+          Text('OPTIMIZER', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          Text(optimizer.readinessLabel,
+              style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
+        ]),
+        const SizedBox(height: 10),
+
+        if (!hasRuns)
+          Row(children: [
+            const Icon(Icons.info_outline, color: Colors.white24, size: 12),
+            const SizedBox(width: 8),
+            Text('No optimizer runs yet. Open Optimizer tab to generate draft suggestions.',
+                style: proSubtitle(size: 10)),
+          ])
+        else ...[
+          Wrap(spacing: 10, runSpacing: 8, children: [
+            _MiniChip(label: 'RUNS', value: '${optimizer.runs.length}'),
+            _MiniChip(label: 'PENDING', value: '$pending',
+                color: pending > 0 ? kProAmber : null),
+            _MiniChip(label: 'ACCEPTED', value: '$accepted',
+                color: accepted > 0 ? kProGreen : null),
+            _MiniChip(label: 'REJECTED', value: '${optimizer.rejectedSuggestionCount}'),
+            _MiniChip(label: 'LOCKED', value: '${optimizer.lockedSuggestionCount}'),
+          ]),
+          if (activeRun != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Last run: ${_formatDate(activeRun.createdAt)}  ·  ${activeRun.summary}',
+              style: proSubtitle(size: 9),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (staleWarning) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 11),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Accepted suggestions may require re-verification in Protection tab.',
+                  style: proSubtitle(size: 9, color: kProAmber.withValues(alpha: 0.8)),
+                ),
+              ),
+            ]),
+          ],
+        ],
+      ]),
+    );
+  }
+
+  String _formatDate(DateTime dt) =>
+      '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+}
+
+class _MiniChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? color;
+  const _MiniChip({required this.label, required this.value, this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    decoration: BoxDecoration(
+      color: kProBg,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: proLabel(size: 8, spacing: 1)),
+      const SizedBox(height: 2),
+      Text(value, style: proValue(size: 11, color: color ?? Colors.white54)),
     ]),
   );
 }

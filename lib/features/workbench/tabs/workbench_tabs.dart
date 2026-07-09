@@ -11,6 +11,7 @@ export 'delay_tab.dart';
 export 'phase_tab.dart';
 export 'protection_tab.dart';
 export 'export_tab.dart';
+export 'optimizer_tab.dart';
 
 // ── Individual Tab Widgets ────────────────────────────────────────────────────
 // All tabs have been moved to dedicated files (re-exported above).
