@@ -123,7 +123,7 @@ HardwareWritePlan generateHardwareWritePlan({
     description: 'Hardware write is disabled in Phase Q. '
         'This plan is for dry-run preview only.',
     recommendation: 'Enable only after USBi/BLE transport and SafeLoad guard '
-        'are implemented and verified in a later phase.',
+        'are planned for hardware deployment. Hardware write remains disabled until expert verification.',
   ));
 
   // ── Guard F: EEPROM/Selfboot forbidden ────────────────────────────────────

@@ -65,7 +65,7 @@ class ProtectionTab extends ConsumerWidget {
         ]),
         const SizedBox(height: 4),
         Text('Verification rules before optimization and export. '
-            'Hardware protection will be added later.',
+            'Hardware write remains disabled. Use the Hardware tab for dry-run planning.',
             style: proSubtitle()),
         const SizedBox(height: 20),
 

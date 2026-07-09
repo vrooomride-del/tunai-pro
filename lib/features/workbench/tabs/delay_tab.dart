@@ -87,7 +87,7 @@ class _DelayTabState extends ConsumerState<DelayTab> {
             ]),
             const SizedBox(height: 3),
             Text('Time alignment per driver channel. '
-                'Acoustic verification will be added later.',
+                'Acoustic impulse and delay alignment. Protection verification is available in the Protection tab.',
                 style: proSubtitle()),
             const SizedBox(height: 16),
 
@@ -116,7 +116,7 @@ class _DelayTabState extends ConsumerState<DelayTab> {
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   const Icon(Icons.timeline_outlined, color: Colors.white12, size: 20),
                   const SizedBox(height: 6),
-                  Text('Impulse and acoustic phase alignment preview — coming later',
+                  Text('Impulse and acoustic alignment preview — run Simulation to preview response curves',
                       style: proSubtitle(size: 9)),
                 ]),
               ),
@@ -311,15 +311,16 @@ class _DelayEditorState extends State<_DelayEditor> {
             ]),
           ),
           const SizedBox(width: 12),
-          // Step buttons
-          Wrap(spacing: 6, children: [
-            _SmallBtn(label: '−0.10', onTap: () => widget.onStep(-0.10)),
-            _SmallBtn(label: '−0.01', onTap: () => widget.onStep(-0.01)),
-            _SmallBtn(label: '+0.01', onTap: () => widget.onStep(0.01)),
-            _SmallBtn(label: '+0.10', onTap: () => widget.onStep(0.10)),
-          ]),
-          const SizedBox(width: 12),
-          _SmallBtn(label: 'Reset', onTap: widget.onReset, color: kProRed),
+          // Step buttons — Flexible prevents overflow in narrow columns
+          Flexible(
+            child: Wrap(spacing: 6, runSpacing: 4, children: [
+              _SmallBtn(label: '−0.10', onTap: () => widget.onStep(-0.10)),
+              _SmallBtn(label: '−0.01', onTap: () => widget.onStep(-0.01)),
+              _SmallBtn(label: '+0.01', onTap: () => widget.onStep(0.01)),
+              _SmallBtn(label: '+0.10', onTap: () => widget.onStep(0.10)),
+              _SmallBtn(label: 'Reset', onTap: widget.onReset, color: kProRed),
+            ]),
+          ),
         ]),
         const SizedBox(height: 10),
         Text(

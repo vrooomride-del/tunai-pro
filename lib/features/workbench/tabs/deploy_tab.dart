@@ -169,7 +169,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
               border: Border.all(color: kProAmber.withValues(alpha: 0.4)),
               borderRadius: BorderRadius.circular(3),
             ),
-            child: const Text('PHASE R',
+            child: const Text('DEPLOY',
                 style: TextStyle(
                     fontSize: 9,
                     color: kProAmber,

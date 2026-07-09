@@ -97,7 +97,7 @@ class _GainTabState extends ConsumerState<GainTab> {
             ]),
             const SizedBox(height: 3),
             Text('Channel level matching and output trim. '
-                'Hardware write will be added in a later phase.',
+                'Hardware write remains disabled. Use the Hardware tab for dry-run planning.',
                 style: proSubtitle()),
             const SizedBox(height: 16),
 
@@ -131,7 +131,7 @@ class _GainTabState extends ConsumerState<GainTab> {
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   const Icon(Icons.bar_chart_outlined, color: Colors.white12, size: 20),
                   const SizedBox(height: 6),
-                  Text('Level and headroom preview — coming in verification phase',
+                  Text('Level and headroom preview — protection verification is available in the Protection tab',
                       style: proSubtitle(size: 9)),
                 ]),
               ),
@@ -329,16 +329,18 @@ class _GainEditorState extends State<_GainEditor> {
           ]),
         ),
         const SizedBox(width: 12),
-        // Step buttons
-        Wrap(spacing: 6, children: [
-          _SmallBtn(label: '−1 dB',   onTap: () => widget.onStep(-1.0)),
-          _SmallBtn(label: '−0.5 dB', onTap: () => widget.onStep(-0.5)),
-          _SmallBtn(label: '+0.5 dB', onTap: () => widget.onStep(0.5)),
-          _SmallBtn(label: '+1 dB',   onTap: () => widget.onStep(1.0)),
-        ]),
-        const Spacer(),
-        Text('Range: −24 to +12 dB', style: proSubtitle(size: 9)),
+        // Step buttons — Flexible prevents overflow in narrow columns
+        Flexible(
+          child: Wrap(spacing: 6, runSpacing: 4, children: [
+            _SmallBtn(label: '−1 dB',   onTap: () => widget.onStep(-1.0)),
+            _SmallBtn(label: '−0.5 dB', onTap: () => widget.onStep(-0.5)),
+            _SmallBtn(label: '+0.5 dB', onTap: () => widget.onStep(0.5)),
+            _SmallBtn(label: '+1 dB',   onTap: () => widget.onStep(1.0)),
+          ]),
+        ),
       ]),
+      const SizedBox(height: 4),
+      Text('Range: −24 to +12 dB', style: proSubtitle(size: 9)),
     ]),
   );
 }

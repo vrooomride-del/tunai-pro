@@ -333,7 +333,7 @@ class _AcousticReadinessCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('MEASUREMENT READINESS (PHASE C)', style: proLabel(size: 9, spacing: 1.8)),
+      Text('MEASUREMENT READINESS', style: proLabel(size: 9, spacing: 1.8)),
       const SizedBox(height: 12),
       _row('Driver channels', '${acoustic.totalDrivers}'),
       _row('FRD imported', '${acoustic.importedFrdCount} / ${acoustic.totalDrivers}'),
@@ -399,7 +399,7 @@ class _MeasurementDataCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('MEASUREMENT DATA (PHASE M)', style: proLabel(size: 9, spacing: 1.8)),
+      Text('MEASUREMENT DATA', style: proLabel(size: 9, spacing: 1.8)),
       const SizedBox(height: 12),
       _row('Driver channels', '${acoustic.totalDrivers}'),
       _row('FRD parsed', '${acoustic.parsedFrdCount} / ${acoustic.totalDrivers}'),
@@ -470,7 +470,7 @@ class _TuningReadinessCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('TUNING READINESS (PHASE D)', style: proLabel(size: 9, spacing: 1.8)),
+      Text('TUNING READINESS', style: proLabel(size: 9, spacing: 1.8)),
       const SizedBox(height: 12),
       _row('PEQ channels', '${tuning.peqChannels.length}'),
       _row('Total PEQ bands', '${tuning.totalPeqBands}'),
@@ -535,7 +535,7 @@ class _ChannelControlReadinessCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('CHANNEL CONTROL READINESS (PHASE E)', style: proLabel(size: 9, spacing: 1.8)),
+      Text('CHANNEL CONTROL READINESS', style: proLabel(size: 9, spacing: 1.8)),
       const SizedBox(height: 12),
       _row('Channel controls', '${tuning.channelControls.length}'),
       _row('Gain trim channels', '${tuning.totalGainTrimChannels}'),
@@ -646,7 +646,7 @@ class _ImpedanceReadinessCard extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text('IMPEDANCE / LOAD READINESS (PHASE O)', style: proLabel(size: 9, spacing: 1.8)),
+          Text('IMPEDANCE / LOAD READINESS', style: proLabel(size: 9, spacing: 1.8)),
           const Spacer(),
           ProStatusPill(
             label: result.readinessLabel,
@@ -762,7 +762,7 @@ class _ProtectionReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('PROTECTION / VERIFICATION (PHASE F)',
+        Text('PROTECTION / VERIFICATION',
             style: proLabel(size: 9, spacing: 1.8)),
         const SizedBox(height: 12),
         _row('Active rules', '${protection.activeRuleCount}'),
@@ -1528,7 +1528,7 @@ class _HardwareReadinessCard extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'No hardware write is enabled in Phase Q.',
+          'Hardware write remains disabled. Use the Hardware tab for dry-run planning.',
           style: proSubtitle(size: 9),
         ),
       ]),

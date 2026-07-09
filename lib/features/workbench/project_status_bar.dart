@@ -28,44 +28,55 @@ class ProjectStatusBar extends ConsumerWidget {
         border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
       ),
       child: Row(children: [
-        const SizedBox(width: 16),
-        _StatusItem(label: 'PROJECT', value: name),
-        const _Div(),
-        _StatusItem(
-          label: 'DEVICE',
-          value: device,
-          valueColor: isConnected ? kProGreen : const Color(0xFF6B7280),
-        ),
-        const _Div(),
-        _StatusItem(label: 'SAMPLE RATE', value: sampleRate),
-        const _Div(),
-        _StatusItem(label: 'DSP TARGET', value: dspTarget),
-        const _Div(),
-        _StatusItem(
-          label: 'PROFILE',
-          value: profileLabel,
-          valueColor: _profileColor(project?.profileStatus),
-        ),
-        const _Div(),
-        _StatusItem(
-          label: 'SAFETY',
-          value: safetyLabel,
-          valueColor: _safetyColor(project?.safetyStatus),
-        ),
-        if (project != null && project.measurementCount > 0) ...[
-          const _Div(),
-          _StatusItem(
-            label: 'SESSIONS',
-            value: '${project.measurementCount}',
-            valueColor: kProGreen,
+        // Scrollable left section with project metadata
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              const SizedBox(width: 16),
+              _StatusItem(label: 'PROJECT', value: name, maxWidth: 140),
+              const _Div(),
+              _StatusItem(
+                label: 'DEVICE',
+                value: device,
+                valueColor: isConnected ? kProGreen : const Color(0xFF6B7280),
+              ),
+              const _Div(),
+              _StatusItem(label: 'SAMPLE RATE', value: sampleRate),
+              const _Div(),
+              _StatusItem(label: 'DSP TARGET', value: dspTarget, maxWidth: 100),
+              const _Div(),
+              _StatusItem(
+                label: 'PROFILE',
+                value: profileLabel,
+                valueColor: _profileColor(project?.profileStatus),
+              ),
+              const _Div(),
+              _StatusItem(
+                label: 'SAFETY',
+                value: safetyLabel,
+                valueColor: _safetyColor(project?.safetyStatus),
+                maxWidth: 110,
+              ),
+              if (project != null && project.measurementCount > 0) ...[
+                const _Div(),
+                _StatusItem(
+                  label: 'SESSIONS',
+                  value: '${project.measurementCount}',
+                  valueColor: kProGreen,
+                ),
+              ],
+              const SizedBox(width: 16),
+            ]),
           ),
-        ],
-        const Spacer(),
+        ),
+        // Fixed right safety badge — never overflows
         Padding(
           padding: const EdgeInsets.only(right: 16),
           child: Text(
-            'AI suggests · Expert verifies · AOS protects · DSP executes',
+            'AI suggests · Expert verifies · AOS protects',
             style: proLabel(size: 9, color: Colors.white24, spacing: 0.5),
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ]),
@@ -94,7 +105,8 @@ class _StatusItem extends StatelessWidget {
   final String label;
   final String value;
   final Color? valueColor;
-  const _StatusItem({required this.label, required this.value, this.valueColor});
+  final double? maxWidth;
+  const _StatusItem({required this.label, required this.value, this.valueColor, this.maxWidth});
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -102,7 +114,14 @@ class _StatusItem extends StatelessWidget {
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Text(label, style: proLabel(size: 9, spacing: 1)),
       const SizedBox(width: 6),
-      Text(value, style: proValue(size: 10, color: valueColor ?? Colors.white54)),
+      ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth ?? 200),
+        child: Text(
+          value,
+          style: proValue(size: 10, color: valueColor ?? Colors.white54),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
     ]),
   );
 }

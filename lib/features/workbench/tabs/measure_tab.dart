@@ -465,7 +465,7 @@ class _ReadinessCard extends StatelessWidget {
             const Icon(Icons.info_outline, color: kProAmber, size: 13),
             const SizedBox(width: 10),
             Expanded(child: Text(
-              'Real measurement capture will be connected in a later phase. Use "Simulate Capture" to test the workflow.',
+              'Measurement capture uses simulated data. Connect a measurement interface and import FRD/ZMA files in the Import tab.',
               style: proSubtitle(size: 10),
             )),
           ]),

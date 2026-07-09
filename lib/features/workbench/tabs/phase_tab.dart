@@ -94,7 +94,7 @@ class _PhaseTabState extends ConsumerState<PhaseTab> {
             ]),
             const SizedBox(height: 3),
             Text('Polarity and phase review per channel. '
-                'Full acoustic phase tools will be added later.',
+                'Polarity and phase correction per driver. Phase-aware simulation is available in the Simulation tab.',
                 style: proSubtitle()),
             const SizedBox(height: 16),
 
@@ -131,7 +131,7 @@ class _PhaseTabState extends ConsumerState<PhaseTab> {
                   const Icon(Icons.show_chart, color: Colors.white12, size: 20),
                   const SizedBox(height: 6),
                   Text('Phase trace and summed response preview — '
-                      'coming in optimizer phase',
+                      'available in the Simulation tab',
                       style: proSubtitle(size: 9)),
                 ]),
               ),

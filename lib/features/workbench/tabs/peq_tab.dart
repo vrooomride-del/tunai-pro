@@ -119,7 +119,7 @@ class _PeqTabState extends ConsumerState<PeqTab> {
                   style: proLabel(size: 9, color: Colors.white24, spacing: 1)),
             ]),
             const SizedBox(height: 3),
-            Text('Parametric correction per driver channel. Optimization will be added in a later phase.',
+            Text('Parametric correction per driver channel. Use the Optimizer tab for automated target matching.',
                 style: proSubtitle()),
             const SizedBox(height: 16),
 
@@ -273,7 +273,7 @@ class _GraphPlaceholder extends StatelessWidget {
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const Icon(Icons.show_chart, color: Colors.white12, size: 20),
         const SizedBox(height: 6),
-        Text('Magnitude response preview — coming in optimizer phase',
+        Text('Magnitude response preview — run Simulation to preview estimated response curves',
             style: proSubtitle(size: 9)),
       ]),
     ),

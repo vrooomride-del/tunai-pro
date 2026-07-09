@@ -85,7 +85,7 @@ class _XoTabState extends ConsumerState<XoTab> {
                   style: proLabel(size: 9, color: Colors.white24, spacing: 1)),
             ]),
             const SizedBox(height: 3),
-            Text('High-pass and low-pass structure per channel. DSP export will be added later.',
+            Text('High-pass and low-pass structure per channel. DSP export draft is available after protection verification.',
                 style: proSubtitle()),
             const SizedBox(height: 16),
 
@@ -151,7 +151,7 @@ class _XoTabState extends ConsumerState<XoTab> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Summed acoustic response and crossover optimization will be available in a later phase. '
+                    'Phase-aware simulation is available in the Simulation tab. '
                     'DSP export requires SigmaStudio address capture — not yet implemented.',
                     style: proSubtitle(size: 10),
                   ),
@@ -524,7 +524,7 @@ class _XoGraphPlaceholder extends StatelessWidget {
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const Icon(Icons.show_chart, color: Colors.white12, size: 20),
         const SizedBox(height: 6),
-        Text('Summed acoustic response preview — coming in optimizer phase',
+        Text('Summed acoustic response preview — available in the Simulation tab',
             style: proSubtitle(size: 9)),
       ]),
     ),

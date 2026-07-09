@@ -70,7 +70,7 @@ class AnalyzeTab extends ConsumerWidget {
             icon: Icons.show_chart_outlined,
             status: acceptedPoints.length >= 2 ? 'Ready' : 'Partial',
             statusColor: acceptedPoints.length >= 2 ? kProGreen : kProAmber,
-            placeholder: 'FR analysis engine will be connected in a later phase.',
+            placeholder: 'FR analysis is available after importing FRD measurements.',
           ),
           const SizedBox(height: 10),
           const _AnalysisCard(
@@ -79,7 +79,7 @@ class AnalyzeTab extends ConsumerWidget {
             icon: Icons.home_outlined,
             status: 'Placeholder',
             statusColor: Color(0xFF6B7280),
-            placeholder: 'Room analysis engine will be connected in a later phase.',
+            placeholder: 'Room correction data is loaded from imported measurements.',
           ),
           const SizedBox(height: 10),
           const _AnalysisCard(
@@ -88,7 +88,7 @@ class AnalyzeTab extends ConsumerWidget {
             icon: Icons.balance_outlined,
             status: 'Placeholder',
             statusColor: Color(0xFF6B7280),
-            placeholder: 'Channel analysis engine will be connected in a later phase.',
+            placeholder: 'Channel comparison is available after all driver measurements are imported.',
           ),
           const SizedBox(height: 10),
           _AnalysisCard(
@@ -250,7 +250,7 @@ class _PlaceholderNotice extends StatelessWidget {
       const Icon(Icons.hourglass_empty_outlined, color: Colors.white24, size: 13),
       const SizedBox(width: 10),
       Expanded(child: Text(
-        'Full acoustic analysis engine will be connected in a later phase. '
+        'Import FRD and ZMA files in the Import tab, then run Simulation for response preview. '
         'AI suggestions will require expert verification before tuning proceeds.',
         style: proSubtitle(size: 10),
       )),
