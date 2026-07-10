@@ -148,6 +148,9 @@ class ReportTab extends ConsumerWidget {
 
           const _TransportCommandReadinessCard(),
           const SizedBox(height: 16),
+
+          const _UsbiExecutorReadinessCard(),
+          const SizedBox(height: 16),
         ],
 
         // Measurement summary
@@ -1946,6 +1949,59 @@ class _TRStatRow extends StatelessWidget {
       Expanded(
         child: Text(value,
             style: const TextStyle(fontSize: 9, color: Colors.white60)),
+      ),
+    ]),
+  );
+}
+
+// ── Phase T4A: USBi Executor Readiness Card ───────────────────────────────────
+
+class _UsbiExecutorReadinessCard extends StatelessWidget {
+  const _UsbiExecutorReadinessCard();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.usb_outlined, size: 13, color: Colors.white38),
+        const SizedBox(width: 7),
+        Text('USBi Temporary Executor Readiness', style: proLabel()),
+      ]),
+      const SizedBox(height: 10),
+
+      _TRStatRow('Executor Phase',     'T4A — USBi Temporary'),
+      _TRStatRow('Transport',          'usbiWindowsTemporary (Windows only)'),
+      _TRStatRow('Write Scope',        'Master Volume L (0x0067) / R (0x0064)'),
+      _TRStatRow('Native Backend',     'Pending — not implemented'),
+      _TRStatRow('wasActualWrite',     'false by default; true only if ACK confirmed'),
+      _TRStatRow('Guard Count',        'D1 Platform / D2 Transport / D3-D4 Address / D5 Value / D6 Confirm / D7 Backend'),
+      _TRStatRow('Packet Format',      'Setup [40 B2 00 00 01 01 06 00] + Body [addr 2B + data 4B BE]'),
+      _TRStatRow('ACK Format',         '[C0 B5 00 00 00 00 01 00] — byte 6 = 0x01 = success'),
+      _TRStatRow('EEPROM / Selfboot',  'BLOCKED — forever'),
+      _TRStatRow('SafeLoad',           'BLOCKED — forever in T4A'),
+      _TRStatRow('Write-All',          'BLOCKED — not in scope'),
+      _TRStatRow('Final Transport',    'ICP5 — not yet implemented'),
+
+      const SizedBox(height: 10),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.06),
+          border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: const Text(
+          'Phase T4A USBi executor is blocked until native write backend is '
+          'implemented. All 7 guards must pass. wasActualWrite is false by '
+          'default. USBi is temporary — ICP5 is the final transport.',
+          style: TextStyle(fontSize: 9, color: Colors.orange),
+        ),
       ),
     ]),
   );

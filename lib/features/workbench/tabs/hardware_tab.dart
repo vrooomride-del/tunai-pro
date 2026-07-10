@@ -22,6 +22,8 @@ import '../../../core/pro_address_validation_data.dart';
 import '../../../core/pro_address_validation_engine.dart';
 import '../../../core/pro_transport_command_data.dart';
 import '../../../core/pro_transport_command_engine.dart';
+import '../../../core/pro_usbi_executor_data.dart';
+import '../../../core/pro_usbi_temporary_executor.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -49,6 +51,12 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   String _commandSide = 'L';
   double _commandValue = 1.0;
   TransportCommandEnvelope? _commandEnvelope;
+
+  // ── Phase T4A: USBi Temporary Executor state ────────────────────────────
+  final _usbiExecutor = ProUsbiTemporaryExecutor.disabled();
+  bool _executingUsbi = false;
+  bool _usbiUserConfirmed = false;
+  UsbiExecutionResult? _lastUsbiResult;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
   bool _checkingTransport = false;
@@ -474,6 +482,39 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           }),
           onGenerate:      _generateTransportCommand,
         ),
+
+        // ── L: USBi Temporary Master Volume Executor (Phase T4A) ────────
+        if (_commandEnvelope != null &&
+            _usbiExecutor.isEnvelopeEligible(_commandEnvelope!)) ...[
+          const SizedBox(height: 20),
+          const _SectionHeader(
+              'USBI TEMPORARY MASTER VOLUME EXECUTOR', Icons.usb_outlined),
+          const SizedBox(height: 8),
+          _UsbiTemporaryExecutorPanel(
+            envelope:         _commandEnvelope!,
+            executor:         _usbiExecutor,
+            userConfirmed:    _usbiUserConfirmed,
+            executing:        _executingUsbi,
+            lastResult:       _lastUsbiResult,
+            onConfirmChanged: (v) => setState(() {
+              _usbiUserConfirmed = v;
+              _lastUsbiResult    = null;
+            }),
+            onExecute: () async {
+              if (!_usbiUserConfirmed || _executingUsbi) return;
+              setState(() => _executingUsbi = true);
+              final req = _usbiExecutor.buildRequest(
+                envelope:      _commandEnvelope!,
+                userConfirmed: _usbiUserConfirmed,
+              );
+              final result = await _usbiExecutor.execute(req);
+              if (mounted) setState(() {
+                _executingUsbi  = false;
+                _lastUsbiResult = result;
+              });
+            },
+          ),
+        ],
 
         // Hardware write disabled notice (always shown)
         const SizedBox(height: 8),
@@ -2543,6 +2584,219 @@ class _CommandEnvelopeCard extends StatelessWidget {
       ],
     ]),
   );
+}
+
+// ── Phase T4A: USBi Temporary Executor Panel ──────────────────────────────────
+
+class _UsbiTemporaryExecutorPanel extends StatelessWidget {
+  final TransportCommandEnvelope envelope;
+  final ProUsbiTemporaryExecutor executor;
+  final bool userConfirmed;
+  final bool executing;
+  final UsbiExecutionResult? lastResult;
+  final ValueChanged<bool> onConfirmChanged;
+  final VoidCallback onExecute;
+
+  const _UsbiTemporaryExecutorPanel({
+    required this.envelope,
+    required this.executor,
+    required this.userConfirmed,
+    required this.executing,
+    required this.lastResult,
+    required this.onConfirmChanged,
+    required this.onExecute,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final backendAvailable = executor.backend.isAvailable;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A2E),
+        border: Border.all(color: const Color(0xFF3A3A5C)),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Warning banner
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.08),
+            border: Border.all(color: Colors.orange.withValues(alpha: 0.30)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.warning_amber_outlined, color: Colors.orange, size: 12),
+            const SizedBox(width: 6),
+            const Expanded(
+              child: Text(
+                'PHASE T4A — USBi Temporary Engineering Path. '
+                'ADAU1466 Master Volume L/R ONLY. '
+                'Volatile write — no EEPROM, no Selfboot, no SafeLoad. '
+                'USBi is temporary. ICP5 is the final transport target.',
+                style: TextStyle(fontSize: 8, color: Colors.orange),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 10),
+
+        // Envelope summary
+        _CmdRow('Parameter',   envelope.logicalName),
+        _CmdRow('Address',     envelope.addressHex),
+        if (envelope.valueFloat != null)
+          _CmdRow('Float Value', envelope.valueFloat!.toStringAsFixed(4)),
+        if (envelope.fixedPointHex != null)
+          _CmdRow('Fixed 8.24',  envelope.fixedPointHex!),
+        _CmdRow('Write Mode',  envelope.writeMode.label),
+        const SizedBox(height: 8),
+
+        // Backend status row
+        Row(children: [
+          Text('Native Backend', style: const TextStyle(fontSize: 9, color: Colors.white38)),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: (backendAvailable ? Colors.greenAccent : Colors.orange)
+                  .withValues(alpha: 0.1),
+              border: Border.all(
+                color: (backendAvailable ? Colors.greenAccent : Colors.orange)
+                    .withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(
+              backendAvailable ? 'Available' : 'Pending — not implemented',
+              style: TextStyle(
+                fontSize: 8,
+                color: backendAvailable ? Colors.greenAccent : Colors.orange,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
+
+        // Confirm checkbox
+        Row(children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: Checkbox(
+              value:         userConfirmed,
+              onChanged:     backendAvailable ? (v) => onConfirmChanged(v ?? false) : null,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              activeColor:   Colors.orange,
+              side: const BorderSide(color: Colors.white30),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'I confirm this is a controlled volatile Master Volume write. '
+              'No EEPROM. No Selfboot. Expert has verified this address.',
+              style: TextStyle(fontSize: 9, color: Colors.white60),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
+
+        // Execute button
+        SizedBox(
+          width: double.infinity,
+          height: 32,
+          child: ElevatedButton.icon(
+            onPressed: (backendAvailable && userConfirmed && !executing)
+                ? onExecute
+                : null,
+            icon: executing
+                ? const SizedBox(
+                    width: 12, height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white))
+                : const Icon(Icons.send_outlined, size: 13),
+            label: Text(
+              executing
+                  ? 'Sending...'
+                  : backendAvailable
+                      ? 'Send USBi Packet'
+                      : 'USBi native write backend pending',
+              style: const TextStyle(fontSize: 10),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: (backendAvailable && userConfirmed && !executing)
+                  ? Colors.orange.withValues(alpha: 0.75)
+                  : Colors.white10,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4)),
+            ),
+          ),
+        ),
+
+        // Last result
+        if (lastResult != null) ...[
+          const SizedBox(height: 10),
+          _UsbiResultCard(result: lastResult!),
+        ],
+      ]),
+    );
+  }
+}
+
+class _UsbiResultCard extends StatelessWidget {
+  final UsbiExecutionResult result;
+  const _UsbiResultCard({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final isSuccess = result.status.isSuccess;
+    final borderColor = isSuccess ? Colors.greenAccent : Colors.redAccent;
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: borderColor.withValues(alpha: 0.05),
+        border: Border.all(color: borderColor.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(
+            isSuccess ? Icons.check_circle_outline : Icons.error_outline,
+            size: 12,
+            color: borderColor,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'USBi Result: ${result.status.label}',
+            style: TextStyle(fontSize: 9, color: borderColor,
+                fontWeight: FontWeight.w600),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        _CmdRow('wasActualWrite', '${result.wasActualWrite}',
+            color: result.wasActualWrite ? Colors.orange : Colors.white38),
+        _CmdRow('ackReceived', '${result.ackReceived}',
+            color: result.ackReceived ? Colors.greenAccent : Colors.white38),
+        if (result.ackByteHex != null)
+          _CmdRow('ACK Bytes', result.ackByteHex!),
+        if (result.error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(result.error!,
+                style: const TextStyle(fontSize: 8, color: Colors.redAccent)),
+          ),
+        if (result.notes != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(result.notes!,
+                style: const TextStyle(fontSize: 8, color: Colors.white38)),
+          ),
+      ]),
+    );
+  }
 }
 
 class _CmdRow extends StatelessWidget {

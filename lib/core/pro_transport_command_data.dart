@@ -148,6 +148,18 @@ class TransportCommandEnvelope {
   /// True only for verified Master Volume L (0x0067) or R (0x0064) addresses.
   bool get isMasterVolumeCommand => isMasterVolumeAddress(addressInt);
 
+  /// True when this envelope meets the static eligibility criteria for the
+  /// Phase T4A USBi temporary executor:
+  ///   - isMasterVolumeCommand (address is 0x0067 or 0x0064)
+  ///   - status == dryRunReady
+  ///   - valueFloat is in [0.0, 1.0]
+  /// Does NOT check platform, transport selection, or user confirmation.
+  bool get eligibleForTemporaryUsbiExecution =>
+      isMasterVolumeCommand &&
+      status == TransportCommandStatus.dryRunReady &&
+      (valueFloat ?? -1.0) >= 0.0 &&
+      (valueFloat ?? 2.0) <= 1.0;
+
   // ── Serialisation ─────────────────────────────────────────────────────────
 
   Map<String, dynamic> toJson() => {
