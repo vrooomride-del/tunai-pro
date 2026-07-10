@@ -20,6 +20,8 @@ import '../../../core/pro_dsp_address_registry.dart';
 import '../../../core/pro_adau1466_3way_address_map_embedded.dart';
 import '../../../core/pro_address_validation_data.dart';
 import '../../../core/pro_address_validation_engine.dart';
+import '../../../core/pro_transport_command_data.dart';
+import '../../../core/pro_transport_command_engine.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -42,6 +44,11 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   bool _userConfirmed = false;
   bool _writing = false;
   HardwareWriteLog? _lastWriteLog;
+
+  // ── Phase T3: Transport Command Preview state ────────────────────────────
+  String _commandSide = 'L';
+  double _commandValue = 1.0;
+  TransportCommandEnvelope? _commandEnvelope;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
   bool _checkingTransport = false;
@@ -133,6 +140,17 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
 
   void _selectTransportBackend(HardwareTransportBackend backend) =>
       setState(() => _selectedTransport = backend);
+
+  void _generateTransportCommand() {
+    final registry = createTunaiAdau1466ThreeWayRegistry();
+    final envelope = createMasterVolumeCommand(
+      backend:      _selectedTransport,
+      side:         _commandSide,
+      linearValue:  _commandValue,
+      registry:     registry,
+    );
+    setState(() => _commandEnvelope = envelope);
+  }
 
   void _generateDryRun() {
     setState(() {
@@ -435,6 +453,26 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           onGenerateDryRun: _generateDryRun,
           onConfirmChanged: (v) => setState(() => _userConfirmed = v),
           onWrite:         _performWrite,
+        ),
+
+        // ── K: Transport Command Preview (Phase T3) ──────────────────────
+        const SizedBox(height: 20),
+        const _SectionHeader('TRANSPORT COMMAND PREVIEW', Icons.terminal_outlined),
+        const SizedBox(height: 8),
+        _TransportCommandPreviewPanel(
+          selectedBackend: _selectedTransport,
+          commandSide:     _commandSide,
+          commandValue:    _commandValue,
+          envelope:        _commandEnvelope,
+          onSideChanged:   (s) => setState(() {
+            _commandSide     = s;
+            _commandEnvelope = null;
+          }),
+          onValueChanged:  (v) => setState(() {
+            _commandValue    = v;
+            _commandEnvelope = null;
+          }),
+          onGenerate:      _generateTransportCommand,
         ),
 
         // Hardware write disabled notice (always shown)
@@ -2275,6 +2313,260 @@ class _TrRow extends StatelessWidget {
                 color: color ?? Colors.white60,
                 fontWeight:
                     color != null ? FontWeight.w500 : FontWeight.normal)),
+      ),
+    ]),
+  );
+}
+
+// ── Phase T3: Transport Command Preview Panel ─────────────────────────────────
+
+class _TransportCommandPreviewPanel extends StatelessWidget {
+  final HardwareTransportBackend selectedBackend;
+  final String commandSide;
+  final double commandValue;
+  final TransportCommandEnvelope? envelope;
+  final void Function(String) onSideChanged;
+  final void Function(double) onValueChanged;
+  final VoidCallback onGenerate;
+
+  const _TransportCommandPreviewPanel({
+    required this.selectedBackend,
+    required this.commandSide,
+    required this.commandValue,
+    required this.envelope,
+    required this.onSideChanged,
+    required this.onValueChanged,
+    required this.onGenerate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Transport context pill
+      Row(children: [
+        const Icon(Icons.compare_arrows_outlined, size: 11, color: Colors.white38),
+        const SizedBox(width: 5),
+        Text('Transport: ', style: proSubtitle(size: 9)),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+          decoration: BoxDecoration(
+            color: kProAccent.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(selectedBackend.label,
+              style: const TextStyle(fontSize: 9, color: kProAccent,
+                  fontWeight: FontWeight.w500)),
+        ),
+      ]),
+      const SizedBox(height: 12),
+
+      // L / R selector
+      Row(children: [
+        Text('Channel: ', style: proSubtitle(size: 9)),
+        const SizedBox(width: 8),
+        for (final side in ['L', 'R']) ...[
+          GestureDetector(
+            onTap: () => onSideChanged(side),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              margin: const EdgeInsets.only(right: 6),
+              decoration: BoxDecoration(
+                color: commandSide == side
+                    ? kProAccent.withValues(alpha: 0.12)
+                    : kProSurface,
+                border: Border.all(
+                    color: commandSide == side
+                        ? kProAccent.withValues(alpha: 0.5)
+                        : kProBorder),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                side == 'L' ? 'L  0x0067' : 'R  0x0064',
+                style: TextStyle(
+                    fontSize: 10,
+                    color: commandSide == side ? kProAccent : Colors.white38,
+                    fontFamily: 'monospace'),
+              ),
+            ),
+          ),
+        ],
+      ]),
+      const SizedBox(height: 12),
+
+      // Value presets
+      Row(children: [
+        Text('Preset: ', style: proSubtitle(size: 9)),
+        const SizedBox(width: 8),
+        for (final preset in [
+          (label: '1.0  Unity', value: 1.0),
+          (label: '0.5  −6 dB', value: 0.5),
+          (label: '0.0  Mute', value: 0.0),
+        ]) ...[
+          GestureDetector(
+            onTap: () => onValueChanged(preset.value),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              margin: const EdgeInsets.only(right: 6),
+              decoration: BoxDecoration(
+                color: (commandValue - preset.value).abs() < 0.001
+                    ? kProAccent.withValues(alpha: 0.1)
+                    : kProSurface,
+                border: Border.all(
+                    color: (commandValue - preset.value).abs() < 0.001
+                        ? kProAccent.withValues(alpha: 0.4)
+                        : kProBorder),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(preset.label,
+                  style: TextStyle(
+                      fontSize: 9,
+                      color: (commandValue - preset.value).abs() < 0.001
+                          ? kProAccent
+                          : Colors.white38,
+                      fontFamily: 'monospace')),
+            ),
+          ),
+        ],
+      ]),
+      const SizedBox(height: 6),
+      Text('Value: ${commandValue.toStringAsFixed(3)}',
+          style: proSubtitle(size: 9)),
+      const SizedBox(height: 12),
+
+      // Generate button — NO send/execute button
+      GestureDetector(
+        onTap: onGenerate,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: kProAccent.withValues(alpha: 0.08),
+            border: Border.all(color: kProAccent.withValues(alpha: 0.4)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.preview_outlined, size: 13, color: kProAccent),
+            const SizedBox(width: 7),
+            const Text('Generate Dry-Run Command',
+                style: TextStyle(fontSize: 11, color: kProAccent,
+                    fontWeight: FontWeight.w500)),
+          ]),
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text('No Send button. No Execute button. No hardware write.',
+          style: proSubtitle(size: 8)),
+
+      // Envelope preview card
+      if (envelope != null) ...[
+        const SizedBox(height: 12),
+        _CommandEnvelopeCard(envelope: envelope!),
+      ],
+    ]);
+  }
+}
+
+class _CommandEnvelopeCard extends StatelessWidget {
+  final TransportCommandEnvelope envelope;
+  const _CommandEnvelopeCard({required this.envelope});
+
+  Color get _statusColor => switch (envelope.status) {
+    TransportCommandStatus.dryRunReady    => kProAccent,
+    TransportCommandStatus.blocked        => Colors.redAccent,
+    TransportCommandStatus.failed         => Colors.redAccent,
+    TransportCommandStatus.transportDisabled => Colors.orange,
+    _ => Colors.white38,
+  };
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(
+          color: envelope.status == TransportCommandStatus.blocked
+              ? Colors.redAccent.withValues(alpha: 0.3)
+              : kProAccent.withValues(alpha: 0.2)),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Text('COMMAND ENVELOPE', style: proLabel(size: 9, spacing: 1.5)),
+        const Spacer(),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: _statusColor.withValues(alpha: 0.1),
+            border: Border.all(color: _statusColor.withValues(alpha: 0.3)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(envelope.status.label,
+              style: TextStyle(fontSize: 8, color: _statusColor,
+                  fontWeight: FontWeight.w600)),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      _CmdRow('Parameter',    envelope.logicalName),
+      _CmdRow('Address',      envelope.addressHex),
+      _CmdRow('Platform',     envelope.targetPlatform.label),
+      _CmdRow('Transport',    envelope.transportBackend.label),
+      if (envelope.valueFloat != null)
+        _CmdRow('Float Value',  envelope.valueFloat!.toStringAsFixed(4)),
+      if (envelope.fixedPointHex != null)
+        _CmdRow('Fixed 8.24',  envelope.fixedPointHex!),
+      if (envelope.fixedPointInt != null)
+        _CmdRow('Fixed Int',   '${envelope.fixedPointInt}'),
+      _CmdRow('Byte Order',   envelope.byteOrder),
+      _CmdRow('Write Mode',   envelope.writeMode.label),
+      _CmdRow('actualWriteAllowed', '${envelope.actualWriteAllowed}',
+          color: Colors.orange),
+      _CmdRow('isExecutableNow', '${envelope.isExecutableNow}',
+          color: Colors.orange),
+      _CmdRow('isDryRunOnly', '${envelope.isDryRunOnly}',
+          color: Colors.greenAccent),
+      _CmdRow('isMasterVolume', '${envelope.isMasterVolumeCommand}',
+          color: envelope.isMasterVolumeCommand ? Colors.greenAccent : Colors.redAccent),
+      if (envelope.blockedReason != null) ...[
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: Colors.redAccent.withValues(alpha: 0.07),
+            border: Border.all(color: Colors.redAccent.withValues(alpha: 0.25)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text('BLOCKED: ${envelope.blockedReason}',
+              style: const TextStyle(fontSize: 9, color: Colors.redAccent)),
+        ),
+      ] else if (envelope.notes != null) ...[
+        const SizedBox(height: 6),
+        Text(envelope.notes!, style: proSubtitle(size: 8)),
+      ],
+    ]),
+  );
+}
+
+class _CmdRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? color;
+  const _CmdRow(this.label, this.value, {this.color});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 3),
+    child: Row(children: [
+      SizedBox(
+        width: 140,
+        child: Text(label,
+            style: const TextStyle(fontSize: 9, color: Colors.white38)),
+      ),
+      Expanded(
+        child: Text(value,
+            style: TextStyle(
+                fontSize: 9,
+                color: color ?? Colors.white60,
+                fontFamily: 'monospace',
+                fontWeight: color != null ? FontWeight.w500 : FontWeight.normal)),
       ),
     ]),
   );

@@ -145,6 +145,9 @@ class ReportTab extends ConsumerWidget {
           _TransportReadinessCard(
               connectionState: project.hardwareState.connectionState),
           const SizedBox(height: 16),
+
+          const _TransportCommandReadinessCard(),
+          const SizedBox(height: 16),
         ],
 
         // Measurement summary
@@ -1943,6 +1946,58 @@ class _TRStatRow extends StatelessWidget {
       Expanded(
         child: Text(value,
             style: const TextStyle(fontSize: 9, color: Colors.white60)),
+      ),
+    ]),
+  );
+}
+
+// ── Phase T3: Transport Command Readiness Card ────────────────────────────────
+
+class _TransportCommandReadinessCard extends StatelessWidget {
+  const _TransportCommandReadinessCard();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.terminal_outlined, size: 13, color: Colors.white38),
+        const SizedBox(width: 7),
+        Text('Transport Command Readiness', style: proLabel()),
+      ]),
+      const SizedBox(height: 10),
+
+      _TRStatRow('Command Envelope',   'Available (dry-run only)'),
+      _TRStatRow('Supported Scope',
+          'Master Volume L (0x0067) / R (0x0064)'),
+      _TRStatRow('Executable Now',     'false — Phase T3 safety lock'),
+      _TRStatRow('Transport Write',    'false — Phase T3 safety lock'),
+      _TRStatRow('actualWriteAllowed', 'false — always'),
+      _TRStatRow('Fixed-Point Format', '8.24  (1.0 = 0x01000000)'),
+      _TRStatRow('Byte Order',         'Big-endian (MSB first)'),
+      _TRStatRow('Blocked Parameters',
+          'PEQ / XO / Gain / Mute / Delay / SafeLoad'),
+
+      const SizedBox(height: 10),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.orange.withValues(alpha: 0.06),
+          border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: const Text(
+          'Command envelope is dry-run only. '
+          'No hardware packet is generated. '
+          'No transport write is performed. '
+          'No USB, BLE, or ICP5 bytes are produced.',
+          style: TextStyle(fontSize: 9, color: Colors.orange),
+        ),
       ),
     ]),
   );
