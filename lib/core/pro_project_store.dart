@@ -9,6 +9,7 @@ import 'pro_export_data.dart';
 import 'pro_simulation_data.dart';
 import 'pro_hardware_connection_data.dart';
 import 'pro_deploy_package_data.dart';
+import 'pro_address_validation_data.dart';
 
 const _kProjectsKey = 'tunai_pro_projects';
 const _kCurrentIdKey = 'tunai_pro_current_project_id';
@@ -115,6 +116,7 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
       simulationState: original.simulationState,
       hardwareState: original.hardwareState,
       deployState: original.deployState,
+      addressValidationState: original.addressValidationState,
     );
     await addProject(dup);
     return dup;
@@ -184,6 +186,14 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     final project = state.projects.firstWhere((p) => p.id == id);
     await updateProject(
         project.copyWith(deployState: deployState, updatedAt: DateTime.now()));
+  }
+
+  Future<void> updateAddressValidationState(
+      String id, AddressValidationProjectState addressValidationState) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(project.copyWith(
+        addressValidationState: addressValidationState,
+        updatedAt: DateTime.now()));
   }
 }
 

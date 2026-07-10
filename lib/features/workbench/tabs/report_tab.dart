@@ -15,6 +15,7 @@ import '../../../core/pro_impedance_analysis.dart';
 import '../../../core/pro_dsp_address_registry.dart';
 import '../../../core/pro_sigma_mapping_data.dart';
 import '../../../core/pro_adau1466_3way_address_map_embedded.dart';
+import '../../../core/pro_address_validation_data.dart';
 import '../../../core/pro_hardware_connection_data.dart';
 import '../../../core/pro_deploy_package_data.dart';
 import '../../../shared/pro_widgets.dart';
@@ -135,6 +136,10 @@ class ReportTab extends ConsumerWidget {
           const SizedBox(height: 16),
 
           const _DspAddressMapReadinessCard(),
+          const SizedBox(height: 16),
+
+          _AddressValidationReadinessCard(
+              validationState: project.addressValidationState),
           const SizedBox(height: 16),
         ],
 
@@ -1718,4 +1723,107 @@ class _DspAddressMapReadinessCard extends StatelessWidget {
       ]),
     );
   }
+}
+
+// ── Phase U2: Address Validation Readiness Card ───────────────────────────────
+
+class _AddressValidationReadinessCard extends StatelessWidget {
+  final AddressValidationProjectState validationState;
+  const _AddressValidationReadinessCard({required this.validationState});
+
+  @override
+  Widget build(BuildContext context) {
+    final tasks = validationState.tasks;
+    final hasQueue = tasks.isNotEmpty;
+    final next = validationState.nextRecommendedGroup;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.task_alt_outlined, size: 13, color: Colors.white38),
+          const SizedBox(width: 7),
+          Text('Address Validation Readiness', style: proLabel()),
+        ]),
+        const SizedBox(height: 10),
+        if (!hasQueue) ...[
+          Text(
+            'Validation queue not generated. '
+            'Go to Hardware tab → Address Live Validation Manager → Generate Validation Queue.',
+            style: proSubtitle(size: 10),
+          ),
+        ] else ...[
+          _ValStatRow('Total tasks', '${tasks.length}'),
+          _ValStatRow('Verified', '${validationState.verifiedCount}',
+              color: Colors.greenAccent),
+          _ValStatRow('Failed', '${validationState.failedCount}',
+              color: validationState.failedCount > 0 ? Colors.redAccent : null),
+          _ValStatRow('Blocked', '${validationState.blockedCount}',
+              color: validationState.blockedCount > 0 ? Colors.orange : null),
+          _ValStatRow('High Risk', '${validationState.highRiskCount}',
+              color: validationState.highRiskCount > 0 ? Colors.purpleAccent : null),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(validationState.readinessLabel,
+                style: const TextStyle(fontSize: 10, color: Colors.white70)),
+          ),
+          if (next != null) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              Text('Next group: ', style: proSubtitle(size: 9)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: kProAccent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(next.label,
+                    style: const TextStyle(fontSize: 9, color: kProAccent,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ]),
+          ],
+        ],
+        const SizedBox(height: 8),
+        Text(
+          'Validation manager does not write hardware. '
+          'Expert review required before any address becomes write-eligible.',
+          style: proSubtitle(size: 9),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ValStatRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? color;
+  const _ValStatRow(this.label, this.value, {this.color});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 3),
+    child: Row(children: [
+      SizedBox(
+        width: 80,
+        child: Text(label,
+            style: const TextStyle(fontSize: 9, color: Colors.white38)),
+      ),
+      Text(value,
+          style: TextStyle(fontSize: 9,
+              color: color ?? Colors.white60,
+              fontWeight: color != null ? FontWeight.w600 : FontWeight.normal)),
+    ]),
+  );
 }
