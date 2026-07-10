@@ -11,6 +11,7 @@ import 'pro_protection_data.dart';
 import 'pro_hardware_connection_data.dart';
 import 'pro_dsp_address_registry.dart';
 import 'pro_sigma_mapping_data.dart';
+import 'pro_adau1466_3way_address_map_embedded.dart';
 
 HardwareWritePlan generateHardwareWritePlan({
   required ProProject project,
@@ -92,8 +93,10 @@ HardwareWritePlan generateHardwareWritePlan({
   ));
 
   // ── Guard D: Address verification ─────────────────────────────────────────
-  final registry = DspAddressRegistry.createDefault();
+  final registry = createTunaiAdau1466ThreeWayRegistry();
   final hasVerifiedMV = registry.hasVerifiedMasterVolume1466 &&
+      platform == DspTargetPlatform.adau1466;
+  final has3WayMap = registry.has3WayAddressMap &&
       platform == DspTargetPlatform.adau1466;
 
   guardChecks.add(HardwareGuardCheck(
@@ -102,18 +105,43 @@ HardwareWritePlan generateHardwareWritePlan({
     status: hasVerifiedMV
         ? HardwareGuardStatus.warning
         : (isAdauTarget ? HardwareGuardStatus.blocked : HardwareGuardStatus.notApplicable),
-    description: hasVerifiedMV
-        ? 'ADAU1466 Master Volume L (0x67) and R (0x64) are verified references. '
-            'All other parameter addresses are unverified and cannot be written.'
-        : isAdauTarget
-            ? 'No verified addresses available for ${platform.label}. '
-                'All mappings require SigmaStudio Export/Capture.'
-            : 'No hardware address mapping required for ${platform.label}.',
+    description: hasVerifiedMV && has3WayMap
+        ? 'ADAU1466 Master Volume L (0x67) and R (0x64) are verified. '
+            '${registry.exportConfirmedCount} addresses are export-confirmed '
+            '(${registry.peqRowCount} PEQ rows). '
+            'Export-confirmed addresses require live validation before actual write.'
+        : hasVerifiedMV
+            ? 'ADAU1466 Master Volume L (0x67) and R (0x64) are verified references. '
+                'All other parameter addresses are unverified and cannot be written.'
+            : isAdauTarget
+                ? 'No verified addresses available for ${platform.label}. '
+                    'All mappings require SigmaStudio Export/Capture.'
+                : 'No hardware address mapping required for ${platform.label}.',
     recommendation: isAdauTarget
-        ? 'Perform SigmaStudio Export/Capture to obtain verified addresses '
-            'for all required parameter blocks.'
+        ? 'Export-confirmed addresses need one-parameter-at-a-time live capture '
+            'before hardware write eligibility is granted.'
         : null,
   ));
+
+  // ── Guard D2: Export-confirmed addresses blocked for actual write ──────────
+  if (isAdauTarget && has3WayMap) {
+    guardChecks.add(HardwareGuardCheck(
+      id: 'guard_export_confirmed_blocked',
+      title: 'Export-Confirmed Addresses — Write Blocked',
+      status: HardwareGuardStatus.blocked,
+      description: '${registry.exportConfirmedCount} export-confirmed addresses and '
+          '${registry.peqRowCount} PEQ coefficient rows are present. '
+          'These are NOT eligible for actual write until live validation confirms '
+          'each address produces the expected DSP effect. '
+          'Output routing must be verified against physical pins OUT1/2/3/4/7/8.',
+      recommendation: 'Perform one-parameter-at-a-time live capture in this order: '
+          'SafeLoad → Mute (1 ch) → Gain (1 ch) → Delay (1 ch) → PEQ Band 1 → XO.',
+    ));
+    blockedReason ??= 'Export-confirmed addresses require live validation before hardware write.';
+    warnings.add('SigmaStudio export addresses are not automatically live-write verified.');
+    warnings.add('Output routing must be verified against physical pins OUT1/2/3/4/7/8.');
+    warnings.add('Physical plan: OUT1=TWL, OUT2=MID_L, OUT3=WFL, OUT4=TWR, OUT7=MID_R, OUT8=WFR.');
+  }
 
   // ── Guard E: Hardware write disabled ──────────────────────────────────────
   guardChecks.add(const HardwareGuardCheck(
@@ -142,7 +170,7 @@ HardwareWritePlan generateHardwareWritePlan({
   warnings.add('EEPROM/Selfboot write is disabled.');
 
   // ── Build write plan steps from SigmaStudio mapping reference ────────────
-  if (package.sigmaMappingReferenceJson != null && blockedReason == null) {
+  if (package.sigmaMappingReferenceJson != null) {
     final mappingRef = SigmaMappingReference.fromJson(
         package.sigmaMappingReferenceJson!);
 
@@ -173,7 +201,7 @@ HardwareWritePlan generateHardwareWritePlan({
   }
 
   // ── Build steps from fixed-point draft ────────────────────────────────────
-  if (package.fixedPointDraftJson != null && blockedReason == null) {
+  if (package.fixedPointDraftJson != null) {
     final fpDraft = package.fixedPointDraftJson!;
     final stages = fpDraft['stages'] as List? ?? [];
     if (stages.isNotEmpty) {

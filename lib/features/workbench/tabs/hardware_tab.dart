@@ -15,6 +15,8 @@ import '../../../core/pro_hardware_write_data.dart';
 import '../../../core/pro_controlled_write_engine.dart';
 import '../../../core/pro_usbi_transport.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../core/pro_dsp_address_registry.dart';
+import '../../../core/pro_adau1466_3way_address_map_embedded.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -284,8 +286,21 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           ),
         ],
 
-        // ── G: Controlled Master Volume Write (Phase T) ──────────────────
+        // ── G: Address Validation Status (Phase U1) ──────────────────────
         const SizedBox(height: 20),
+        const _SectionHeader('ADDRESS VALIDATION STATUS', Icons.checklist_outlined),
+        const SizedBox(height: 8),
+        const _AddressValidationStatusPanel(),
+        const SizedBox(height: 16),
+
+        // ── H: Live Validation Queue (Phase U1) ──────────────────────────
+        const _SectionHeader('LIVE VALIDATION QUEUE', Icons.playlist_add_check_outlined),
+        const SizedBox(height: 8),
+        const _LiveValidationQueuePanel(),
+        const SizedBox(height: 16),
+
+        // ── I: Controlled Master Volume Write (Phase T) ──────────────────
+        const SizedBox(height: 4),
         const _SectionHeader('CONTROLLED MASTER VOLUME WRITE', Icons.volume_up_outlined),
         const SizedBox(height: 8),
         _ControlledWritePanel(
@@ -327,6 +342,229 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
       ]),
     );
   }
+}
+
+// ── Phase U1: Address Validation Status ──────────────────────────────────────
+
+class _AddressValidationStatusPanel extends StatelessWidget {
+  const _AddressValidationStatusPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    final registry = createTunaiAdau1466ThreeWayRegistry();
+    final muteCount    = registry.countByKind(DspParameterKind.mute);
+    final gainCount    = registry.countByKind(DspParameterKind.gain);
+    final delayCount   = registry.countByKind(DspParameterKind.delay);
+    final xoCount      = registry.countByKind(DspParameterKind.crossover);
+    final safeloadCount = registry.countByKind(DspParameterKind.safeload);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const _HwStatusRow(
+          label: 'Master Volume L/R',
+          status: 'Verified',
+          eligible: true,
+          detail: '0x0067 / 0x0064 — direct-write validated',
+        ),
+        const SizedBox(height: 6),
+        _HwStatusRow(
+          label: 'SafeLoad ($safeloadCount registers)',
+          status: 'Export Confirmed',
+          eligible: false,
+          detail: '0x6000–0x6007 — needs live validation',
+        ),
+        const SizedBox(height: 6),
+        _HwStatusRow(
+          label: 'Mute ($muteCount channels)',
+          status: 'Export Confirmed',
+          eligible: false,
+          detail: 'Blocked for actual write until capture',
+        ),
+        const SizedBox(height: 6),
+        _HwStatusRow(
+          label: 'Gain / Driver ($gainCount)',
+          status: 'Export Confirmed',
+          eligible: false,
+          detail: 'Blocked for actual write until capture',
+        ),
+        const SizedBox(height: 6),
+        _HwStatusRow(
+          label: 'Delay ($delayCount channels)',
+          status: 'Export Confirmed',
+          eligible: false,
+          detail: 'Blocked for actual write until capture',
+        ),
+        const SizedBox(height: 6),
+        _HwStatusRow(
+          label: 'XO — HPF + LPF ($xoCount coefficients)',
+          status: 'Export Confirmed',
+          eligible: false,
+          detail: 'Safeload candidate — needs validation',
+        ),
+        const SizedBox(height: 6),
+        _HwStatusRow(
+          label: 'PEQ Coefficients (${registry.peqRowCount} rows)',
+          status: 'Export Confirmed',
+          eligible: false,
+          detail: 'Safeload candidate — blocked until XO validated',
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.07),
+            border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            'Export-confirmed address requires live validation before hardware write. '
+            'Only Verified addresses pass actual write guard.',
+            style: proSubtitle(size: 9),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _HwStatusRow extends StatelessWidget {
+  final String label;
+  final String status;
+  final bool eligible;
+  final String detail;
+  const _HwStatusRow({
+    required this.label,
+    required this.status,
+    required this.eligible,
+    required this.detail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = eligible ? Colors.greenAccent : Colors.orange;
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Icon(eligible ? Icons.check_circle_outline : Icons.info_outline,
+          size: 12, color: color),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(child: Text(label, style: proSubtitle(size: 10))),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Text(status, style: TextStyle(fontSize: 8, color: color)),
+            ),
+          ]),
+          Text(detail, style: proSubtitle(size: 9)),
+        ]),
+      ),
+    ]);
+  }
+}
+
+// ── Phase U1: Live Validation Queue ──────────────────────────────────────────
+
+class _LiveValidationQueuePanel extends StatelessWidget {
+  const _LiveValidationQueuePanel();
+
+  static const _steps = [
+    (order: '1', label: 'Master Volume L/R', note: 'Already verified', done: true),
+    (order: '2', label: 'SafeLoad Protocol', note: '0x6000–0x6007 — data + trigger', done: false),
+    (order: '3', label: 'Mute — 1 channel', note: 'Confirm mute state effect', done: false),
+    (order: '4', label: 'Gain — 1 channel', note: 'Confirm level change effect', done: false),
+    (order: '5', label: 'Delay — 1 channel', note: 'Confirm timing offset effect', done: false),
+    (order: '6', label: 'PEQ Band 1 — 1 channel', note: 'Verify coefficient write via SafeLoad', done: false),
+    (order: '7', label: 'XO HPF + LPF — last', note: 'Requires SafeLoad + routing verify', done: false),
+  ];
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(
+        'Recommended order for one-parameter-at-a-time live capture.',
+        style: proSubtitle(size: 9),
+      ),
+      const SizedBox(height: 8),
+      for (final step in _steps) ...[
+        _ValidationStep(
+          order: step.order,
+          label: step.label,
+          note: step.note,
+          done: step.done,
+        ),
+        const SizedBox(height: 5),
+      ],
+      const SizedBox(height: 6),
+      Text(
+        'Do not add actual write buttons for unvalidated groups. '
+        'Each step requires expert confirmation before advancing.',
+        style: proSubtitle(size: 9),
+      ),
+    ]),
+  );
+}
+
+class _ValidationStep extends StatelessWidget {
+  final String order;
+  final String label;
+  final String note;
+  final bool done;
+  const _ValidationStep({
+    required this.order,
+    required this.label,
+    required this.note,
+    required this.done,
+  });
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+    Container(
+      width: 20,
+      height: 20,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: done
+            ? Colors.greenAccent.withValues(alpha: 0.15)
+            : kProBorder.withValues(alpha: 0.3),
+        border: Border.all(
+            color: done ? Colors.greenAccent.withValues(alpha: 0.4) : kProBorder),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(order,
+          style: TextStyle(
+              fontSize: 9,
+              color: done ? Colors.greenAccent : Colors.white38,
+              fontWeight: FontWeight.w600)),
+    ),
+    const SizedBox(width: 8),
+    Expanded(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label,
+            style: TextStyle(
+                fontSize: 10,
+                color: done ? Colors.greenAccent : Colors.white70)),
+        Text(note, style: proSubtitle(size: 9)),
+      ]),
+    ),
+    if (done)
+      const Icon(Icons.check_circle_outline, size: 12, color: Colors.greenAccent),
+  ]);
 }
 
 // ── Section Header ────────────────────────────────────────────────────────────

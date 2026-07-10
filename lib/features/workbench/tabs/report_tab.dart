@@ -14,6 +14,7 @@ import '../../../core/pro_simulation_data.dart';
 import '../../../core/pro_impedance_analysis.dart';
 import '../../../core/pro_dsp_address_registry.dart';
 import '../../../core/pro_sigma_mapping_data.dart';
+import '../../../core/pro_adau1466_3way_address_map_embedded.dart';
 import '../../../core/pro_hardware_connection_data.dart';
 import '../../../core/pro_deploy_package_data.dart';
 import '../../../shared/pro_widgets.dart';
@@ -131,6 +132,9 @@ class ReportTab extends ConsumerWidget {
           const SizedBox(height: 16),
 
           _DeployReadinessCard(deployState: project.deployState),
+          const SizedBox(height: 16),
+
+          const _DspAddressMapReadinessCard(),
           const SizedBox(height: 16),
         ],
 
@@ -1617,6 +1621,98 @@ class _DeployReadinessCard extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           'Deploy package is review/dry-run only. No hardware write performed.',
+          style: proSubtitle(size: 9),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Phase U1: DSP Address Map Readiness Card ──────────────────────────────────
+
+class _DspAddressMapReadinessCard extends StatelessWidget {
+  const _DspAddressMapReadinessCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final registry = createTunaiAdau1466ThreeWayRegistry();
+    final imported  = registry.has3WayAddressMap;
+    final verified  = registry.verifiedCount;
+    final exported  = registry.exportConfirmedCount + registry.peqRowCount;
+    final total     = registry.totalImportedCount;
+
+    String readinessLabel;
+    Color readinessColor;
+    if (imported && verified >= 2) {
+      readinessLabel = 'Address map imported · Master volume verified';
+      readinessColor = Colors.greenAccent;
+    } else if (imported) {
+      readinessLabel = 'Address map imported · Live validation required';
+      readinessColor = Colors.orange;
+    } else {
+      readinessLabel = 'Address map not loaded';
+      readinessColor = Colors.red;
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.map_outlined, size: 13, color: Colors.white38),
+          const SizedBox(width: 6),
+          Text('DSP ADDRESS MAP', style: proLabel(size: 9, spacing: 1.8)),
+        ]),
+        const SizedBox(height: 12),
+        _ReportChip(
+          label: 'MAP IMPORTED',
+          value: imported ? 'YES' : 'NO',
+          color: imported ? Colors.greenAccent : Colors.red,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'TOTAL ADDRESSES',
+          value: '$total',
+          color: Colors.white70,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'VERIFIED',
+          value: '$verified',
+          color: Colors.greenAccent,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'EXPORT CONFIRMED',
+          value: '$exported',
+          color: Colors.orange,
+        ),
+        const SizedBox(height: 6),
+        const _ReportChip(
+          label: 'MASTER VOLUME',
+          value: 'Verified (0x0067 / 0x0064)',
+          color: Colors.greenAccent,
+        ),
+        const SizedBox(height: 6),
+        const _ReportChip(
+          label: 'PEQ / XO',
+          value: 'Blocked until live validation',
+          color: Colors.orange,
+        ),
+        const SizedBox(height: 6),
+        _ReportChip(
+          label: 'READINESS',
+          value: readinessLabel,
+          color: readinessColor,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Physical routing: OUT1=TWL · OUT2=MID_L · OUT3=WFL · OUT4=TWR · OUT7=MID_R · OUT8=WFR. '
+          'Verify Sigma output cell names against physical pins before write.',
           style: proSubtitle(size: 9),
         ),
       ]),

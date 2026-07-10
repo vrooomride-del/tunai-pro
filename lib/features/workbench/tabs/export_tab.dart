@@ -14,6 +14,7 @@ import '../../../core/pro_export_engine.dart';
 import '../../../core/pro_dsp_target_data.dart';
 import '../../../core/pro_dsp_address_registry.dart';
 import '../../../core/pro_sigma_mapping_data.dart';
+import '../../../core/pro_adau1466_3way_address_map_embedded.dart';
 import '../../../shared/pro_widgets.dart';
 
 class ExportTab extends ConsumerStatefulWidget {
@@ -169,6 +170,12 @@ class _ExportTabState extends ConsumerState<ExportTab> {
           profile: DspTargetProfile.forPlatform(exportState.selectedTarget),
         ),
         const SizedBox(height: 16),
+
+        // Phase U1: Address Coverage panel
+        if (exportState.selectedTarget == DspTargetPlatform.adau1466)
+          const _AddressCoveragePanel(),
+        if (exportState.selectedTarget == DspTargetPlatform.adau1466)
+          const SizedBox(height: 16),
 
         // Active package
         if (activePkg != null) ...[
@@ -1290,6 +1297,140 @@ class _FixedPointDraftPanel extends StatelessWidget {
       ]),
     );
   }
+}
+
+// ── Phase U1: Address Coverage Panel ─────────────────────────────────────────
+
+class _AddressCoveragePanel extends StatelessWidget {
+  const _AddressCoveragePanel();
+
+  @override
+  Widget build(BuildContext context) {
+    final registry = createTunaiAdau1466ThreeWayRegistry();
+    final muteCount    = registry.countByKind(DspParameterKind.mute);
+    final gainCount    = registry.countByKind(DspParameterKind.gain);
+    final delayCount   = registry.countByKind(DspParameterKind.delay);
+    final xoCount      = registry.countByKind(DspParameterKind.crossover);
+    final safeloadCount = registry.countByKind(DspParameterKind.safeload);
+    final masterCount  = registry.countByKind(DspParameterKind.masterVolume);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.map_outlined, color: kProAccent.withValues(alpha: 0.7), size: 14),
+          const SizedBox(width: 6),
+          Text('ADDRESS MAP COVERAGE', style: proLabel(size: 9, spacing: 2)),
+          const Spacer(),
+          const _InfoChip('Phase U1', Colors.white38),
+        ]),
+        const SizedBox(height: 10),
+
+        // Warning banner
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.08),
+            border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            'SigmaStudio export addresses are not automatically live-write verified. '
+            'Only Master Volume L/R (0x0067/0x0064) are eligible for actual write.',
+            style: proSubtitle(size: 9),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Totals
+        Row(children: [
+          _CovStat('Total', '${registry.totalImportedCount}', Colors.white70),
+          const SizedBox(width: 12),
+          _CovStat('Verified', '${registry.verifiedCount}', Colors.greenAccent),
+          const SizedBox(width: 12),
+          _CovStat('Export Confirmed', '${registry.exportConfirmedCount + registry.peqRowCount}',
+              Colors.orange),
+          const SizedBox(width: 12),
+          _CovStat('Needs Validation', '${registry.needsLiveValidationCount}', Colors.red),
+        ]),
+        const SizedBox(height: 10),
+
+        // Group breakdown
+        Text('GROUP COVERAGE', style: proLabel(size: 8, spacing: 1.5, color: Colors.white38)),
+        const SizedBox(height: 6),
+        Wrap(spacing: 8, runSpacing: 6, children: [
+          _GroupBadge('Master Volume', '$masterCount / 6',
+              masterCount >= 2 ? Colors.greenAccent : Colors.orange),
+          _GroupBadge('Mute', '$muteCount', Colors.orange),
+          _GroupBadge('Gain / Driver', '$gainCount', Colors.orange),
+          _GroupBadge('Delay', '$delayCount', Colors.orange),
+          _GroupBadge('XO (HPF+LPF)', '$xoCount', Colors.orange),
+          _GroupBadge('SafeLoad', '$safeloadCount', Colors.orange),
+          _GroupBadge('PEQ Coefficients', '${registry.peqRowCount}', Colors.orange),
+        ]),
+        const SizedBox(height: 10),
+
+        // Physical routing note
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.blueAccent.withValues(alpha: 0.05),
+            border: Border.all(color: Colors.blueAccent.withValues(alpha: 0.2)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            'Physical output plan: OUT1=TWL  OUT2=MID_L  OUT3=WFL  OUT4=TWR  '
+            'OUT7=MID_R  OUT8=WFR  (OUT5/6 reserved). '
+            'Sigma output cell names may differ from physical pins — verify before write.',
+            style: proSubtitle(size: 9),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _CovStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  const _CovStat(this.label, this.value, this.color);
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color)),
+      Text(label, style: proSubtitle(size: 9)),
+    ],
+  );
+}
+
+class _GroupBadge extends StatelessWidget {
+  final String label;
+  final String count;
+  final Color color;
+  const _GroupBadge(this.label, this.count, this.color);
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.08),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(label, style: const TextStyle(fontSize: 9, color: Colors.white70)),
+      const SizedBox(width: 4),
+      Text(count, style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.w600)),
+    ]),
+  );
 }
 
 class _InfoChip extends StatelessWidget {

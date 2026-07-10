@@ -1,8 +1,8 @@
-// ── TUNAI PRO Phase P — Verified DSP Address Registry ─────────────────────────
+// ── TUNAI PRO Phase P / U1 — Verified DSP Address Registry ───────────────────
 // Reference-only registry for known, verified DSP parameter addresses.
 // DO NOT write to hardware. DO NOT use addresses for register writes.
 // Only verified addresses from SigmaStudio Export/Capture or validated direct-write
-// work are allowed. All others remain unknown.
+// work are allowed. SigmaStudio export-confirmed addresses require live validation.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
 import 'pro_export_data.dart';
@@ -11,10 +11,14 @@ import 'pro_export_data.dart';
 
 enum DspAddressVerificationStatus {
   unknown,
-  verified,
+  exportConfirmed,        // extracted from SigmaStudio export — not yet live-validated
+  needsLiveValidation,    // extracted but requires one-parameter capture to confirm
+  liveWriteVerified,      // confirmed by controlled app-side live write validation
+  verified,               // previously verified reference (e.g. Master Volume L/R)
   unverified,
   placeholder,
-  deprecated;
+  deprecated,
+  blocked;                // must not be written
 
   String toJson() => name;
   static DspAddressVerificationStatus fromJson(String s) =>
@@ -22,18 +26,27 @@ enum DspAddressVerificationStatus {
           orElse: () => DspAddressVerificationStatus.unknown);
 
   String get label => switch (this) {
-    DspAddressVerificationStatus.unknown     => 'Unknown',
-    DspAddressVerificationStatus.verified    => 'Verified',
-    DspAddressVerificationStatus.unverified  => 'Unverified',
-    DspAddressVerificationStatus.placeholder => 'Placeholder',
-    DspAddressVerificationStatus.deprecated  => 'Deprecated',
+    DspAddressVerificationStatus.unknown             => 'Unknown',
+    DspAddressVerificationStatus.exportConfirmed     => 'Export Confirmed',
+    DspAddressVerificationStatus.needsLiveValidation => 'Needs Live Validation',
+    DspAddressVerificationStatus.liveWriteVerified   => 'Live Write Verified',
+    DspAddressVerificationStatus.verified            => 'Verified',
+    DspAddressVerificationStatus.unverified          => 'Unverified',
+    DspAddressVerificationStatus.placeholder         => 'Placeholder',
+    DspAddressVerificationStatus.deprecated          => 'Deprecated',
+    DspAddressVerificationStatus.blocked             => 'Blocked',
   };
+
+  // Only verified and liveWriteVerified are eligible for actual hardware write.
+  bool get isActualWriteEligible =>
+      this == verified || this == liveWriteVerified;
 }
 
 enum DspAddressSource {
   sigmaStudioExport,
   sigmaStudioCapture,
   directWriteValidated,
+  liveWriteValidation,    // Phase U1+: one-parameter-at-a-time live validation
   manualEntry,
   placeholder;
 
@@ -46,6 +59,7 @@ enum DspAddressSource {
     DspAddressSource.sigmaStudioExport    => 'SigmaStudio Export',
     DspAddressSource.sigmaStudioCapture   => 'SigmaStudio Capture',
     DspAddressSource.directWriteValidated => 'Direct-Write Validated',
+    DspAddressSource.liveWriteValidation  => 'Live Write Validation',
     DspAddressSource.manualEntry          => 'Manual Entry',
     DspAddressSource.placeholder          => 'Placeholder',
   };
@@ -61,6 +75,9 @@ enum DspParameterKind {
   phase,
   safeload,
   outputMapping,
+  polarity,
+  protection,
+  router,
   unknown;
 
   String toJson() => name;
@@ -78,6 +95,9 @@ enum DspParameterKind {
     DspParameterKind.phase         => 'Phase',
     DspParameterKind.safeload      => 'SafeLoad',
     DspParameterKind.outputMapping => 'Output Mapping',
+    DspParameterKind.polarity      => 'Polarity',
+    DspParameterKind.protection    => 'Protection',
+    DspParameterKind.router        => 'Router',
     DspParameterKind.unknown       => 'Unknown',
   };
 }
@@ -97,6 +117,19 @@ class VerifiedDspAddress {
   final String? notes;
   final DateTime? verifiedAt;
 
+  // Phase U1: optional SigmaStudio mapping fields
+  final String? parameterId;
+  final String? blockGroup;
+  final String? sigmaOutputCell;
+  final String? physicalOutput;
+  final String? bandOrStage;
+  final String? coefficient;
+  final String? dataFormat;
+  final String? writeMethod;
+  final bool? safeloadRequired;
+  final String? currentDataWord;
+  final String? expectedEffect;
+
   const VerifiedDspAddress({
     required this.id,
     required this.platform,
@@ -109,7 +142,21 @@ class VerifiedDspAddress {
     required this.source,
     this.notes,
     this.verifiedAt,
+    this.parameterId,
+    this.blockGroup,
+    this.sigmaOutputCell,
+    this.physicalOutput,
+    this.bandOrStage,
+    this.coefficient,
+    this.dataFormat,
+    this.writeMethod,
+    this.safeloadRequired,
+    this.currentDataWord,
+    this.expectedEffect,
   });
+
+  bool get isActualWriteEligible =>
+      verificationStatus.isActualWriteEligible;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -123,6 +170,17 @@ class VerifiedDspAddress {
     'source': source.toJson(),
     if (notes != null) 'notes': notes,
     if (verifiedAt != null) 'verifiedAt': verifiedAt!.toIso8601String(),
+    if (parameterId != null) 'parameterId': parameterId,
+    if (blockGroup != null) 'blockGroup': blockGroup,
+    if (sigmaOutputCell != null) 'sigmaOutputCell': sigmaOutputCell,
+    if (physicalOutput != null) 'physicalOutput': physicalOutput,
+    if (bandOrStage != null) 'bandOrStage': bandOrStage,
+    if (coefficient != null) 'coefficient': coefficient,
+    if (dataFormat != null) 'dataFormat': dataFormat,
+    if (writeMethod != null) 'writeMethod': writeMethod,
+    if (safeloadRequired != null) 'safeloadRequired': safeloadRequired,
+    if (currentDataWord != null) 'currentDataWord': currentDataWord,
+    if (expectedEffect != null) 'expectedEffect': expectedEffect,
   };
 
   factory VerifiedDspAddress.fromJson(Map<String, dynamic> j) =>
@@ -141,6 +199,17 @@ class VerifiedDspAddress {
         verifiedAt: j['verifiedAt'] != null
             ? DateTime.tryParse(j['verifiedAt'] as String)
             : null,
+        parameterId: j['parameterId'] as String?,
+        blockGroup: j['blockGroup'] as String?,
+        sigmaOutputCell: j['sigmaOutputCell'] as String?,
+        physicalOutput: j['physicalOutput'] as String?,
+        bandOrStage: j['bandOrStage'] as String?,
+        coefficient: j['coefficient'] as String?,
+        dataFormat: j['dataFormat'] as String?,
+        writeMethod: j['writeMethod'] as String?,
+        safeloadRequired: j['safeloadRequired'] as bool?,
+        currentDataWord: j['currentDataWord'] as String?,
+        expectedEffect: j['expectedEffect'] as String?,
       );
 }
 
@@ -151,10 +220,17 @@ class DspAddressRegistry {
   final DateTime updatedAt;
   final int revision;
 
+  // Phase U1: PEQ rows are too numerous to index individually (875 rows).
+  // Statistics are tracked separately.
+  final int peqRowCount;
+  final DspAddressVerificationStatus peqStatus;
+
   DspAddressRegistry({
     required this.addresses,
     DateTime? updatedAt,
     this.revision = 0,
+    this.peqRowCount = 0,
+    this.peqStatus = DspAddressVerificationStatus.unknown,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
   // ── Computed getters ──────────────────────────────────────────────────────
@@ -163,16 +239,49 @@ class DspAddressRegistry {
       .where((a) => a.verificationStatus == DspAddressVerificationStatus.verified)
       .length;
 
+  int get liveWriteVerifiedCount => addresses
+      .where((a) => a.verificationStatus == DspAddressVerificationStatus.liveWriteVerified)
+      .length;
+
+  int get exportConfirmedCount => addresses
+      .where((a) => a.verificationStatus == DspAddressVerificationStatus.exportConfirmed)
+      .length;
+
+  int get needsLiveValidationCount => addresses
+      .where((a) => a.verificationStatus == DspAddressVerificationStatus.needsLiveValidation)
+      .length;
+
   int get unknownCount => addresses
       .where((a) => a.verificationStatus == DspAddressVerificationStatus.unknown)
       .length;
 
+  int get blockedCount => addresses
+      .where((a) => a.verificationStatus == DspAddressVerificationStatus.blocked)
+      .length;
+
+  // Total including PEQ rows not individually indexed
+  int get totalImportedCount => addresses.length + peqRowCount;
+
   List<VerifiedDspAddress> addressesForPlatform(DspTargetPlatform platform) =>
       addresses.where((a) => a.platform == platform).toList();
+
+  List<VerifiedDspAddress> addressesForKind(DspParameterKind kind) =>
+      addresses.where((a) => a.parameterKind == kind).toList();
+
+  int countByKind(DspParameterKind kind) =>
+      addresses.where((a) => a.parameterKind == kind).length;
 
   VerifiedDspAddress? findByLogicalName(String name) {
     try {
       return addresses.firstWhere((a) => a.logicalName == name);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  VerifiedDspAddress? findByAddressInt(int addr) {
+    try {
+      return addresses.firstWhere((a) => a.addressInt == addr);
     } catch (_) {
       return null;
     }
@@ -184,16 +293,27 @@ class DspAddressRegistry {
           a.parameterKind == DspParameterKind.masterVolume &&
           a.verificationStatus == DspAddressVerificationStatus.verified);
 
+  bool get has3WayAddressMap =>
+      peqRowCount > 0 || countByKind(DspParameterKind.mute) > 0;
+
+  // Only verified/liveWriteVerified addresses may pass actual write guards.
+  bool isActualWriteEligible(VerifiedDspAddress addr) =>
+      addr.verificationStatus.isActualWriteEligible;
+
   // ── copyWith ──────────────────────────────────────────────────────────────
 
   DspAddressRegistry copyWith({
     List<VerifiedDspAddress>? addresses,
     DateTime? updatedAt,
     int? revision,
+    int? peqRowCount,
+    DspAddressVerificationStatus? peqStatus,
   }) => DspAddressRegistry(
     addresses: addresses ?? this.addresses,
     updatedAt: updatedAt ?? this.updatedAt,
     revision: revision ?? this.revision,
+    peqRowCount: peqRowCount ?? this.peqRowCount,
+    peqStatus: peqStatus ?? this.peqStatus,
   );
 
   // ── Serialisation ─────────────────────────────────────────────────────────
@@ -202,6 +322,8 @@ class DspAddressRegistry {
     'addresses': addresses.map((a) => a.toJson()).toList(),
     'updatedAt': updatedAt.toIso8601String(),
     'revision': revision,
+    'peqRowCount': peqRowCount,
+    'peqStatus': peqStatus.toJson(),
   };
 
   factory DspAddressRegistry.fromJson(Map<String, dynamic> j) =>
@@ -211,6 +333,9 @@ class DspAddressRegistry {
             .toList(),
         updatedAt: DateTime.tryParse(j['updatedAt'] as String? ?? '') ?? DateTime.now(),
         revision: j['revision'] as int? ?? 0,
+        peqRowCount: j['peqRowCount'] as int? ?? 0,
+        peqStatus: DspAddressVerificationStatus.fromJson(
+            j['peqStatus'] as String? ?? 'unknown'),
       );
 
   // ── Default registry (Phase P verified addresses only) ────────────────────
@@ -219,10 +344,9 @@ class DspAddressRegistry {
 
   factory DspAddressRegistry.createDefault() => DspAddressRegistry(
     revision: 1,
-    addresses: [
+    addresses: const [
       // ADAU1466 Master Volume L — 0x67
-      // Verified from ADAU1466 master volume direct-write/capture work.
-      const VerifiedDspAddress(
+      VerifiedDspAddress(
         id: 'adau1466_master_vol_l',
         platform: DspTargetPlatform.adau1466,
         parameterKind: DspParameterKind.masterVolume,
@@ -235,7 +359,7 @@ class DspAddressRegistry {
             'Do not generalize to other parameters.',
       ),
       // ADAU1466 Master Volume R — 0x64
-      const VerifiedDspAddress(
+      VerifiedDspAddress(
         id: 'adau1466_master_vol_r',
         platform: DspTargetPlatform.adau1466,
         parameterKind: DspParameterKind.masterVolume,
