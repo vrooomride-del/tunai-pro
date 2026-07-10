@@ -14,6 +14,7 @@ import '../../../core/pro_hardware_write_plan_engine.dart';
 import '../../../core/pro_hardware_write_data.dart';
 import '../../../core/pro_controlled_write_engine.dart';
 import '../../../core/pro_usbi_transport.dart';
+import '../../../core/pro_hardware_transport.dart';
 import '../../../shared/pro_widgets.dart';
 import '../../../core/pro_dsp_address_registry.dart';
 import '../../../core/pro_adau1466_3way_address_map_embedded.dart';
@@ -41,6 +42,14 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   bool _userConfirmed = false;
   bool _writing = false;
   HardwareWriteLog? _lastWriteLog;
+
+  // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
+  bool _checkingTransport = false;
+  HardwareTransportBackend _selectedTransport = HardwareTransportBackend.simulation;
+  List<HardwareTransportInfo> _transportInfos =
+      HardwareTransportInfo.defaultAvailableTransports;
+  String? _transportCheckMessage;
+  DateTime? _transportLastChecked;
 
   ProProject? get _project => ref
       .read(proProjectStoreProvider)
@@ -96,6 +105,34 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     await ref.read(proProjectStoreProvider.notifier)
         .updateHardwareState(widget.projectId, newHw);
   }
+
+  Future<void> _checkTransportReadiness() async {
+    if (_checkingTransport) return;
+    setState(() => _checkingTransport = true);
+    try {
+      // Phase T2: all transports are placeholders — no real I/O occurs.
+      // Update the selected transport info's lastCheckedAt timestamp.
+      final now = DateTime.now();
+      if (mounted) {
+        setState(() {
+          _transportInfos = _transportInfos.map((t) =>
+              t.backend == _selectedTransport
+                  ? t.copyWith(lastCheckedAt: now)
+                  : t).toList();
+          _transportCheckMessage =
+              'Checked ${_selectedTransport.label} at '
+              '${now.toLocal().toString().substring(0, 19)}. '
+              '${_selectedTransport.descriptionNote}';
+          _transportLastChecked = now;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _checkingTransport = false);
+    }
+  }
+
+  void _selectTransportBackend(HardwareTransportBackend backend) =>
+      setState(() => _selectedTransport = backend);
 
   void _generateDryRun() {
     setState(() {
@@ -248,7 +285,21 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         ),
         const SizedBox(height: 20),
 
-        // B: Active Export Package
+        // B: Transport Readiness (Phase T2 Revised)
+        const _SectionHeader('TRANSPORT READINESS', Icons.compare_arrows_outlined),
+        const SizedBox(height: 8),
+        _TransportReadinessPanel(
+          selectedBackend:  _selectedTransport,
+          transportInfos:   _transportInfos,
+          checking:         _checkingTransport,
+          checkMessage:     _transportCheckMessage,
+          lastChecked:      _transportLastChecked,
+          onCheck:          _checkTransportReadiness,
+          onSelect:         _selectTransportBackend,
+        ),
+        const SizedBox(height: 20),
+
+        // C: Active Export Package
         const _SectionHeader('ACTIVE EXPORT PACKAGE', Icons.upload_outlined),
         const SizedBox(height: 8),
         _ExportPackagePanel(pkg: activePkg, protection: project?.protectionState),
@@ -401,7 +452,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
             Expanded(
               child: Text(
                 'Hardware write remains disabled. '
-                'No USBi/BLE packets are sent. No SafeLoad is executed. '
+                'Selected transport write backend is not enabled. '
+                'No USB, BLE, or ICP5 packets are sent. No SafeLoad is executed. '
                 'No EEPROM/Selfboot write is performed.',
                 style: proSubtitle(size: 9),
               ),
@@ -1124,8 +1176,9 @@ class _ControlledWritePanel extends StatelessWidget {
               'Experimental volatile write. ADAU1466 Master Volume only.\n'
               'Only addresses 0x67 (L) and 0x64 (R) are allowed. '
               'No EEPROM. No Selfboot. No SafeLoad. No Write-All.\n'
-              'USBi transport is a placeholder in Phase T — write button '
-              'remains disabled until transport is production-ready.',
+              'USBi write backend is not enabled in Phase T2. '
+              'Detection does not imply write permission. '
+              'Actual write remains disabled.',
               style: TextStyle(fontSize: 9, color: Color(0xFFEF4444), height: 1.5),
             ),
           ),
@@ -1222,12 +1275,12 @@ class _ControlledWritePanel extends StatelessWidget {
           onWrite:   onWrite,
         ),
         const SizedBox(height: 6),
-        if (ProUsbiTransport.isPlaceholder)
-          const Text(
-            'Write disabled — USBi transport is a placeholder. '
-            'Connect production-ready hardware transport to enable.',
-            style: TextStyle(fontSize: 9, color: Colors.white38, height: 1.4),
-          ),
+        const Text(
+          'Write disabled — USBi write backend is not enabled in Phase T2. '
+          'Detection does not imply write permission. '
+          'Actual write remains disabled.',
+          style: TextStyle(fontSize: 9, color: Colors.white38, height: 1.4),
+        ),
         const SizedBox(height: 12),
       ],
 
@@ -1886,6 +1939,342 @@ class _DetailRow extends StatelessWidget {
       Expanded(
         child: Text(value,
             style: const TextStyle(fontSize: 9, color: Colors.white60)),
+      ),
+    ]),
+  );
+}
+
+
+// ── Phase T2 Revised: Transport Readiness Panel ───────────────────────────────
+
+class _TransportReadinessPanel extends StatelessWidget {
+  final HardwareTransportBackend selectedBackend;
+  final List<HardwareTransportInfo> transportInfos;
+  final bool checking;
+  final String? checkMessage;
+  final DateTime? lastChecked;
+  final VoidCallback onCheck;
+  final void Function(HardwareTransportBackend) onSelect;
+
+  const _TransportReadinessPanel({
+    required this.selectedBackend,
+    required this.transportInfos,
+    required this.checking,
+    required this.checkMessage,
+    required this.lastChecked,
+    required this.onCheck,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedInfo = transportInfos
+        .where((t) => t.backend == selectedBackend)
+        .firstOrNull;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Transport selector chips
+      Wrap(spacing: 8, runSpacing: 6, children: [
+        for (final t in transportInfos)
+          _TransportChip(
+            info: t,
+            isSelected: t.backend == selectedBackend,
+            onTap: () => onSelect(t.backend),
+          ),
+      ]),
+      const SizedBox(height: 12),
+
+      // Selected transport detail card
+      if (selectedInfo != null)
+        _TransportDetailCard(info: selectedInfo),
+      const SizedBox(height: 10),
+
+      // Action row
+      Row(children: [
+        GestureDetector(
+          onTap: checking ? null : onCheck,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: checking
+                  ? kProSurface
+                  : kProAccent.withValues(alpha: 0.08),
+              border: Border.all(
+                  color: checking
+                      ? kProBorder
+                      : kProAccent.withValues(alpha: 0.4)),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(
+                checking
+                    ? Icons.hourglass_empty_outlined
+                    : Icons.radar_outlined,
+                size: 13,
+                color: checking ? Colors.white24 : kProAccent,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                checking ? 'Checking...' : 'Check Transport Readiness',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: checking ? Colors.white24 : kProAccent,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ]),
+          ),
+        ),
+        const SizedBox(width: 10),
+        GestureDetector(
+          onTap: () => onSelect(HardwareTransportBackend.simulation),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: kProSurface,
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Text('Clear Selection',
+                style: TextStyle(fontSize: 10, color: Colors.white38)),
+          ),
+        ),
+      ]),
+
+      // Check result message
+      if (checkMessage != null) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.03),
+            border: Border.all(color: kProBorder),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(checkMessage!, style: proSubtitle(size: 9)),
+        ),
+      ],
+
+      // Global safety note
+      const SizedBox(height: 10),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(children: [
+          const Icon(Icons.info_outline, size: 11, color: Colors.white38),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              'No transport backend is enabled for hardware write in this build. '
+              'Transport selection does not enable write. '
+              'Write capability remains: Dry-Run Only.',
+              style: proSubtitle(size: 9),
+            ),
+          ),
+        ]),
+      ),
+    ]);
+  }
+}
+
+class _TransportChip extends StatelessWidget {
+  final HardwareTransportInfo info;
+  final bool isSelected;
+  final VoidCallback onTap;
+  const _TransportChip({
+    required this.info,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = isSelected ? kProAccent : Colors.white38;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? kProAccent.withValues(alpha: 0.08)
+              : kProSurface,
+          border: Border.all(
+              color: isSelected
+                  ? kProAccent.withValues(alpha: 0.4)
+                  : kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(info.displayName,
+              style: TextStyle(
+                  fontSize: 10, color: accent, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 2),
+          Text(info.platformHint,
+              style: const TextStyle(fontSize: 8, color: Colors.white24)),
+          if (info.backend.isTemporary)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text('TEMPORARY',
+                  style: TextStyle(
+                      fontSize: 7,
+                      color: Colors.orange.withValues(alpha: 0.8),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5)),
+            ),
+          if (info.backend.isFinalTarget)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text('FINAL TARGET',
+                  style: TextStyle(
+                      fontSize: 7,
+                      color: Colors.greenAccent.withValues(alpha: 0.7),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5)),
+            ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _TransportDetailCard extends StatelessWidget {
+  final HardwareTransportInfo info;
+  const _TransportDetailCard({required this.info});
+
+  Color get _readinessColor => switch (info.readinessStatus) {
+    TransportReadinessStatus.detected  => Colors.greenAccent,
+    TransportReadinessStatus.connected => Colors.greenAccent,
+    TransportReadinessStatus.detectionOnly => kProAccent,
+    TransportReadinessStatus.placeholder   => Colors.white38,
+    _ => info.readinessStatus.isWarning ? Colors.orange : Colors.white38,
+  };
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProAccent.withValues(alpha: 0.2)),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Text(info.displayName,
+            style: const TextStyle(fontSize: 11, color: Colors.white70,
+                fontWeight: FontWeight.w500)),
+        const Spacer(),
+        // Write enabled: always false
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.1),
+            border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: const Text('WRITE DISABLED',
+              style: TextStyle(fontSize: 7, color: Colors.orange,
+                  fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      _TrRow('Backend',    info.backend.label),
+      _TrRow('Platform',   info.platformHint),
+      _TrRow('Readiness',  info.readinessStatus.label,
+          color: _readinessColor),
+      _TrRow('Write Capability', info.writeCapability.label),
+      _TrRow('Write Enabled', 'false — Phase T2 safety lock'),
+      _TrRow('Placeholder', info.isPlaceholder ? 'Yes' : 'No'),
+      _TrRow('Detection Only', info.isDetectionOnly ? 'Yes' : 'No'),
+      if (info.backend == HardwareTransportBackend.usbiWindowsTemporary)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.07),
+              border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: const Text(
+              'USBi temporary engineering transport. '
+              'Use only for controlled validation. '
+              'Not the primary or final transport path.',
+              style: TextStyle(fontSize: 9, color: Colors.orange),
+            ),
+          ),
+        ),
+      if (info.backend == HardwareTransportBackend.icp5)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.greenAccent.withValues(alpha: 0.05),
+              border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.2)),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: const Text(
+              'ICP5 is the final intended transport/programmer path. '
+              'Packet format and protocol are TBD by hardware team.',
+              style: TextStyle(fontSize: 9, color: Colors.greenAccent),
+            ),
+          ),
+        ),
+      if (info.backend == HardwareTransportBackend.bleMacos)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.blue.withValues(alpha: 0.05),
+              border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: const Text(
+              'macOS BLE transport planned. '
+              'Detection/write backend not enabled in this build.',
+              style: TextStyle(fontSize: 9, color: Colors.blueAccent),
+            ),
+          ),
+        ),
+      if (info.lastCheckedAt != null) ...[
+        const SizedBox(height: 4),
+        Text(
+          'Last checked: '
+          '${info.lastCheckedAt!.toLocal().toString().substring(0, 19)}',
+          style: const TextStyle(fontSize: 8, color: Colors.white24),
+        ),
+      ],
+    ]),
+  );
+}
+
+class _TrRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? color;
+  const _TrRow(this.label, this.value, {this.color});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 3),
+    child: Row(children: [
+      SizedBox(
+        width: 110,
+        child: Text(label,
+            style: const TextStyle(fontSize: 9, color: Colors.white38)),
+      ),
+      Expanded(
+        child: Text(value,
+            style: TextStyle(
+                fontSize: 9,
+                color: color ?? Colors.white60,
+                fontWeight:
+                    color != null ? FontWeight.w500 : FontWeight.normal)),
       ),
     ]),
   );

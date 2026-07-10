@@ -141,6 +141,10 @@ class ReportTab extends ConsumerWidget {
           _AddressValidationReadinessCard(
               validationState: project.addressValidationState),
           const SizedBox(height: 16),
+
+          _TransportReadinessCard(
+              connectionState: project.hardwareState.connectionState),
+          const SizedBox(height: 16),
         ],
 
         // Measurement summary
@@ -1824,6 +1828,122 @@ class _ValStatRow extends StatelessWidget {
           style: TextStyle(fontSize: 9,
               color: color ?? Colors.white60,
               fontWeight: color != null ? FontWeight.w600 : FontWeight.normal)),
+    ]),
+  );
+}
+
+// ── Phase T2 Revised: Transport Readiness Card ────────────────────────────────
+
+class _TransportReadinessCard extends StatelessWidget {
+  final HardwareConnectionState connectionState;
+  const _TransportReadinessCard({required this.connectionState});
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = connectionState.selectedTransportBackend;
+    final transports = connectionState.availableTransports;
+    final selectedInfo = transports
+        .where((t) => t.backend == selected)
+        .firstOrNull;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.compare_arrows_outlined,
+              size: 13, color: Colors.white38),
+          const SizedBox(width: 7),
+          Text('Transport Readiness', style: proLabel()),
+        ]),
+        const SizedBox(height: 10),
+
+        // Selected backend
+        _TRStatRow('Selected Backend', selected.label),
+        _TRStatRow('Readiness',
+            selectedInfo?.readinessStatus.label ?? 'Unknown'),
+        _TRStatRow('Write Enabled', 'false — Phase T2 safety lock'),
+        _TRStatRow('Write Capability',
+            selectedInfo?.writeCapability.label ?? 'None'),
+
+        const SizedBox(height: 10),
+        Text('All transport backends', style: proLabel(size: 9)),
+        const SizedBox(height: 6),
+        for (final t in transports) ...[
+          Row(children: [
+            Icon(
+              t.backend == selected
+                  ? Icons.radio_button_checked_outlined
+                  : Icons.radio_button_off_outlined,
+              size: 11,
+              color: t.backend == selected ? kProAccent : Colors.white24,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                t.displayName,
+                style: TextStyle(
+                  fontSize: 9,
+                  color:
+                      t.backend == selected ? Colors.white70 : Colors.white38,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(2),
+              ),
+              child: Text(t.readinessStatus.label,
+                  style: const TextStyle(fontSize: 7, color: Colors.white38)),
+            ),
+          ]),
+          const SizedBox(height: 4),
+        ],
+
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.06),
+            border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: const Text(
+            'No transport backend is enabled for hardware write in this build. '
+            'Transport selection does not enable write. '
+            'All write capability remains at Dry-Run Only.',
+            style: TextStyle(fontSize: 9, color: Colors.orange),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _TRStatRow extends StatelessWidget {
+  final String label;
+  final String value;
+  const _TRStatRow(this.label, this.value);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 3),
+    child: Row(children: [
+      SizedBox(
+        width: 120,
+        child: Text(label,
+            style: const TextStyle(fontSize: 9, color: Colors.white38)),
+      ),
+      Expanded(
+        child: Text(value,
+            style: const TextStyle(fontSize: 9, color: Colors.white60)),
+      ),
     ]),
   );
 }

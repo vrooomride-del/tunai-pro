@@ -56,14 +56,14 @@ void main() {
 
   group('HardwareConnectionState', () {
     test('copyWith updates transport type', () {
-      const s = HardwareConnectionState();
+      final s = HardwareConnectionState();
       final updated = s.copyWith(transportType: HardwareTransportType.usbi);
       expect(updated.transportType, HardwareTransportType.usbi);
       expect(s.transportType, HardwareTransportType.simulationOnly);
     });
 
     test('JSON round-trip', () {
-      const s = HardwareConnectionState(
+      final s = HardwareConnectionState(
         transportType: HardwareTransportType.usbi,
         connectionStatus: HardwareConnectionStatus.disconnected,
         targetDevice: HardwareTargetDevice.adau1466,
@@ -75,7 +75,7 @@ void main() {
     });
 
     test('JSON contains no hardware packet fields', () {
-      const s = HardwareConnectionState(
+      final s = HardwareConnectionState(
         transportType: HardwareTransportType.usbi,
       );
       final json = s.toJson().toString();

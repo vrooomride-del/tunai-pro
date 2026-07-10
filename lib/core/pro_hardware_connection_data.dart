@@ -1,10 +1,11 @@
-// ── TUNAI PRO Phase Q — Hardware Connection Guard Data ────────────────────────
+// ── TUNAI PRO Phase Q / T2 — Hardware Connection Guard Data ──────────────────
 // Dry-run hardware planning models. No USB/BLE/SafeLoad/EEPROM write.
 // DO NOT write to hardware. DO NOT send USB or BLE packets.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
 import 'pro_export_data.dart';
 import 'pro_dsp_address_registry.dart';
+import 'pro_hardware_transport.dart';
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,11 @@ class HardwareConnectionState {
   final DateTime? lastCheckedAt;
   final String? notes;
 
-  const HardwareConnectionState({
+  // ── Phase T2: Multi-transport fields ──────────────────────────────────────
+  final HardwareTransportBackend selectedTransportBackend;
+  final List<HardwareTransportInfo> availableTransports;
+
+  HardwareConnectionState({
     this.transportType = HardwareTransportType.simulationOnly,
     this.connectionStatus = HardwareConnectionStatus.simulated,
     this.targetDevice = HardwareTargetDevice.simulation,
@@ -142,7 +147,14 @@ class HardwareConnectionState {
     this.firmwareVersion,
     this.lastCheckedAt,
     this.notes,
-  });
+    this.selectedTransportBackend = HardwareTransportBackend.simulation,
+    List<HardwareTransportInfo>? availableTransports,
+  }) : availableTransports =
+           availableTransports ?? HardwareTransportInfo.defaultAvailableTransports;
+
+  HardwareTransportInfo? get selectedTransportInfo =>
+      availableTransports.where((t) => t.backend == selectedTransportBackend)
+          .firstOrNull;
 
   HardwareConnectionState copyWith({
     HardwareTransportType? transportType,
@@ -155,6 +167,8 @@ class HardwareConnectionState {
     String? firmwareVersion,
     DateTime? lastCheckedAt,
     String? notes,
+    HardwareTransportBackend? selectedTransportBackend,
+    List<HardwareTransportInfo>? availableTransports,
   }) => HardwareConnectionState(
     transportType: transportType ?? this.transportType,
     connectionStatus: connectionStatus ?? this.connectionStatus,
@@ -166,6 +180,9 @@ class HardwareConnectionState {
     firmwareVersion: firmwareVersion ?? this.firmwareVersion,
     lastCheckedAt: lastCheckedAt ?? this.lastCheckedAt,
     notes: notes ?? this.notes,
+    selectedTransportBackend:
+        selectedTransportBackend ?? this.selectedTransportBackend,
+    availableTransports: availableTransports ?? this.availableTransports,
   );
 
   Map<String, dynamic> toJson() => {
@@ -179,6 +196,8 @@ class HardwareConnectionState {
     if (firmwareVersion != null) 'firmwareVersion': firmwareVersion,
     if (lastCheckedAt != null) 'lastCheckedAt': lastCheckedAt!.toIso8601String(),
     if (notes != null) 'notes': notes,
+    'selectedTransportBackend': selectedTransportBackend.toJson(),
+    'availableTransports': availableTransports.map((t) => t.toJson()).toList(),
   };
 
   factory HardwareConnectionState.fromJson(Map<String, dynamic> j) =>
@@ -198,6 +217,14 @@ class HardwareConnectionState {
             ? DateTime.tryParse(j['lastCheckedAt'] as String)
             : null,
         notes: j['notes'] as String?,
+        selectedTransportBackend: HardwareTransportBackend.fromJson(
+            j['selectedTransportBackend'] as String? ?? 'simulation'),
+        availableTransports: j['availableTransports'] != null
+            ? (j['availableTransports'] as List)
+                .map((e) => HardwareTransportInfo.fromJson(
+                    Map<String, dynamic>.from(e as Map)))
+                .toList()
+            : null,
       );
 }
 
@@ -404,7 +431,7 @@ class HardwareProjectState {
     this.activePlanId,
     DateTime? updatedAt,
     this.revision = 0,
-  }) : connectionState = connectionState ?? const HardwareConnectionState(),
+  }) : connectionState = connectionState ?? HardwareConnectionState(),
        updatedAt = updatedAt ?? DateTime.now();
 
   // ── Computed getters ──────────────────────────────────────────────────────
@@ -479,10 +506,11 @@ class HardwareProjectState {
       );
 
   factory HardwareProjectState.createDefault() => HardwareProjectState(
-    connectionState: const HardwareConnectionState(
+    connectionState: HardwareConnectionState(
       transportType: HardwareTransportType.simulationOnly,
       connectionStatus: HardwareConnectionStatus.simulated,
       targetDevice: HardwareTargetDevice.simulation,
+      selectedTransportBackend: HardwareTransportBackend.simulation,
     ),
     writePlans: const [],
     revision: 0,
