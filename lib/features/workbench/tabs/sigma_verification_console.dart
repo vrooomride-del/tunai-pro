@@ -58,6 +58,8 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
   // ── Execution ────────────────────────────────────────────────────────────
   bool _executing = false;
   SigmaVerificationWriteResult? _lastResult;
+  int? _smokeTestingAddress;
+  final Map<int, SigmaVerificationWriteResult> _smokeResults = {};
 
   // ── Log ──────────────────────────────────────────────────────────────────
   List<SigmaValidationLogEntry> _log = [];
@@ -222,6 +224,26 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     await _persist();
   }
 
+  Future<void> _runMasterVolumeSmokeTest(int address, String label) async {
+    if (_smokeTestingAddress != null || !widget.deviceOpen) return;
+    setState(() => _smokeTestingAddress = address);
+    final result = await _executor.writeWithRestore(SigmaVerificationWriteRequest(
+      id: 'mv_smoke_${address.toRadixString(16)}_${DateTime.now().millisecondsSinceEpoch}',
+      addressInt: address,
+      addressHex: '0x${address.toRadixString(16).padLeft(4, '0').toUpperCase()}',
+      label: label,
+      testValue32: 0x00800000,
+      restoreValue32: 0x01000000,
+      userConfirmed: true,
+      restoreValueConfirmed: true,
+    ));
+    if (!mounted) return;
+    setState(() {
+      _smokeTestingAddress = null;
+      _smokeResults[address] = result;
+    });
+  }
+
   void _markVerified() {
     final c = _selected;
     if (c == null) return;
@@ -267,6 +289,15 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     final isWindows = widget.isWindowsPlatform();
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _MasterVolumeVerificationPanel(
+        backendAvailable: widget.backend.isAvailable,
+        isWindows: isWindows,
+        deviceOpen: widget.deviceOpen,
+        executingAddress: _smokeTestingAddress,
+        results: _smokeResults,
+        onSmokeTest: _runMasterVolumeSmokeTest,
+      ),
+      const SizedBox(height: 12),
       // ── S1: Console header ──────────────────────────────────────────────
       _ConsoleHeader(
         loadResult: _loadResult,
@@ -349,6 +380,142 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
       ],
     ]);
   }
+}
+
+class _MasterVolumeVerificationPanel extends StatelessWidget {
+  final bool backendAvailable;
+  final bool isWindows;
+  final bool deviceOpen;
+  final int? executingAddress;
+  final Map<int, SigmaVerificationWriteResult> results;
+  final Future<void> Function(int address, String label) onSmokeTest;
+
+  const _MasterVolumeVerificationPanel({
+    required this.backendAvailable,
+    required this.isWindows,
+    required this.deviceOpen,
+    required this.executingAddress,
+    required this.results,
+    required this.onSmokeTest,
+  });
+
+  String get _executorLabel {
+    if (!isWindows || !backendAvailable) return 'unavailable';
+    return 'real';
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: const Key('adau1466-mv-verification-ui'),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: const Color(0xFF0E1A2E),
+      border: Border.all(color: kProAccent.withValues(alpha: 0.45)),
+      borderRadius: BorderRadius.circular(5),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('MV WRITE ACTIVE',
+          style: TextStyle(fontSize: 13, color: kProAccent, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 3),
+      const Text('MV WRITE ACTIVE · XO/PEQ BLOCKED',
+          style: TextStyle(fontSize: 10, color: Colors.orange, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 10),
+      _StatusText('Backend available: ${backendAvailable ? "yes" : "no"}'),
+      _StatusText('Platform: ${isWindows ? "Windows" : "not Windows"}'),
+      _StatusText('Executor: $_executorLabel'),
+      const SizedBox(height: 8),
+      const Text('Write enabled addresses:',
+          style: TextStyle(fontSize: 9, color: Colors.white54, fontWeight: FontWeight.w600)),
+      const _StatusText('MV L 0x0067'),
+      const _StatusText('MV R 0x0064'),
+      const SizedBox(height: 10),
+      _MvCandidateSmokeRow(
+        label: 'MV L 0x0067 candidate row',
+        address: 0x0067,
+        deviceOpen: deviceOpen,
+        executing: executingAddress == 0x0067,
+        result: results[0x0067],
+        onSmokeTest: () => onSmokeTest(0x0067, 'MV L'),
+      ),
+      const SizedBox(height: 8),
+      _MvCandidateSmokeRow(
+        label: 'MV R 0x0064 candidate row',
+        address: 0x0064,
+        deviceOpen: deviceOpen,
+        executing: executingAddress == 0x0064,
+        result: results[0x0064],
+        onSmokeTest: () => onSmokeTest(0x0064, 'MV R'),
+      ),
+      const SizedBox(height: 10),
+      const Wrap(spacing: 12, runSpacing: 4, children: [
+        _StatusText('XO blocked'),
+        _StatusText('PEQ blocked'),
+        _StatusText('SafeLoad blocked'),
+        _StatusText('Gain blocked'),
+        _StatusText('Mute blocked'),
+        _StatusText('Delay blocked'),
+      ]),
+      const SizedBox(height: 7),
+      const Text(
+        'ACK means PASS_ACK only. VERIFIED requires manual audible or measured confirmation. No EEPROM or Selfboot.',
+        style: TextStyle(fontSize: 8, color: Colors.white38, height: 1.4),
+      ),
+    ]),
+  );
+}
+
+class _MvCandidateSmokeRow extends StatelessWidget {
+  final String label;
+  final int address;
+  final bool deviceOpen;
+  final bool executing;
+  final SigmaVerificationWriteResult? result;
+  final VoidCallback onSmokeTest;
+
+  const _MvCandidateSmokeRow({
+    required this.label,
+    required this.address,
+    required this.deviceOpen,
+    required this.executing,
+    required this.result,
+    required this.onSmokeTest,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: kProSurface,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(child: Text(label,
+            style: const TextStyle(fontSize: 10, color: Colors.white70, fontWeight: FontWeight.w600))),
+        OutlinedButton(
+          key: Key('smoke-test-${address.toRadixString(16).padLeft(4, '0')}'),
+          onPressed: deviceOpen && !executing ? onSmokeTest : null,
+          child: Text(executing ? 'Smoke Test running…' : 'Smoke Test'),
+        ),
+      ]),
+      _StatusText('ACK status: ${result == null ? "not run" : result!.testAckOk ? "PASS_ACK" : "FAIL"}'),
+      _StatusText('restore status: ${result == null ? "not run" : result!.restoreAckOk ? "PASS_ACK" : "FAIL"}'),
+      _StatusText('wasActualWrite status: ${result?.testWasActualWrite ?? false}'),
+    ]),
+  );
+}
+
+class _StatusText extends StatelessWidget {
+  final String text;
+  const _StatusText(this.text);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 3),
+    child: Text(text, style: const TextStyle(
+        fontSize: 9, color: Colors.white60, fontFamily: 'monospace')),
+  );
 }
 
 // ── S1: Console Header ────────────────────────────────────────────────────────
