@@ -95,10 +95,32 @@ void main() {
       expect(mvR.kind, equals(CandidateKind.masterVolume));
     });
 
-    test('Master Volume candidates are verified by default', () {
+    test('ACK-only Master Volume targets are not verified by default', () {
       final result = SigmaAddressLoader.load();
       final mvL = result.candidates.firstWhere((c) => c.addressInt == 0x0067);
-      expect(mvL.validationStatus, equals(CandidateValidationStatus.verified));
+      final mvR = result.candidates.firstWhere((c) => c.addressInt == 0x0064);
+      expect(mvL.validationStatus, CandidateValidationStatus.passAck);
+      expect(mvR.validationStatus, CandidateValidationStatus.passAck);
+      expect(mvL.validationStatus, isNot(CandidateValidationStatus.verified));
+      expect(mvR.validationStatus, isNot(CandidateValidationStatus.verified));
+    });
+
+    test('unsupported duplicate Master Volume addresses are not verified', () {
+      final candidates = SigmaAddressLoader.load().candidates;
+      for (final address in [0x040C, 0x040B, 0x0065, 0x0068]) {
+        final matches = candidates.where((c) => c.addressInt == address);
+        expect(matches, isNotEmpty, reason: '0x${address.toRadixString(16)}');
+        for (final candidate in matches) {
+          expect(candidate.validationStatus,
+              isNot(CandidateValidationStatus.verified),
+              reason: candidate.addressHex);
+          expect(
+            candidate.validationStatus,
+            anyOf(CandidateValidationStatus.candidate,
+                CandidateValidationStatus.blocked),
+          );
+        }
+      }
     });
   });
 

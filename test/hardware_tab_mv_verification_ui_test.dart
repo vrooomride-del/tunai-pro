@@ -50,6 +50,8 @@ void main() {
     expect(find.text('MV R 0x0064'), findsOneWidget);
     expect(find.text('MV L 0x0067 candidate row'), findsOneWidget);
     expect(find.text('MV R 0x0064 candidate row'), findsOneWidget);
+    expect(find.text('0x0067: PASS_ACK · audible verification pending'), findsOneWidget);
+    expect(find.text('0x0064: PASS_ACK · audible verification pending'), findsOneWidget);
     expect(find.text('Smoke Test'), findsNWidgets(2));
 
     for (final blocked in ['XO', 'PEQ', 'SafeLoad', 'Gain', 'Mute', 'Delay']) {
@@ -101,6 +103,13 @@ void main() {
     expect(find.text('ACK status: PASS_ACK'), findsOneWidget);
     expect(find.text('restore status: PASS_ACK'), findsOneWidget);
     expect(find.text('wasActualWrite status: true'), findsOneWidget);
+    expect(find.text('0x0067: PASS_ACK · audible verification pending'), findsOneWidget);
+    expect(find.textContaining('0x0067: VERIFIED'), findsNothing);
+  });
+
+  test('actual-write allowlist remains limited to 0x0067 and 0x0064', () {
+    expect(ProUsbiSigmaVerificationExecutor.writeEnabledAddresses,
+        equals({0x0067, 0x0064}));
   });
 
   test('executor blocks every non-MV category before backend I/O', () async {

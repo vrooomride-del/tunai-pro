@@ -9,6 +9,41 @@
 import 'pro_adau1466_sigma_candidate.dart';
 import 'pro_adau1466_3way_address_map_embedded.dart';
 
+const _passAckMasterVolumeAddresses = {0x0067, 0x0064};
+
+/// Applies the currently documented ADAU1466 verification evidence.
+///
+/// ACK-only Master Volume targets remain PASS_ACK. Other Master Volume rows
+/// remain candidates (or blocked duplicates) unless measured evidence has been
+/// recorded. This also repairs persisted state created by older loader builds
+/// that initialized every Master Volume row as VERIFIED.
+void normalizeAdau1466VerificationStatuses(
+    Iterable<Adau1466SigmaCandidate> candidates) {
+  for (final candidate in candidates) {
+    if (candidate.kind != CandidateKind.masterVolume) continue;
+
+    final hasDocumentedMeasurement =
+        candidate.measurementMethod != null &&
+        candidate.measurementMethod != MeasurementMethod.notMeasured &&
+        ((candidate.measurementNote?.trim().isNotEmpty ?? false) ||
+            (candidate.operatorNote?.trim().isNotEmpty ?? false));
+    if (hasDocumentedMeasurement) continue;
+
+    if (_passAckMasterVolumeAddresses.contains(candidate.addressInt)) {
+      candidate.validationStatus = CandidateValidationStatus.passAck;
+      continue;
+    }
+
+    candidate.validationStatus = candidate.isDuplicate
+        ? CandidateValidationStatus.blocked
+        : CandidateValidationStatus.candidate;
+    if (candidate.isDuplicate) {
+      candidate.blockedReason =
+          'UNVERIFIED_DUPLICATE. Separate audible or measured evidence required.';
+    }
+  }
+}
+
 // ── SigmaLoadResult ───────────────────────────────────────────────────────────
 
 class SigmaLoadResult {
@@ -105,8 +140,16 @@ class SigmaAddressLoader {
         initStatus = CandidateValidationStatus.blocked;
         blockedReason = 'SAFELOAD_NOT_VALIDATED. Sequence requires validation before use.';
       } else if (kind == CandidateKind.masterVolume) {
-        // MV is pre-verified
-        initStatus = CandidateValidationStatus.verified;
+        // Only the proven write targets have ACK evidence. ACK is not VERIFIED.
+        initStatus = _passAckMasterVolumeAddresses.contains(addressInt)
+            ? CandidateValidationStatus.passAck
+            : isDuplicate
+                ? CandidateValidationStatus.blocked
+                : CandidateValidationStatus.candidate;
+        if (isDuplicate) {
+          blockedReason =
+              'UNVERIFIED_DUPLICATE. Separate audible or measured evidence required.';
+        }
       } else {
         initStatus = CandidateValidationStatus.candidate;
       }
@@ -137,6 +180,8 @@ class SigmaAddressLoader {
         blockedReason:    blockedReason,
       ));
     }
+
+    normalizeAdau1466VerificationStatuses(candidates);
 
     // Count kinds
     final kindCounts = <CandidateKind, int>{};

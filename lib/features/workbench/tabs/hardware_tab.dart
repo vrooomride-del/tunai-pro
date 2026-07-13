@@ -927,9 +927,9 @@ class _AddressValidationStatusPanel extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const _HwStatusRow(
           label: 'Master Volume L/R',
-          status: 'Verified',
+          status: 'PASS_ACK',
           eligible: true,
-          detail: '0x0067 / 0x0064 — direct-write validated',
+          detail: '0x0067 / 0x0064 — audible verification pending',
         ),
         const SizedBox(height: 6),
         _HwStatusRow(
@@ -1037,7 +1037,7 @@ class _LiveValidationQueuePanel extends StatelessWidget {
   const _LiveValidationQueuePanel();
 
   static const _steps = [
-    (order: '1', label: 'Master Volume L/R', note: 'Already verified', done: true),
+    (order: '1', label: 'Master Volume L/R', note: 'PASS_ACK — audible verification pending', done: false),
     (order: '2', label: 'SafeLoad Protocol', note: '0x6000–0x6007 — data + trigger', done: false),
     (order: '3', label: 'Mute — 1 channel', note: 'Confirm mute state effect', done: false),
     (order: '4', label: 'Gain — 1 channel', note: 'Confirm level change effect', done: false),
@@ -3139,7 +3139,7 @@ class _UsbiTemporaryExecutorPanel extends StatelessWidget {
           const Expanded(
             child: Text(
               'I confirm this is a controlled volatile Master Volume write. '
-              'No EEPROM. No Selfboot. Expert has verified this address.',
+              'No EEPROM. No Selfboot. Address is PASS_ACK; audible or measured verification is pending.',
               style: TextStyle(fontSize: 9, color: Colors.white60),
             ),
           ),
@@ -3538,7 +3538,7 @@ class _T4cMasterVolumePanel extends StatelessWidget {
           const Expanded(
             child: Text(
               'I understand this is a volatile Master Volume write only. '
-              'No EEPROM. No Selfboot. Address verified.',
+              'No EEPROM. No Selfboot. Address is PASS_ACK; audible or measured verification is pending.',
               style: TextStyle(fontSize: 9, color: Colors.white60),
             ),
           ),

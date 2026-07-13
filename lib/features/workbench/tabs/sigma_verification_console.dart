@@ -81,6 +81,7 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     final log   = await SigmaVerificationPersistence.loadLog();
     if (!mounted) return;
     if (saved != null && saved.length == _candidates.length) {
+      normalizeAdau1466VerificationStatuses(saved);
       setState(() {
         _candidates = saved;
         _log = log;
@@ -481,6 +482,15 @@ class _MvCandidateSmokeRow extends StatelessWidget {
     required this.onSmokeTest,
   });
 
+  String get _addressStatus {
+    final addressLabel =
+        '0x${address.toRadixString(16).padLeft(4, '0').toUpperCase()}';
+    if (result == null || (result!.testAckOk && result!.restoreAckOk)) {
+      return '$addressLabel: PASS_ACK · audible verification pending';
+    }
+    return '$addressLabel: FAIL · audible verification pending';
+  }
+
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(10),
@@ -502,6 +512,7 @@ class _MvCandidateSmokeRow extends StatelessWidget {
       _StatusText('ACK status: ${result == null ? "not run" : result!.testAckOk ? "PASS_ACK" : "FAIL"}'),
       _StatusText('restore status: ${result == null ? "not run" : result!.restoreAckOk ? "PASS_ACK" : "FAIL"}'),
       _StatusText('wasActualWrite status: ${result?.testWasActualWrite ?? false}'),
+      _StatusText(_addressStatus),
     ]),
   );
 }
