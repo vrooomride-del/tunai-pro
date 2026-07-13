@@ -24,6 +24,9 @@ import '../../../core/pro_transport_command_data.dart';
 import '../../../core/pro_transport_command_engine.dart';
 import '../../../core/pro_usbi_executor_data.dart';
 import '../../../core/pro_usbi_temporary_executor.dart';
+import '../../../core/pro_usbi_native_backend.dart';
+import '../../../core/pro_usbi_windows_native_backend.dart';
+import 'dart:io';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -52,11 +55,16 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   double _commandValue = 1.0;
   TransportCommandEnvelope? _commandEnvelope;
 
-  // ── Phase T4A: USBi Temporary Executor state ────────────────────────────
-  final _usbiExecutor = ProUsbiTemporaryExecutor.disabled();
+  // ── Phase T4A/T4C: USBi Temporary Executor state ────────────────────────
+  late final ProUsbiNativeBackend _usbiNativeBackend;
+  late final ProUsbiTemporaryExecutor _usbiExecutor;
   bool _executingUsbi = false;
   bool _usbiUserConfirmed = false;
   UsbiExecutionResult? _lastUsbiResult;
+  // T4C: Windows USBi device lifecycle state
+  bool _usbiChecking = false;
+  bool _usbiDeviceOpen = false;
+  String? _usbiOpenError;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
   bool _checkingTransport = false;
@@ -258,6 +266,31 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     await ref.read(proProjectStoreProvider.notifier)
         .updateAddressValidationState(widget.projectId,
           vs.copyWith(tasks: updated, updatedAt: DateTime.now()));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isWindows) {
+      final backend = ProUsbiWindowsNativeBackend();
+      _usbiNativeBackend = backend;
+      _usbiExecutor = ProUsbiTemporaryExecutor(
+        isWindowsPlatform: () => true,
+        backend: backend,
+      );
+      backend.initialise();
+    } else {
+      _usbiNativeBackend = const ProUsbiNativeBackendDisabled();
+      _usbiExecutor = ProUsbiTemporaryExecutor.disabled();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (Platform.isWindows && _usbiNativeBackend is ProUsbiWindowsNativeBackend) {
+      (_usbiNativeBackend as ProUsbiWindowsNativeBackend).closeDevice();
+    }
+    super.dispose();
   }
 
   @override
@@ -496,6 +529,28 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
             userConfirmed:    _usbiUserConfirmed,
             executing:        _executingUsbi,
             lastResult:       _lastUsbiResult,
+            usbiDeviceOpen:   _usbiDeviceOpen,
+            usbiChecking:     _usbiChecking,
+            usbiOpenError:    _usbiOpenError,
+            onOpenDevice: Platform.isWindows ? () async {
+              setState(() { _usbiChecking = true; _usbiOpenError = null; });
+              final backend = _usbiNativeBackend as ProUsbiWindowsNativeBackend;
+              final res = await backend.openDevice();
+              if (mounted) setState(() {
+                _usbiChecking   = false;
+                _usbiDeviceOpen = res.success;
+                _usbiOpenError  = res.success ? null : res.error;
+              });
+            } : null,
+            onCloseDevice: Platform.isWindows ? () async {
+              final backend = _usbiNativeBackend as ProUsbiWindowsNativeBackend;
+              await backend.closeDevice();
+              if (mounted) setState(() {
+                _usbiDeviceOpen    = false;
+                _usbiUserConfirmed = false;
+                _usbiOpenError     = null;
+              });
+            } : null,
             onConfirmChanged: (v) => setState(() {
               _usbiUserConfirmed = v;
               _lastUsbiResult    = null;
@@ -2594,6 +2649,11 @@ class _UsbiTemporaryExecutorPanel extends StatelessWidget {
   final bool userConfirmed;
   final bool executing;
   final UsbiExecutionResult? lastResult;
+  final bool usbiDeviceOpen;
+  final bool usbiChecking;
+  final String? usbiOpenError;
+  final VoidCallback? onOpenDevice;
+  final VoidCallback? onCloseDevice;
   final ValueChanged<bool> onConfirmChanged;
   final VoidCallback onExecute;
 
@@ -2603,6 +2663,11 @@ class _UsbiTemporaryExecutorPanel extends StatelessWidget {
     required this.userConfirmed,
     required this.executing,
     required this.lastResult,
+    required this.usbiDeviceOpen,
+    required this.usbiChecking,
+    required this.usbiOpenError,
+    required this.onOpenDevice,
+    required this.onCloseDevice,
     required this.onConfirmChanged,
     required this.onExecute,
   });
@@ -2667,7 +2732,9 @@ class _UsbiTemporaryExecutorPanel extends StatelessWidget {
               borderRadius: BorderRadius.circular(3),
             ),
             child: Text(
-              backendAvailable ? 'Available' : 'Pending — not implemented',
+              backendAvailable
+                  ? (usbiDeviceOpen ? 'Connected' : 'Available — device not open')
+                  : 'Pending — not implemented',
               style: TextStyle(
                 fontSize: 8,
                 color: backendAvailable ? Colors.greenAccent : Colors.orange,
@@ -2676,7 +2743,52 @@ class _UsbiTemporaryExecutorPanel extends StatelessWidget {
             ),
           ),
         ]),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
+
+        // T4C: Open / Close USBi Device buttons (Windows only)
+        if (onOpenDevice != null || onCloseDevice != null) ...[
+          Row(children: [
+            SizedBox(
+              height: 26,
+              child: OutlinedButton.icon(
+                onPressed: (!usbiDeviceOpen && !usbiChecking) ? onOpenDevice : null,
+                icon: usbiChecking && !usbiDeviceOpen
+                    ? const SizedBox(width: 10, height: 10,
+                        child: CircularProgressIndicator(strokeWidth: 1.2, color: Colors.white54))
+                    : const Icon(Icons.usb_outlined, size: 11),
+                label: const Text('Open USBi Device', style: TextStyle(fontSize: 9)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: usbiDeviceOpen ? Colors.white24 : Colors.white70,
+                  side: BorderSide(
+                    color: usbiDeviceOpen ? Colors.white12 : Colors.white30),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              height: 26,
+              child: OutlinedButton.icon(
+                onPressed: usbiDeviceOpen ? onCloseDevice : null,
+                icon: const Icon(Icons.usb_off_outlined, size: 11),
+                label: const Text('Close', style: TextStyle(fontSize: 9)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: usbiDeviceOpen ? Colors.redAccent : Colors.white24,
+                  side: BorderSide(
+                    color: usbiDeviceOpen ? Colors.redAccent.withValues(alpha: 0.5) : Colors.white12),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
+                ),
+              ),
+            ),
+          ]),
+          if (usbiOpenError != null) ...[
+            const SizedBox(height: 4),
+            Text(usbiOpenError!, style: const TextStyle(fontSize: 8, color: Colors.redAccent)),
+          ],
+          const SizedBox(height: 8),
+        ],
 
         // Confirm checkbox
         Row(children: [
@@ -2685,7 +2797,7 @@ class _UsbiTemporaryExecutorPanel extends StatelessWidget {
             height: 18,
             child: Checkbox(
               value:         userConfirmed,
-              onChanged:     backendAvailable ? (v) => onConfirmChanged(v ?? false) : null,
+              onChanged:     (backendAvailable && usbiDeviceOpen) ? (v) => onConfirmChanged(v ?? false) : null,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               activeColor:   Colors.orange,
               side: const BorderSide(color: Colors.white30),
@@ -2707,7 +2819,7 @@ class _UsbiTemporaryExecutorPanel extends StatelessWidget {
           width: double.infinity,
           height: 32,
           child: ElevatedButton.icon(
-            onPressed: (backendAvailable && userConfirmed && !executing)
+            onPressed: (backendAvailable && usbiDeviceOpen && userConfirmed && !executing)
                 ? onExecute
                 : null,
             icon: executing
@@ -2718,13 +2830,15 @@ class _UsbiTemporaryExecutorPanel extends StatelessWidget {
             label: Text(
               executing
                   ? 'Sending...'
-                  : backendAvailable
-                      ? 'Send USBi Packet'
-                      : 'USBi native write backend pending',
+                  : !backendAvailable
+                      ? 'USBi native write backend pending'
+                      : !usbiDeviceOpen
+                          ? 'Open USBi device first'
+                          : 'Send USBi Packet',
               style: const TextStyle(fontSize: 10),
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: (backendAvailable && userConfirmed && !executing)
+              backgroundColor: (backendAvailable && usbiDeviceOpen && userConfirmed && !executing)
                   ? Colors.orange.withValues(alpha: 0.75)
                   : Colors.white10,
               foregroundColor: Colors.white,
