@@ -29,6 +29,7 @@ import '../../../core/pro_usbi_windows_native_backend.dart';
 import '../../../core/pro_usbi_packet_builder.dart';
 import 'dart:io';
 import 'pro_hardware_mvp_status_card.dart';
+import 'sigma_verification_console.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -735,6 +736,22 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
               'SAFELOAD VALIDATION (DRY RUN ONLY)', Icons.save_outlined),
           const SizedBox(height: 8),
           const _T4cSafeloadPanel(),
+        ],
+
+        // ── S: Sigma Export Hardware Verification Console ────────────────
+        if (Platform.isWindows &&
+            _selectedTransport ==
+                HardwareTransportBackend.usbiWindowsTemporary) ...[
+          const SizedBox(height: 20),
+          const _SectionHeader(
+              'ADAU1466 SIGMA EXPORT VERIFICATION CONSOLE',
+              Icons.science_outlined),
+          const SizedBox(height: 8),
+          SigmaVerificationConsole(
+            backend:           _usbiNativeBackend,
+            isWindowsPlatform: () => Platform.isWindows,
+            deviceOpen:        _usbiDeviceOpen,
+          ),
         ],
 
         // ── R: Hardware MVP Status Card (always visible) ─────────────────
