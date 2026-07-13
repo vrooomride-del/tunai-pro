@@ -27,12 +27,20 @@ class SigmaVerificationConsole extends StatefulWidget {
   final ProUsbiNativeBackend backend;
   final bool Function() isWindowsPlatform;
   final bool deviceOpen;
+  final bool dspWritesDisabled;
+  final bool muteDiagnosticUsedThisSession;
+  final VoidCallback? onMuteDiagnosticConsumed;
+  final void Function(String warning)? onDspWriteStop;
 
   const SigmaVerificationConsole({
     super.key,
     required this.backend,
     required this.isWindowsPlatform,
     required this.deviceOpen,
+    this.dspWritesDisabled = false,
+    this.muteDiagnosticUsedThisSession = false,
+    this.onMuteDiagnosticConsumed,
+    this.onDspWriteStop,
   });
 
   @override
@@ -63,6 +71,8 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
   SigmaVerificationWriteResult? _lastResult;
   int? _smokeTestingAddress;
   final Map<int, SigmaVerificationWriteResult> _smokeResults = {};
+  bool _muteDiagnosticRunning = false;
+  Adau1466MuteValidationResult? _muteDiagnosticResult;
 
   // ── Log ──────────────────────────────────────────────────────────────────
   List<SigmaValidationLogEntry> _log = [];
@@ -81,6 +91,14 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
       isWindowsPlatform: widget.isWindowsPlatform,
     );
     _loadPersisted();
+  }
+
+  @override
+  void didUpdateWidget(covariant SigmaVerificationConsole oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.deviceOpen && widget.deviceOpen) {
+      _muteDiagnosticResult = null;
+    }
   }
 
   Future<void> _loadPersisted() async {
@@ -158,6 +176,7 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     if (!_userConfirmed) return false;
     if (!_restoreConfirmed) return false;
     if (_executing) return false;
+    if (widget.dspWritesDisabled) return false;
     return true;
   }
 
@@ -233,7 +252,11 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
   }
 
   Future<void> _runMasterVolumeSmokeTest(int address, String label) async {
-    if (_smokeTestingAddress != null || !widget.deviceOpen) return;
+    if (_smokeTestingAddress != null ||
+        !widget.deviceOpen ||
+        widget.dspWritesDisabled) {
+      return;
+    }
     setState(() => _smokeTestingAddress = address);
     final result = await _executor.writeWithRestore(SigmaVerificationWriteRequest(
       id: 'mv_smoke_${address.toRadixString(16)}_${DateTime.now().millisecondsSinceEpoch}',
@@ -250,6 +273,63 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
       _smokeTestingAddress = null;
       _smokeResults[address] = result;
     });
+  }
+
+  Future<void> _runMuteDiagnostic() async {
+    if (_muteDiagnosticRunning ||
+        widget.muteDiagnosticUsedThisSession ||
+        widget.dspWritesDisabled ||
+        !widget.deviceOpen ||
+        !_muteExecutor.isRealExecutorAvailable) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm one-shot Mute1_3 diagnostic'),
+        content: const Text(
+          'This performs one volatile test write to 0x060E with value 0, then '
+          'always attempts to restore value 1. It can run only once during '
+          'this USBi device-open session. ACK means PASS_ACK only, not VERIFIED.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('cancel-mute-diagnostic'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('confirm-mute-diagnostic'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Confirm and Run Once'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    widget.onMuteDiagnosticConsumed?.call();
+    setState(() {
+      _muteDiagnosticRunning = true;
+      _muteDiagnosticResult = null;
+    });
+    final result = await _muteExecutor.runSmokeTest(
+      addressInt: ProAdau1466MuteValidationExecutor.mute1_3Address,
+      deviceOpen: widget.deviceOpen,
+    );
+    if (!mounted) return;
+    setState(() {
+      _muteDiagnosticRunning = false;
+      _muteDiagnosticResult = result;
+    });
+    if (!result.restoreReturnedRawAck01) {
+      widget.onDspWriteStop?.call(
+        'STOP — Mute1_3 restore did not return raw ACK 01. '
+        'All further DSP writes are disabled for this device-open session.',
+      );
+    }
   }
 
   void _markVerified() {
@@ -302,6 +382,7 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
         isWindows: isWindows,
         deviceOpen: widget.deviceOpen,
         executingAddress: _smokeTestingAddress,
+        dspWritesDisabled: widget.dspWritesDisabled,
         results: _smokeResults,
         onSmokeTest: _runMasterVolumeSmokeTest,
       ),
@@ -309,10 +390,11 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
       _MuteValidationPanel(
         executorAvailable: _muteExecutor.isRealExecutorAvailable,
         deviceOpen: widget.deviceOpen,
-        diagnostics: widget.backend is ProUsbiTransactionDiagnosticsProvider
-            ? (widget.backend as ProUsbiTransactionDiagnosticsProvider)
-                .lastTransactionDiagnostics
-            : null,
+        running: _muteDiagnosticRunning,
+        usedThisSession: widget.muteDiagnosticUsedThisSession,
+        dspWritesDisabled: widget.dspWritesDisabled,
+        result: _muteDiagnosticResult,
+        onRun: _runMuteDiagnostic,
       ),
       const SizedBox(height: 12),
       // ── S1: Console header ──────────────────────────────────────────────
@@ -402,26 +484,26 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
 class _MuteValidationPanel extends StatelessWidget {
   final bool executorAvailable;
   final bool deviceOpen;
-  final UsbiNativeTransactionDiagnostics? diagnostics;
+  final bool running;
+  final bool usedThisSession;
+  final bool dspWritesDisabled;
+  final Adau1466MuteValidationResult? result;
+  final VoidCallback onRun;
 
   const _MuteValidationPanel({
     required this.executorAvailable,
     required this.deviceOpen,
-    required this.diagnostics,
+    required this.running,
+    required this.usedThisSession,
+    required this.dspWritesDisabled,
+    required this.result,
+    required this.onRun,
   });
-
-  String _transferLabel(bool? success) => success == null
-      ? 'not captured'
-      : success
-          ? 'success'
-          : 'failure';
-
-  String _hex(List<int>? bytes) =>
-      bytes == null ? 'not captured' : bytesToHex(bytes);
 
   @override
   Widget build(BuildContext context) {
-    final d = diagnostics;
+    final canRun = executorAvailable && deviceOpen && !running &&
+        !usedThisSession && !dspWritesDisabled;
     return Container(
       key: const Key('adau1466-mute1-3-validation-ui'),
       padding: const EdgeInsets.all(14),
@@ -441,41 +523,42 @@ class _MuteValidationPanel extends StatelessWidget {
         _StatusText('real executor status: ${executorAvailable ? "available" : "unavailable"}'),
         _StatusText('USBi device-open status: ${deviceOpen ? "open" : "closed"}'),
         const SizedBox(height: 8),
-        const OutlinedButton(
-          key: Key('controlled-mute-smoke-test'),
-          onPressed: null,
-          child: Text('Controlled Mute Smoke Test — DIAGNOSTIC HOLD'),
+        OutlinedButton(
+          key: const Key('controlled-mute-smoke-test'),
+          onPressed: canRun ? onRun : null,
+          child: Text(running
+              ? 'Mute Diagnostic Running…'
+              : 'Run One-Shot Mute Diagnostic'),
         ),
         const SizedBox(height: 8),
-        const _StatusText('test ACK status: diagnostic hold'),
-        const _StatusText('restore ACK status: diagnostic hold'),
-        const _StatusText('wasActualWrite status: false'),
+        _StatusText('one-shot session status: ${usedThisSession ? "used" : "available"}'),
+        _StatusText('test ACK status: ${result == null ? "not run" : result!.testAckOk ? "PASS_ACK" : "FAIL"}'),
+        _StatusText('restore ACK status: ${result == null ? "not run" : result!.restoreReturnedRawAck01 ? "PASS_ACK" : "FAIL"}'),
+        _StatusText('wasActualWrite status: ${result?.wasActualWrite ?? false}'),
         const _StatusText('audible verification pending'),
         const SizedBox(height: 8),
-        const Text('NATIVE TRANSACTION DIAGNOSTICS',
-            style: TextStyle(fontSize: 9, color: Colors.white54,
-                fontWeight: FontWeight.w700)),
-        const _StatusText('expected setup packet: 40 B2 00 00 01 01 06 00'),
-        const _StatusText('expected body length: 6 bytes'),
-        const _StatusText('expected ACK request: C0 B5 00 00 00 00 01 00'),
-        _StatusText('last setup packet: ${_hex(d?.setupPacket)}'),
-        _StatusText('last body packet: ${_hex(d?.bodyPacket)}'),
-        _StatusText('last ACK request: ${_hex(d?.ackRequestPacket)}'),
-        _StatusText('setup transfer result: ${_transferLabel(d?.setupTransferSuccess)}'),
-        _StatusText('body transfer result: ${_transferLabel(d?.bodyTransferSuccess)} '
-            '(included in setup control transfer)'),
-        _StatusText('bytes transferred: ${d?.bytesTransferred ?? "not captured"}'),
-        _StatusText('ACK read result: ${_transferLabel(d?.ackReadSuccess)}'),
-        _StatusText('ACK bytes transferred: ${d?.ackBytesTransferred ?? "not captured"}'),
-        _StatusText('raw ACK bytes: ${_hex(d?.rawAckBytes)}'),
-        _StatusText('ACK read error/timeout: ${d?.ackReadError ?? d?.timeoutDescription ?? "not captured"}'),
-        _StatusText('native backend exception: ${d?.nativeException ?? "none captured"}'),
-        _StatusText('native transfer error: ${d?.transferError ?? "none captured"}'),
-        _StatusText('timing: setup=${d?.setupElapsedMilliseconds ?? "not captured"} ms · '
-            'ACK=${d?.ackElapsedMilliseconds ?? "not captured"} ms'),
+        _NativeTransactionDiagnosticsPanel(
+          title: 'TEST TRANSACTION DIAGNOSTICS',
+          diagnostics: result?.testDiagnostics,
+        ),
+        const SizedBox(height: 8),
+        _NativeTransactionDiagnosticsPanel(
+          title: 'RESTORE TRANSACTION DIAGNOSTICS',
+          diagnostics: result?.restoreDiagnostics,
+        ),
+        if (result != null && !result!.restoreReturnedRawAck01) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'STOP — RESTORE DID NOT RETURN RAW ACK 01. ALL FURTHER DSP WRITES '
+            'ARE DISABLED FOR THIS DEVICE-OPEN SESSION.',
+            key: Key('mute-diagnostic-stop-warning'),
+            style: TextStyle(fontSize: 11, color: Colors.redAccent,
+                fontWeight: FontWeight.w900, height: 1.35),
+          ),
+        ],
         const SizedBox(height: 7),
         const Text(
-          'Diagnostic hold: this control cannot write. Diagnostics describe the last native backend transaction only. '
+          'One-shot volatile diagnostic only. No automatic retry. '
           'Physical WFL / OUT3 mapping remains pending. ACK means PASS_ACK only, never VERIFIED. '
           'All other Mute addresses, Gain, Delay, XO, PEQ, SafeLoad, unknown addresses, EEPROM, and Selfboot remain blocked.',
           style: TextStyle(fontSize: 8, color: Colors.white38, height: 1.4),
@@ -485,11 +568,54 @@ class _MuteValidationPanel extends StatelessWidget {
   }
 }
 
+class _NativeTransactionDiagnosticsPanel extends StatelessWidget {
+  final String title;
+  final UsbiNativeTransactionDiagnostics? diagnostics;
+
+  const _NativeTransactionDiagnosticsPanel({
+    required this.title,
+    required this.diagnostics,
+  });
+
+  String _transferLabel(bool? success) => success == null
+      ? 'not captured'
+      : success ? 'success' : 'failure';
+
+  String _hex(List<int>? bytes) =>
+      bytes == null ? 'not captured' : bytesToHex(bytes);
+
+  @override
+  Widget build(BuildContext context) {
+    final d = diagnostics;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: const TextStyle(fontSize: 9, color: Colors.white54,
+          fontWeight: FontWeight.w700)),
+      _StatusText('setup packet: ${_hex(d?.setupPacket)}'),
+      _StatusText('body packet: ${_hex(d?.bodyPacket)}'),
+      _StatusText('setup transfer result: ${_transferLabel(d?.setupTransferSuccess)}'),
+      _StatusText('body transfer result: ${_transferLabel(d?.bodyTransferSuccess)} '
+          '(included in setup control transfer)'),
+      _StatusText('bytes transferred: ${d?.bytesTransferred ?? "not captured"}'),
+      _StatusText('ACK request: ${_hex(d?.ackRequestPacket)}'),
+      _StatusText('ACK read result: ${_transferLabel(d?.ackReadSuccess)}'),
+      _StatusText('ACK bytes transferred: ${d?.ackBytesTransferred ?? "not captured"}'),
+      _StatusText('raw ACK bytes: ${_hex(d?.rawAckBytes)}'),
+      _StatusText('native exception: ${d?.nativeException ?? "none captured"}'),
+      _StatusText('native transfer error: ${d?.transferError ?? "none captured"}'),
+      _StatusText('ACK read error/timeout: '
+          '${d?.ackReadError ?? d?.timeoutDescription ?? "not captured"}'),
+      _StatusText('timing: setup=${d?.setupElapsedMilliseconds ?? "not captured"} ms · '
+          'ACK=${d?.ackElapsedMilliseconds ?? "not captured"} ms'),
+    ]);
+  }
+}
+
 class _MasterVolumeVerificationPanel extends StatelessWidget {
   final bool backendAvailable;
   final bool isWindows;
   final bool deviceOpen;
   final int? executingAddress;
+  final bool dspWritesDisabled;
   final Map<int, SigmaVerificationWriteResult> results;
   final Future<void> Function(int address, String label) onSmokeTest;
 
@@ -498,6 +624,7 @@ class _MasterVolumeVerificationPanel extends StatelessWidget {
     required this.isWindows,
     required this.deviceOpen,
     required this.executingAddress,
+    required this.dspWritesDisabled,
     required this.results,
     required this.onSmokeTest,
   });
@@ -535,7 +662,7 @@ class _MasterVolumeVerificationPanel extends StatelessWidget {
       _MvCandidateSmokeRow(
         label: 'MV L 0x0067 candidate row',
         address: 0x0067,
-        deviceOpen: deviceOpen,
+        deviceOpen: deviceOpen && !dspWritesDisabled,
         executing: executingAddress == 0x0067,
         result: results[0x0067],
         onSmokeTest: () => onSmokeTest(0x0067, 'MV L'),
@@ -544,7 +671,7 @@ class _MasterVolumeVerificationPanel extends StatelessWidget {
       _MvCandidateSmokeRow(
         label: 'MV R 0x0064 candidate row',
         address: 0x0064,
-        deviceOpen: deviceOpen,
+        deviceOpen: deviceOpen && !dspWritesDisabled,
         executing: executingAddress == 0x0064,
         result: results[0x0064],
         onSmokeTest: () => onSmokeTest(0x0064, 'MV R'),

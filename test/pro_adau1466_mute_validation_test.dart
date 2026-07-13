@@ -5,12 +5,18 @@ import 'package:tunai_pro/core/pro_adau1466_sigma_candidate.dart';
 import 'package:tunai_pro/core/pro_adau1466_sigma_executor.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
 
-class _ScriptedRealBackend implements ProUsbiNativeBackend {
+class _ScriptedRealBackend
+    implements ProUsbiNativeBackend, ProUsbiTransactionDiagnosticsProvider {
   final bool available;
   final List<Object> outcomes;
   final List<List<int>> setupPackets = [];
   final List<List<int>> bodyPackets = [];
   int callCount = 0;
+  UsbiNativeTransactionDiagnostics? _diagnostics;
+
+  @override
+  UsbiNativeTransactionDiagnostics? get lastTransactionDiagnostics =>
+      _diagnostics;
 
   _ScriptedRealBackend({
     this.available = true,
@@ -37,7 +43,21 @@ class _ScriptedRealBackend implements ProUsbiNativeBackend {
     bodyPackets.add(List<int>.from(bodyPacket));
     final outcome = outcomes[callCount++];
     if (outcome is Exception) throw outcome;
-    return List<int>.from(outcome as List<int>);
+    final ack = List<int>.from(outcome as List<int>);
+    _diagnostics = UsbiNativeTransactionDiagnostics(
+      setupPacket: List<int>.from(setupPacket),
+      bodyPacket: List<int>.from(bodyPacket),
+      ackRequestPacket: List<int>.from(ackReadRequest),
+      setupTransferSuccess: true,
+      bodyTransferSuccess: true,
+      bytesTransferred: bodyPacket.length,
+      ackReadSuccess: true,
+      ackBytesTransferred: ack.length,
+      rawAckBytes: ack,
+      setupElapsedMilliseconds: callCount,
+      ackElapsedMilliseconds: callCount + 1,
+    );
+    return ack;
   }
 }
 
@@ -69,6 +89,13 @@ void main() {
       expect(result.restoreAckOk, isTrue);
       expect(result.resultStatus, CandidateValidationStatus.passAck);
       expect(result.resultStatus, isNot(CandidateValidationStatus.verified));
+      expect(result.testDiagnostics?.bodyPacket,
+          [0x06, 0x0E, 0x00, 0x00, 0x00, 0x00]);
+      expect(result.restoreDiagnostics?.bodyPacket,
+          [0x06, 0x0E, 0x00, 0x00, 0x00, 0x01]);
+      expect(result.testDiagnostics?.rawAckBytes, [0x01]);
+      expect(result.restoreDiagnostics?.rawAckBytes, [0x01]);
+      expect(result.restoreReturnedRawAck01, isTrue);
     });
 
     test('rejects every address except 0x060E before backend I/O', () async {
@@ -160,6 +187,22 @@ void main() {
       expect(result.restoreFailed, isTrue);
       expect(result.error, contains('RESTORE FAILURE'));
       expect(result.resultStatus, CandidateValidationStatus.fail);
+    });
+
+    test('session safety requires restore raw ACK to be exactly 01', () async {
+      final backend = _ScriptedRealBackend(outcomes: [
+        [0x01],
+        [0xC0, 0xB5, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00],
+      ]);
+      final result = await ProAdau1466MuteValidationExecutor(
+        backend: backend,
+        isWindowsPlatform: () => true,
+      ).runSmokeTest(addressInt: 0x060E, deviceOpen: true);
+
+      expect(result.restoreAckOk, isTrue,
+          reason: 'The existing general ACK parser remains unchanged.');
+      expect(result.restoreReturnedRawAck01, isFalse,
+          reason: 'The one-shot session interlock requires exact raw 01.');
     });
 
     test('platform, device, backend, and real-executor guards block I/O',

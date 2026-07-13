@@ -8,12 +8,14 @@ class OperationalMasterVolumeControl extends StatefulWidget {
   final ProUsbiNativeBackend backend;
   final bool Function() isWindowsPlatform;
   final bool deviceOpen;
+  final bool dspWritesDisabled;
 
   const OperationalMasterVolumeControl({
     super.key,
     required this.backend,
     required this.isWindowsPlatform,
     required this.deviceOpen,
+    this.dspWritesDisabled = false,
   });
 
   @override
@@ -53,7 +55,8 @@ class _OperationalMasterVolumeControlState
     );
   }
 
-  bool get _writeEnabled => widget.deviceOpen &&
+  bool get _writeEnabled => !widget.dspWritesDisabled &&
+      widget.deviceOpen &&
       _executor.isRealExecutorAvailable &&
       !_writing;
 
@@ -151,6 +154,8 @@ class _OperationalMasterVolumeControlState
               widget.deviceOpen ? 'open' : 'closed'),
           _OperationalStatus('real executor status',
               _executor.isRealExecutorAvailable ? 'available' : 'unavailable'),
+          _OperationalStatus('session DSP write status',
+              widget.dspWritesDisabled ? 'STOPPED' : 'enabled'),
           _OperationalStatus('Last write status',
               result?.status.label ?? 'not run'),
           _OperationalStatus('L ACK status',

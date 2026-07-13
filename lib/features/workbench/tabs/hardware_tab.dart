@@ -80,6 +80,9 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   bool _usbiChecking = false;
   bool _usbiDeviceOpen = false;
   String? _usbiOpenError;
+  bool _dspWritesDisabledForSession = false;
+  String? _dspWriteStopWarning;
+  bool _muteDiagnosticUsedForSession = false;
   // T4C: self-contained panel state (no Transport Command Preview dependency)
   String _t4cSide = 'L';           // 'L' or 'R'
   double _t4cValue = 1.0;          // 1.0 / 0.5 / 0.0
@@ -870,6 +873,11 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
                         _usbiChecking = false;
                         _usbiDeviceOpen = result.success;
                         _usbiOpenError = result.error;
+                        if (result.success) {
+                          _dspWritesDisabledForSession = false;
+                          _dspWriteStopWarning = null;
+                          _muteDiagnosticUsedForSession = false;
+                        }
                       });
                     }
                   }
@@ -882,6 +890,21 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           const SizedBox(height: 8),
           Text(_usbiOpenError!, style: const TextStyle(fontSize: 9, color: Colors.redAccent)),
         ],
+        if (_dspWriteStopWarning != null) ...[
+          const SizedBox(height: 8),
+          Container(
+            key: const Key('session-dsp-write-stop-warning'),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withValues(alpha: 0.12),
+              border: Border.all(color: Colors.redAccent),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(_dspWriteStopWarning!,
+                style: const TextStyle(fontSize: 10, color: Colors.redAccent,
+                    fontWeight: FontWeight.w800)),
+          ),
+        ],
         const SizedBox(height: 16),
         const _SectionHeader('ADAU1466 SIGMA VERIFICATION CONSOLE', Icons.science_outlined),
         const SizedBox(height: 8),
@@ -889,6 +912,19 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           backend: _usbiNativeBackend,
           isWindowsPlatform: () => _isWindows,
           deviceOpen: _usbiDeviceOpen,
+          dspWritesDisabled: _dspWritesDisabledForSession,
+          muteDiagnosticUsedThisSession: _muteDiagnosticUsedForSession,
+          onMuteDiagnosticConsumed: () {
+            if (!mounted) return;
+            setState(() => _muteDiagnosticUsedForSession = true);
+          },
+          onDspWriteStop: (warning) {
+            if (!mounted) return;
+            setState(() {
+              _dspWritesDisabledForSession = true;
+              _dspWriteStopWarning = warning;
+            });
+          },
         ),
         const SizedBox(height: 20),
         const _SectionHeader('OPERATIONAL MASTER VOLUME', Icons.volume_up_outlined),
@@ -897,6 +933,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           backend: _usbiNativeBackend,
           isWindowsPlatform: () => _isWindows,
           deviceOpen: _usbiDeviceOpen,
+          dspWritesDisabled: _dspWritesDisabledForSession,
         ),
       ]),
     );

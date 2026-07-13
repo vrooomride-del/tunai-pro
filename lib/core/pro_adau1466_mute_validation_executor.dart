@@ -67,6 +67,16 @@ class ProAdau1466MuteValidationExecutor {
     String? restoreAckBytes;
     String? testError;
     String? restoreError;
+    UsbiNativeTransactionDiagnostics? testDiagnostics;
+    UsbiNativeTransactionDiagnostics? restoreDiagnostics;
+
+    UsbiNativeTransactionDiagnostics? captureDiagnostics() {
+      final currentBackend = backend;
+      return currentBackend is ProUsbiTransactionDiagnosticsProvider
+          ? (currentBackend as ProUsbiTransactionDiagnosticsProvider)
+              .lastTransactionDiagnostics
+          : null;
+    }
 
     try {
       testWasActualWrite = true;
@@ -75,12 +85,14 @@ class ProAdau1466MuteValidationExecutor {
         bodyPacket: testBody,
         ackReadRequest: ackRequest,
       );
+      testDiagnostics = captureDiagnostics();
       if (ack != null) {
         testAckBytes = bytesToHex(ack);
         testAckOk = isAckSuccess(ack);
       }
       if (!testAckOk) testError = 'Test write did not return ACK 0x01.';
     } catch (e) {
+      testDiagnostics = captureDiagnostics();
       testError = 'Test write failed: $e';
     }
 
@@ -93,6 +105,7 @@ class ProAdau1466MuteValidationExecutor {
         bodyPacket: restoreBody,
         ackReadRequest: ackRequest,
       );
+      restoreDiagnostics = captureDiagnostics();
       if (ack != null) {
         restoreAckBytes = bytesToHex(ack);
         restoreAckOk = isAckSuccess(ack);
@@ -101,6 +114,7 @@ class ProAdau1466MuteValidationExecutor {
         restoreError = 'RESTORE FAILURE: baseline 1 did not return ACK 0x01.';
       }
     } catch (e) {
+      restoreDiagnostics = captureDiagnostics();
       restoreError = 'RESTORE FAILURE: baseline write failed: $e';
     }
 
@@ -115,6 +129,8 @@ class ProAdau1466MuteValidationExecutor {
       restoreBodyHex: bytesToHex(restoreBody),
       testAckBytes: testAckBytes,
       restoreAckBytes: restoreAckBytes,
+      testDiagnostics: testDiagnostics,
+      restoreDiagnostics: restoreDiagnostics,
       error: errorParts.isEmpty ? null : errorParts.join(' '),
       resultStatus: testAckOk && restoreAckOk
           ? CandidateValidationStatus.passAck
@@ -133,6 +149,8 @@ class Adau1466MuteValidationResult {
   final String restoreBodyHex;
   final String? testAckBytes;
   final String? restoreAckBytes;
+  final UsbiNativeTransactionDiagnostics? testDiagnostics;
+  final UsbiNativeTransactionDiagnostics? restoreDiagnostics;
   final String? error;
   final CandidateValidationStatus resultStatus;
 
@@ -146,10 +164,13 @@ class Adau1466MuteValidationResult {
     required this.restoreBodyHex,
     this.testAckBytes,
     this.restoreAckBytes,
+    this.testDiagnostics,
+    this.restoreDiagnostics,
     this.error,
     required this.resultStatus,
   });
 
   bool get wasActualWrite => testWasActualWrite || restoreWasActualWrite;
   bool get restoreFailed => restoreWasActualWrite && !restoreAckOk;
+  bool get restoreReturnedRawAck01 => restoreAckBytes == '01';
 }
