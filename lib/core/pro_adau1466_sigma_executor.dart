@@ -70,6 +70,28 @@ class SigmaVerificationWriteResult {
   });
 }
 
+/// One volatile ADAU1466 parameter write through the proven USBi path.
+/// This is intentionally narrower than the verification test+restore request.
+class SigmaDirectWriteResult {
+  final int addressInt;
+  final bool wasActualWrite;
+  final bool ackOk;
+  final String bodyHex;
+  final String? ackBytes;
+  final String? error;
+  final CandidateValidationStatus resultStatus;
+
+  const SigmaDirectWriteResult({
+    required this.addressInt,
+    required this.wasActualWrite,
+    required this.ackOk,
+    required this.bodyHex,
+    this.ackBytes,
+    this.error,
+    required this.resultStatus,
+  });
+}
+
 // ── Executor ──────────────────────────────────────────────────────────────────
 
 class ProUsbiSigmaVerificationExecutor {
@@ -82,6 +104,71 @@ class ProUsbiSigmaVerificationExecutor {
     required this.backend,
     required this.isWindowsPlatform,
   });
+
+  bool get isRealExecutorAvailable =>
+      isWindowsPlatform() && backend.isAvailable && !backend.isFake;
+
+  /// Performs exactly one volatile 8.24 write. Only the two verified Master
+  /// Volume addresses can reach [ProUsbiNativeBackend.sendPacketsAndReadAck].
+  /// ACK produces PASS_ACK only; this method never marks an address VERIFIED.
+  Future<SigmaDirectWriteResult> writeSingleValue({
+    required int addressInt,
+    required int fixedPointValue,
+  }) async {
+    final body = buildParameterWriteBody(
+      addressInt: addressInt,
+      fixedPointInt: fixedPointValue,
+    );
+    final bodyHex = bytesToHex(body);
+
+    SigmaDirectWriteResult blocked(String error) => SigmaDirectWriteResult(
+      addressInt: addressInt,
+      wasActualWrite: false,
+      ackOk: false,
+      bodyHex: bodyHex,
+      error: error,
+      resultStatus: CandidateValidationStatus.blocked,
+    );
+
+    if (!isWindowsPlatform()) return blocked('Platform is not Windows.');
+    if (!backend.isAvailable) return blocked('USBi backend is unavailable.');
+    if (backend.isFake) return blocked('Operational writes require a real executor.');
+    if (!writeEnabledAddresses.contains(addressInt)) {
+      return blocked(
+          'Address 0x${addressInt.toRadixString(16).padLeft(4, '0')} is not in the Master Volume allowlist.');
+    }
+
+    List<int>? ack;
+    try {
+      ack = await backend.sendPacketsAndReadAck(
+        setupPacket: buildParameterWriteSetup(),
+        bodyPacket: body,
+        ackReadRequest: buildAckReadRequest(),
+      );
+    } catch (e) {
+      return SigmaDirectWriteResult(
+        addressInt: addressInt,
+        wasActualWrite: true,
+        ackOk: false,
+        bodyHex: bodyHex,
+        error: 'Native backend threw before completing the call: $e',
+        resultStatus: CandidateValidationStatus.fail,
+      );
+    }
+
+    final ackOk = ack != null && isAckSuccess(ack);
+    return SigmaDirectWriteResult(
+      addressInt: addressInt,
+      wasActualWrite: true,
+      ackOk: ackOk,
+      bodyHex: bodyHex,
+      ackBytes: ack == null ? null : bytesToHex(ack),
+      error: ackOk ? null : 'USBi write did not return ACK 0x01.',
+      resultStatus: ackOk
+          ? CandidateValidationStatus.passAck
+          : CandidateValidationStatus.fail,
+    );
+  }
 
   /// Writes [req.testValue32] then restores [req.restoreValue32].
   /// Guards are checked before any I/O.

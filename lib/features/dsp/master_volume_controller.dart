@@ -41,8 +41,8 @@ class MasterVolumeController extends StateNotifier<double> {
     final String profileName;
 
     if (profile.isAdau1466) {
-      // ADAU1466 5.27 고정소수점 — dbToFixed824() 사용 금지 (Q8.24 ≠ 5.27)
-      final fixed = (linear * (1 << 27)).round();
+      // ADAU1466 verified Master Volume format is 8.24.
+      final fixed = (linear * (1 << 24)).round();
       bytes4 = _toBytes4(fixed);
       addrL = kAdau1466MasterVolL;
       addrR = kAdau1466MasterVolR;

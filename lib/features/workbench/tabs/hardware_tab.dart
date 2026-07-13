@@ -30,6 +30,7 @@ import '../../../core/pro_usbi_packet_builder.dart';
 import 'dart:io';
 import 'pro_hardware_mvp_status_card.dart';
 import 'sigma_verification_console.dart';
+import 'operational_master_volume_control.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -885,6 +886,14 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         const _SectionHeader('ADAU1466 SIGMA VERIFICATION CONSOLE', Icons.science_outlined),
         const SizedBox(height: 8),
         SigmaVerificationConsole(
+          backend: _usbiNativeBackend,
+          isWindowsPlatform: () => _isWindows,
+          deviceOpen: _usbiDeviceOpen,
+        ),
+        const SizedBox(height: 20),
+        const _SectionHeader('OPERATIONAL MASTER VOLUME', Icons.volume_up_outlined),
+        const SizedBox(height: 8),
+        OperationalMasterVolumeControl(
           backend: _usbiNativeBackend,
           isWindowsPlatform: () => _isWindows,
           deviceOpen: _usbiDeviceOpen,

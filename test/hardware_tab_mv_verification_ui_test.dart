@@ -39,6 +39,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('adau1466-mv-verification-ui')), findsOneWidget);
+    expect(find.byKey(const Key('operational-master-volume-control')), findsOneWidget);
+    expect(find.text('Linked Stereo Master Volume'), findsOneWidget);
     expect(find.text('MV WRITE ACTIVE'), findsWidgets);
     expect(find.text('MV WRITE ACTIVE · XO/PEQ BLOCKED'), findsOneWidget);
     expect(find.text('Backend available: yes'), findsOneWidget);
