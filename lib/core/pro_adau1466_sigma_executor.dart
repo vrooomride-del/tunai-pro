@@ -73,6 +73,8 @@ class SigmaVerificationWriteResult {
 // ── Executor ──────────────────────────────────────────────────────────────────
 
 class ProUsbiSigmaVerificationExecutor {
+  static const Set<int> writeEnabledAddresses = {0x0067, 0x0064};
+
   final ProUsbiNativeBackend backend;
   final bool Function() isWindowsPlatform;
 
@@ -168,7 +170,25 @@ class ProUsbiSigmaVerificationExecutor {
       );
     }
 
-    // G5: Address safety — block EEPROM/Selfboot region (>= 0x8000, not safeload area)
+    // The temporary engineering executor is an explicit allowlist, not a
+    // general Sigma parameter writer. Classification or an ACK cannot widen it.
+    if (!writeEnabledAddresses.contains(req.addressInt)) {
+      return SigmaVerificationWriteResult(
+        id:                   req.id,
+        testWasActualWrite:   false,
+        restoreWasActualWrite: false,
+        testAckOk:            false,
+        restoreAckOk:         false,
+        testBodyHex:          testBodyHex,
+        restoreBodyHex:       restoreBodyHex,
+        error:                'G5: Address ${req.addressHex} is not in the Master Volume allowlist. Write blocked.',
+        backendName:          backendName,
+        resultStatus:         CandidateValidationStatus.blocked,
+        executedAt:           now,
+      );
+    }
+
+    // G6: Address safety — block EEPROM/Selfboot region (>= 0x8000, not safeload area)
     final isSafeloadArea = req.addressInt >= 0x6000 && req.addressInt <= 0x6007;
     if (req.addressInt >= 0x8000 && !isSafeloadArea) {
       return SigmaVerificationWriteResult(

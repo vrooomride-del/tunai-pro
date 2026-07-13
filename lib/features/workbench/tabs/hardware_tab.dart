@@ -33,13 +33,24 @@ import 'sigma_verification_console.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
-  const HardwareTab({super.key, required this.projectId});
+  final ProUsbiNativeBackend? usbiBackend;
+  final bool Function()? isWindowsPlatform;
+  final bool initialUsbiDeviceOpen;
+  const HardwareTab({
+    super.key,
+    required this.projectId,
+    this.usbiBackend,
+    this.isWindowsPlatform,
+    this.initialUsbiDeviceOpen = false,
+  });
 
   @override
   ConsumerState<HardwareTab> createState() => _HardwareTabState();
 }
 
 class _HardwareTabState extends ConsumerState<HardwareTab> {
+  bool get _isWindows => widget.isWindowsPlatform?.call() ?? Platform.isWindows;
+
   bool _generating = false;
   bool _generatingQueue = false;
   String? _activeValidationTaskId;
@@ -283,14 +294,23 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   @override
   void initState() {
     super.initState();
-    if (Platform.isWindows) {
+    _usbiDeviceOpen = widget.initialUsbiDeviceOpen;
+    if (widget.usbiBackend != null) {
+      _usbiNativeBackend = widget.usbiBackend!;
+      _usbiExecutor = ProUsbiTemporaryExecutor(
+        isWindowsPlatform: () => _isWindows,
+        backend: _usbiNativeBackend,
+      );
+    } else if (_isWindows) {
       final backend = ProUsbiWindowsNativeBackend();
       _usbiNativeBackend = backend;
       _usbiExecutor = ProUsbiTemporaryExecutor(
         isWindowsPlatform: () => true,
         backend: backend,
       );
-      backend.initialise();
+      backend.initialise().then((_) {
+        if (mounted) setState(() {});
+      });
     } else {
       _usbiNativeBackend = const ProUsbiNativeBackendDisabled();
       _usbiExecutor = ProUsbiTemporaryExecutor.disabled();
@@ -299,7 +319,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
 
   @override
   void dispose() {
-    if (Platform.isWindows && _usbiNativeBackend is ProUsbiWindowsNativeBackend) {
+    if (_isWindows && _usbiNativeBackend is ProUsbiWindowsNativeBackend) {
       (_usbiNativeBackend as ProUsbiWindowsNativeBackend).closeDevice();
     }
     super.dispose();
@@ -317,6 +337,11 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     final activePkg = project?.exportState.activePackage;
     final validationState = project?.addressValidationState
         ?? AddressValidationProjectState.createDefault();
+
+    if (_isWindows &&
+        _selectedTransport == HardwareTransportBackend.usbiWindowsTemporary) {
+      return _buildUsbiMasterVolumeHardwareTab();
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
@@ -788,6 +813,81 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
               ),
             ),
           ]),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildUsbiMasterVolumeHardwareTab() {
+    final backendAvailable = _usbiNativeBackend.isAvailable;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.security_outlined,
+              color: kProAccent.withValues(alpha: 0.6), size: 18),
+          const SizedBox(width: 10),
+          Text('Hardware Guard', style: proTitle(size: 16)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: kProAccent.withValues(alpha: 0.10),
+              border: Border.all(color: kProAccent.withValues(alpha: 0.45)),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: const Text('MV WRITE ACTIVE',
+                style: TextStyle(fontSize: 9, color: kProAccent,
+                    fontWeight: FontWeight.w700, letterSpacing: 0.7)),
+          ),
+        ]),
+        const SizedBox(height: 16),
+        const _SectionHeader('TRANSPORT READINESS', Icons.compare_arrows_outlined),
+        const SizedBox(height: 8),
+        _TransportReadinessPanel(
+          selectedBackend: _selectedTransport,
+          transportInfos: _transportInfos,
+          checking: _checkingTransport,
+          checkMessage: _transportCheckMessage,
+          lastChecked: _transportLastChecked,
+          onCheck: _checkTransportReadiness,
+          onSelect: _selectTransportBackend,
+          realUsbiExecutorAvailable: backendAvailable,
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 30,
+          child: OutlinedButton.icon(
+            key: const Key('usbi-open-device'),
+            onPressed: (!_usbiDeviceOpen && !_usbiChecking &&
+                    _usbiNativeBackend is ProUsbiWindowsNativeBackend)
+                ? () async {
+                    setState(() { _usbiChecking = true; _usbiOpenError = null; });
+                    final result = await (_usbiNativeBackend as ProUsbiWindowsNativeBackend).openDevice();
+                    if (mounted) {
+                      setState(() {
+                        _usbiChecking = false;
+                        _usbiDeviceOpen = result.success;
+                        _usbiOpenError = result.error;
+                      });
+                    }
+                  }
+                : null,
+            icon: const Icon(Icons.usb_outlined, size: 13),
+            label: Text(_usbiDeviceOpen ? 'USBi Device Open' : 'Open USBi Device'),
+          ),
+        ),
+        if (_usbiOpenError != null) ...[
+          const SizedBox(height: 8),
+          Text(_usbiOpenError!, style: const TextStyle(fontSize: 9, color: Colors.redAccent)),
+        ],
+        const SizedBox(height: 16),
+        const _SectionHeader('ADAU1466 SIGMA VERIFICATION CONSOLE', Icons.science_outlined),
+        const SizedBox(height: 8),
+        SigmaVerificationConsole(
+          backend: _usbiNativeBackend,
+          isWindowsPlatform: () => _isWindows,
+          deviceOpen: _usbiDeviceOpen,
         ),
       ]),
     );
@@ -2284,6 +2384,7 @@ class _TransportReadinessPanel extends StatelessWidget {
   final DateTime? lastChecked;
   final VoidCallback onCheck;
   final void Function(HardwareTransportBackend) onSelect;
+  final bool realUsbiExecutorAvailable;
 
   const _TransportReadinessPanel({
     required this.selectedBackend,
@@ -2293,6 +2394,7 @@ class _TransportReadinessPanel extends StatelessWidget {
     required this.lastChecked,
     required this.onCheck,
     required this.onSelect,
+    this.realUsbiExecutorAvailable = false,
   });
 
   @override
@@ -2315,7 +2417,10 @@ class _TransportReadinessPanel extends StatelessWidget {
 
       // Selected transport detail card
       if (selectedInfo != null)
-        _TransportDetailCard(info: selectedInfo),
+        _TransportDetailCard(
+          info: selectedInfo,
+          realUsbiExecutorAvailable: realUsbiExecutorAvailable,
+        ),
       const SizedBox(height: 10),
 
       // Action row
@@ -2476,7 +2581,11 @@ class _TransportChip extends StatelessWidget {
 
 class _TransportDetailCard extends StatelessWidget {
   final HardwareTransportInfo info;
-  const _TransportDetailCard({required this.info});
+  final bool realUsbiExecutorAvailable;
+  const _TransportDetailCard({
+    required this.info,
+    this.realUsbiExecutorAvailable = false,
+  });
 
   Color get _readinessColor => switch (info.readinessStatus) {
     TransportReadinessStatus.detected  => Colors.greenAccent,
@@ -2508,23 +2617,35 @@ class _TransportDetailCard extends StatelessWidget {
             border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
             borderRadius: BorderRadius.circular(3),
           ),
-          child: const Text('WRITE DISABLED',
-              style: TextStyle(fontSize: 7, color: Colors.orange,
+          child: Text(
+              realUsbiExecutorAvailable ? 'MV WRITE ACTIVE' : 'WRITE DISABLED',
+              style: TextStyle(fontSize: 7,
+                  color: realUsbiExecutorAvailable ? kProAccent : Colors.orange,
                   fontWeight: FontWeight.w600, letterSpacing: 0.5)),
         ),
       ]),
       const SizedBox(height: 8),
       _TrRow('Backend',    info.backend.label),
-      _TrRow('Platform',   info.platformHint),
-      _TrRow('Readiness',  info.readinessStatus.label,
+      _TrRow('Platform', realUsbiExecutorAvailable ? 'Windows' : info.platformHint),
+      _TrRow('Readiness', realUsbiExecutorAvailable
+              ? 'Real executor available'
+              : info.readinessStatus.label,
           color: _readinessColor),
-      _TrRow('Write Capability', info.writeCapability.label),
+      if (!realUsbiExecutorAvailable)
+        _TrRow('Write Capability', info.writeCapability.label),
       _TrRow('Write Enabled',
-          info.backend == HardwareTransportBackend.usbiWindowsTemporary
-              ? 'Temporary executor available — Master Volume only'
+          realUsbiExecutorAvailable
+              ? 'MV L 0x0067 · MV R 0x0064'
+              : info.backend == HardwareTransportBackend.usbiWindowsTemporary
+              ? 'Temporary executor unavailable'
               : 'false — Write disabled'),
-      _TrRow('Placeholder', info.isPlaceholder ? 'Yes' : 'No'),
-      _TrRow('Detection Only', info.isDetectionOnly ? 'Yes' : 'No'),
+      if (realUsbiExecutorAvailable) ...[
+        const _TrRow('Backend available', 'yes'),
+        const _TrRow('Executor', 'real'),
+      ] else ...[
+        _TrRow('Placeholder', info.isPlaceholder ? 'Yes' : 'No'),
+        _TrRow('Detection Only', info.isDetectionOnly ? 'Yes' : 'No'),
+      ],
       if (info.backend == HardwareTransportBackend.usbiWindowsTemporary)
         Padding(
           padding: const EdgeInsets.only(top: 4),

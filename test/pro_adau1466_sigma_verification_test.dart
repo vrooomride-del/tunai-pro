@@ -311,10 +311,10 @@ void main() {
     });
   });
 
-  // ── 15: Gain candidate test + restore ─────────────────────────────────────
+  // ── 15: Gain remains blocked ──────────────────────────────────────────────
 
-  group('15. Gain candidate can run test + restore', () {
-    test('Gain candidate with all guards passed executes and logs wasActualWrite', () async {
+  group('15. Gain candidate remains blocked', () {
+    test('Gain cannot widen the Master Volume allowlist', () async {
       final executor = ProUsbiSigmaVerificationExecutor(
         backend: _FakeBackend(ackToReturn: [0x01]),
         isWindowsPlatform: () => true,
@@ -329,16 +329,15 @@ void main() {
         userConfirmed: true,
         restoreValueConfirmed: true,
       ));
-      expect(result.testWasActualWrite, isTrue);
-      expect(result.testAckOk, isTrue);
-      expect(result.restoreWasActualWrite, isTrue);
+      expect(result.testWasActualWrite, isFalse);
+      expect(result.resultStatus, CandidateValidationStatus.blocked);
     });
   });
 
-  // ── 16: Mute candidate test + restore ────────────────────────────────────
+  // ── 16: Mute remains blocked ─────────────────────────────────────────────
 
-  group('16. Mute candidate can run test + restore', () {
-    test('Mute candidate with all guards passed and ACK [0x01] passes', () async {
+  group('16. Mute candidate remains blocked', () {
+    test('Mute cannot widen the Master Volume allowlist', () async {
       final executor = ProUsbiSigmaVerificationExecutor(
         backend: _FakeBackend(ackToReturn: [0x01]),
         isWindowsPlatform: () => true,
@@ -353,16 +352,15 @@ void main() {
         userConfirmed: true,
         restoreValueConfirmed: true,
       ));
-      expect(result.testWasActualWrite, isTrue);
-      expect(result.testAckOk, isTrue);
-      expect(result.resultStatus, equals(CandidateValidationStatus.passAck));
+      expect(result.testWasActualWrite, isFalse);
+      expect(result.resultStatus, equals(CandidateValidationStatus.blocked));
     });
   });
 
-  // ── 17: Delay candidate raw small-step ───────────────────────────────────
+  // ── 17: Delay remains blocked ────────────────────────────────────────────
 
-  group('17. Delay candidate raw small-step test + restore', () {
-    test('Delay raw 0x00000001 with confirmed restore executes', () async {
+  group('17. Delay candidate remains blocked', () {
+    test('Delay is blocked even with a confirmed restore', () async {
       final executor = ProUsbiSigmaVerificationExecutor(
         backend: _FakeBackend(ackToReturn: [0x01]),
         isWindowsPlatform: () => true,
@@ -377,8 +375,8 @@ void main() {
         userConfirmed: true,
         restoreValueConfirmed: true,
       ));
-      expect(result.testWasActualWrite, isTrue);
-      expect(result.restoreWasActualWrite, isTrue);
+      expect(result.testWasActualWrite, isFalse);
+      expect(result.restoreWasActualWrite, isFalse);
     });
 
     test('Delay test body is non-empty hex string', () async {
@@ -402,8 +400,8 @@ void main() {
 
   // ── 18: Raw unknown candidate ─────────────────────────────────────────────
 
-  group('18. Raw unknown candidate with raw 32-bit + restore', () {
-    test('Unknown address in param RAM can execute with explicit confirmation', () async {
+  group('18. Raw unknown candidate remains blocked', () {
+    test('Unknown address cannot execute with explicit confirmation', () async {
       final executor = ProUsbiSigmaVerificationExecutor(
         backend: _FakeBackend(ackToReturn: [0x01]),
         isWindowsPlatform: () => true,
@@ -418,7 +416,8 @@ void main() {
         userConfirmed: true,
         restoreValueConfirmed: true,
       ));
-      expect(result.testWasActualWrite, isTrue);
+      expect(result.testWasActualWrite, isFalse);
+      expect(result.resultStatus, CandidateValidationStatus.blocked);
     });
   });
 
@@ -444,7 +443,7 @@ void main() {
       expect(result.error, contains('G5'));
     });
 
-    test('SafeLoad area 0x6000 is NOT blocked by G5', () async {
+    test('SafeLoad area 0x6000 is blocked by the MV allowlist', () async {
       final executor = ProUsbiSigmaVerificationExecutor(
         backend: _FakeBackend(ackToReturn: [0x01]),
         isWindowsPlatform: () => true,
@@ -459,8 +458,9 @@ void main() {
         userConfirmed: true,
         restoreValueConfirmed: true,
       ));
-      // 0x6000 is in safeload area, should NOT be blocked by G5
-      expect(result.error, isNot(contains('G5')));
+      expect(result.testWasActualWrite, isFalse);
+      expect(result.resultStatus, CandidateValidationStatus.blocked);
+      expect(result.error, contains('allowlist'));
     });
   });
 
