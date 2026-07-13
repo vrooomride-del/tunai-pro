@@ -16,6 +16,7 @@ import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_sigma_candidate.dart';
 import '../../../core/pro_adau1466_sigma_loader.dart';
 import '../../../core/pro_adau1466_sigma_executor.dart';
+import '../../../core/pro_adau1466_mute_validation_executor.dart';
 import '../../../core/pro_adau1466_sigma_persistence.dart';
 import '../../../shared/pro_widgets.dart';
 
@@ -43,6 +44,7 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
   late SigmaLoadResult _loadResult;
   late List<Adau1466SigmaCandidate> _candidates;
   late ProUsbiSigmaVerificationExecutor _executor;
+  late ProAdau1466MuteValidationExecutor _muteExecutor;
 
   // ── Filter / selection ───────────────────────────────────────────────────
   CandidateKind? _filterKind;
@@ -60,6 +62,8 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
   SigmaVerificationWriteResult? _lastResult;
   int? _smokeTestingAddress;
   final Map<int, SigmaVerificationWriteResult> _smokeResults = {};
+  bool _muteSmokeTesting = false;
+  Adau1466MuteValidationResult? _muteSmokeResult;
 
   // ── Log ──────────────────────────────────────────────────────────────────
   List<SigmaValidationLogEntry> _log = [];
@@ -70,6 +74,10 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     _loadResult = SigmaAddressLoader.load();
     _candidates = List.from(_loadResult.candidates);
     _executor = ProUsbiSigmaVerificationExecutor(
+      backend: widget.backend,
+      isWindowsPlatform: widget.isWindowsPlatform,
+    );
+    _muteExecutor = ProAdau1466MuteValidationExecutor(
       backend: widget.backend,
       isWindowsPlatform: widget.isWindowsPlatform,
     );
@@ -245,6 +253,20 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     });
   }
 
+  Future<void> _runMuteSmokeTest() async {
+    if (_muteSmokeTesting) return;
+    setState(() => _muteSmokeTesting = true);
+    final result = await _muteExecutor.runSmokeTest(
+      addressInt: ProAdau1466MuteValidationExecutor.mute1_3Address,
+      deviceOpen: widget.deviceOpen,
+    );
+    if (!mounted) return;
+    setState(() {
+      _muteSmokeTesting = false;
+      _muteSmokeResult = result;
+    });
+  }
+
   void _markVerified() {
     final c = _selected;
     if (c == null) return;
@@ -297,6 +319,14 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
         executingAddress: _smokeTestingAddress,
         results: _smokeResults,
         onSmokeTest: _runMasterVolumeSmokeTest,
+      ),
+      const SizedBox(height: 12),
+      _MuteValidationPanel(
+        executorAvailable: _muteExecutor.isRealExecutorAvailable,
+        deviceOpen: widget.deviceOpen,
+        executing: _muteSmokeTesting,
+        result: _muteSmokeResult,
+        onSmokeTest: _runMuteSmokeTest,
       ),
       const SizedBox(height: 12),
       // ── S1: Console header ──────────────────────────────────────────────
@@ -380,6 +410,79 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
         _WarningsPanel(warnings: _loadResult.warnings),
       ],
     ]);
+  }
+}
+
+class _MuteValidationPanel extends StatelessWidget {
+  final bool executorAvailable;
+  final bool deviceOpen;
+  final bool executing;
+  final Adau1466MuteValidationResult? result;
+  final VoidCallback onSmokeTest;
+
+  const _MuteValidationPanel({
+    required this.executorAvailable,
+    required this.deviceOpen,
+    required this.executing,
+    required this.result,
+    required this.onSmokeTest,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final canRun = executorAvailable && deviceOpen && !executing;
+    return Container(
+      key: const Key('adau1466-mute1-3-validation-ui'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171525),
+        border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Mute1_3',
+            style: TextStyle(fontSize: 13, color: Colors.purpleAccent,
+                fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        const _StatusText('Address 0x060E'),
+        const _StatusText('Captured states: unchecked=0, checked=1'),
+        const _StatusText('Current assumed baseline: 1'),
+        _StatusText('real executor status: ${executorAvailable ? "available" : "unavailable"}'),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          key: const Key('controlled-mute-smoke-test'),
+          onPressed: canRun ? onSmokeTest : null,
+          child: Text(executing
+              ? 'Controlled Mute Smoke Test running…'
+              : 'Controlled Mute Smoke Test'),
+        ),
+        const SizedBox(height: 8),
+        _StatusText('test ACK status: ${result == null ? "not run" : result!.testAckOk ? "PASS_ACK" : "FAIL"}'),
+        _StatusText('restore ACK status: ${result == null ? "not run" : result!.restoreAckOk ? "PASS_ACK" : "FAIL"}'),
+        _StatusText('wasActualWrite status: ${result?.wasActualWrite ?? false}'),
+        const _StatusText('audible verification pending'),
+        if (result?.restoreFailed ?? false) ...[
+          const SizedBox(height: 6),
+          const Text(
+            'RESTORE FAILURE — baseline 1 was not ACK-confirmed. Output may remain muted.',
+            key: Key('mute-restore-failure-warning'),
+            style: TextStyle(fontSize: 10, color: Colors.redAccent,
+                fontWeight: FontWeight.w700),
+          ),
+        ],
+        if (result?.error != null) ...[
+          const SizedBox(height: 5),
+          Text(result!.error!,
+              style: const TextStyle(fontSize: 9, color: Colors.orange)),
+        ],
+        const SizedBox(height: 7),
+        const Text(
+          'Physical WFL / OUT3 mapping remains pending. ACK means PASS_ACK only, never VERIFIED. '
+          'All other Mute addresses, Gain, Delay, XO, PEQ, SafeLoad, unknown addresses, EEPROM, and Selfboot remain blocked.',
+          style: TextStyle(fontSize: 8, color: Colors.white38, height: 1.4),
+        ),
+      ]),
+    );
   }
 }
 
