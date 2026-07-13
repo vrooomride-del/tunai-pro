@@ -129,7 +129,7 @@ class WorkspaceHome extends ConsumerWidget {
                 ]),
 
                 const SizedBox(height: 40),
-                Text('TUNAI PRO · Phase S',
+                Text('TUNAI PRO · T4C',
                     style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
               ]),
             ),

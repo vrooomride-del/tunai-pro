@@ -2269,9 +2269,13 @@ class _TransportReadinessPanel extends StatelessWidget {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              'No transport backend is enabled for hardware write in this build. '
-              'Transport selection does not enable write. '
-              'Write capability remains: Dry-Run Only.',
+              selectedBackend == HardwareTransportBackend.usbiWindowsTemporary
+                  ? 'USBi Temporary executor available. '
+                    'Master Volume L/R only. '
+                    'All other writes remain blocked.'
+                  : 'No transport backend is enabled for hardware write in this build. '
+                    'Transport selection does not enable write. '
+                    'Write capability remains: Dry-Run Only.',
               style: proSubtitle(size: 9),
             ),
           ),
@@ -2386,7 +2390,10 @@ class _TransportDetailCard extends StatelessWidget {
       _TrRow('Readiness',  info.readinessStatus.label,
           color: _readinessColor),
       _TrRow('Write Capability', info.writeCapability.label),
-      _TrRow('Write Enabled', 'false — Phase T2 safety lock'),
+      _TrRow('Write Enabled',
+          info.backend == HardwareTransportBackend.usbiWindowsTemporary
+              ? 'Temporary executor available — Master Volume only'
+              : 'false — Write disabled'),
       _TrRow('Placeholder', info.isPlaceholder ? 'Yes' : 'No'),
       _TrRow('Detection Only', info.isDetectionOnly ? 'Yes' : 'No'),
       if (info.backend == HardwareTransportBackend.usbiWindowsTemporary)
