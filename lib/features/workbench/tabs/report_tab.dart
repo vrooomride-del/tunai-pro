@@ -19,6 +19,7 @@ import '../../../core/pro_address_validation_data.dart';
 import '../../../core/pro_hardware_connection_data.dart';
 import '../../../core/pro_deploy_package_data.dart';
 import '../../../shared/pro_widgets.dart';
+import 'pro_hardware_mvp_status_card.dart';
 
 class ReportTab extends ConsumerWidget {
   final String projectId;
@@ -152,6 +153,10 @@ class ReportTab extends ConsumerWidget {
           const _UsbiExecutorReadinessCard(),
           const SizedBox(height: 16),
         ],
+
+        // Hardware MVP status
+        const HardwareMvpStatusCard(),
+        const SizedBox(height: 16),
 
         // Measurement summary
         _MeasurementSummaryCard(

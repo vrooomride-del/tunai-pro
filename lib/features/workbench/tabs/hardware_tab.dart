@@ -28,6 +28,7 @@ import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_usbi_windows_native_backend.dart';
 import '../../../core/pro_usbi_packet_builder.dart';
 import 'dart:io';
+import 'pro_hardware_mvp_status_card.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -69,6 +70,12 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   // T4C: self-contained panel state (no Transport Command Preview dependency)
   String _t4cSide = 'L';           // 'L' or 'R'
   double _t4cValue = 1.0;          // 1.0 / 0.5 / 0.0
+
+  // ── MVP: Mute/Gain guarded validation panel state ────────────────────────
+  VerifiedDspAddress? _muteGainSelected;
+  bool _muteGainConfirmed = false;
+  bool _executingMuteGain = false;
+  UsbiExecutionResult? _lastMuteGainResult;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
   bool _checkingTransport = false;
@@ -630,6 +637,111 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
             },
           ),
         ],
+
+        // ── M: T4C — Mute/Gain Guarded Validation Panel ─────────────────
+        if (Platform.isWindows &&
+            _selectedTransport ==
+                HardwareTransportBackend.usbiWindowsTemporary) ...[
+          const SizedBox(height: 20),
+          const _SectionHeader(
+              'USBi TEMPORARY — MUTE/GAIN VALIDATION', Icons.tune_outlined),
+          const SizedBox(height: 8),
+          _T4cMuteGainPanel(
+            selected:         _muteGainSelected,
+            deviceOpen:       _usbiDeviceOpen,
+            confirmed:        _muteGainConfirmed,
+            executing:        _executingMuteGain,
+            lastResult:       _lastMuteGainResult,
+            onSelect: (addr) => setState(() {
+              _muteGainSelected  = addr;
+              _muteGainConfirmed = false;
+              _lastMuteGainResult = null;
+            }),
+            onConfirmChanged: (v) => setState(() {
+              _muteGainConfirmed  = v;
+              _lastMuteGainResult = null;
+            }),
+            onExecute: () async {
+              final addr = _muteGainSelected;
+              if (addr == null || !_muteGainConfirmed ||
+                  _executingMuteGain || !_usbiDeviceOpen) return;
+              if (!addr.isActualWriteEligible) return;
+              if (addr.dataFormat == null) return;
+              setState(() => _executingMuteGain = true);
+              final req = UsbiExecutionRequest(
+                id:                'mvp_mg_${DateTime.now().millisecondsSinceEpoch}',
+                commandEnvelopeId: 'mvp_mute_gain',
+                transportBackend:  HardwareTransportBackend.usbiWindowsTemporary,
+                parameterId:       addr.id,
+                logicalName:       addr.logicalName,
+                addressHex:        addr.addressHex,
+                addressInt:        addr.addressInt,
+                fixedPointHex:     '0x00000000',
+                fixedPointInt:     0x00000000,
+                valueFloat:        0.0,
+                userConfirmed:     _muteGainConfirmed,
+              );
+              final result = await _usbiExecutor.execute(req);
+              if (mounted) setState(() {
+                _executingMuteGain  = false;
+                _lastMuteGainResult = result;
+              });
+            },
+          ),
+        ],
+
+        // ── N: T4C — Delay Validation Panel (dry-run only) ──────────────
+        if (Platform.isWindows &&
+            _selectedTransport ==
+                HardwareTransportBackend.usbiWindowsTemporary) ...[
+          const SizedBox(height: 20),
+          const _SectionHeader(
+              'USBi TEMPORARY — DELAY VALIDATION (DRY RUN ONLY)',
+              Icons.access_time_outlined),
+          const SizedBox(height: 8),
+          const _T4cDelayPanel(),
+        ],
+
+        // ── O: T4C — PEQ Band 1 Validation Panel (dry-run only) ─────────
+        if (Platform.isWindows &&
+            _selectedTransport ==
+                HardwareTransportBackend.usbiWindowsTemporary) ...[
+          const SizedBox(height: 20),
+          const _SectionHeader(
+              'USBi TEMPORARY — PEQ BAND 1 VALIDATION (DRY RUN ONLY)',
+              Icons.graphic_eq_outlined),
+          const SizedBox(height: 8),
+          const _T4cPeqBand1Panel(),
+        ],
+
+        // ── P: T4C — XO Validation Panel (hard-blocked) ─────────────────
+        if (Platform.isWindows &&
+            _selectedTransport ==
+                HardwareTransportBackend.usbiWindowsTemporary) ...[
+          const SizedBox(height: 20),
+          const _SectionHeader(
+              'USBi TEMPORARY — XO VALIDATION (BLOCKED)',
+              Icons.device_hub_outlined),
+          const SizedBox(height: 8),
+          const _T4cXoPanel(),
+        ],
+
+        // ── Q: SafeLoad Validation Panel (dry-run only) ──────────────────
+        if (Platform.isWindows &&
+            _selectedTransport ==
+                HardwareTransportBackend.usbiWindowsTemporary) ...[
+          const SizedBox(height: 20),
+          const _SectionHeader(
+              'SAFELOAD VALIDATION (DRY RUN ONLY)', Icons.save_outlined),
+          const SizedBox(height: 8),
+          const _T4cSafeloadPanel(),
+        ],
+
+        // ── R: Hardware MVP Status Card (always visible) ─────────────────
+        const SizedBox(height: 20),
+        const _SectionHeader('HARDWARE MVP STATUS', Icons.info_outline),
+        const SizedBox(height: 8),
+        const HardwareMvpStatusCard(),
 
         // ── Scoped safety notice ──────────────────────────────────────────
         const SizedBox(height: 8),
@@ -3357,6 +3469,592 @@ class _T4cMasterVolumePanel extends StatelessWidget {
     );
   }
 }
+
+// ── MVP: Shared address row helper ────────────────────────────────────────────
+
+class _MvpAddressRow extends StatelessWidget {
+  final VerifiedDspAddress addr;
+  final bool dryRunOnly;
+  final bool blocked;
+
+  const _MvpAddressRow({
+    required this.addr,
+    this.dryRunOnly = false,
+    this.blocked    = false,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: kProPanel,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(addr.logicalName, style: proTitle(size: 10)),
+              Text(
+                '${addr.addressHex} · ${addr.verificationStatus.label}',
+                style: proLabel(size: 8, color: Colors.white38),
+              ),
+            ]),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: blocked
+                  ? Colors.red.withValues(alpha: 0.1)
+                  : kProAmber.withValues(alpha: 0.08),
+              border: Border.all(
+                  color: blocked
+                      ? Colors.red.withValues(alpha: 0.3)
+                      : kProAmber.withValues(alpha: 0.2)),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(
+              blocked ? 'BLOCKED' : 'DRY RUN',
+              style: TextStyle(
+                  fontSize: 7,
+                  color: blocked ? Colors.redAccent : kProAmber,
+                  fontWeight: FontWeight.w600),
+            ),
+          ),
+        ]),
+      );
+}
+
+// ── MVP Panel shared container helper ────────────────────────────────────────
+
+class _MvpPanelContainer extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String badgeLabel;
+  final Color badgeColor;
+  final Widget body;
+  final Color? borderColor;
+
+  const _MvpPanelContainer({
+    required this.icon,
+    required this.title,
+    required this.badgeLabel,
+    required this.badgeColor,
+    required this.body,
+    this.borderColor,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: borderColor ?? kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            decoration: BoxDecoration(
+              border: Border(
+                  bottom: BorderSide(
+                      color: (borderColor ?? kProBorder).withValues(alpha: 0.5),
+                      width: 0.5)),
+            ),
+            child: Row(children: [
+              Icon(icon, color: badgeColor, size: 13),
+              const SizedBox(width: 8),
+              Expanded(child: Text(title, style: proTitle(size: 12))),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: badgeColor.withValues(alpha: 0.1),
+                  border: Border.all(color: badgeColor.withValues(alpha: 0.35)),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(badgeLabel,
+                    style: TextStyle(
+                        fontSize: 8,
+                        color: badgeColor,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ]),
+          ),
+          Padding(padding: const EdgeInsets.all(14), child: body),
+        ]),
+      );
+}
+
+// ── MVP: Mute/Gain Guarded Validation Panel ───────────────────────────────────
+// Actual execution only when: address in registry, value format confirmed,
+// device open, user confirmed. No automatic write. No liveWriteVerified promotion.
+
+class _T4cMuteGainPanel extends StatelessWidget {
+  final VerifiedDspAddress? selected;
+  final bool deviceOpen;
+  final bool confirmed;
+  final bool executing;
+  final UsbiExecutionResult? lastResult;
+  final ValueChanged<VerifiedDspAddress?> onSelect;
+  final ValueChanged<bool> onConfirmChanged;
+  final VoidCallback onExecute;
+
+  const _T4cMuteGainPanel({
+    required this.selected,
+    required this.deviceOpen,
+    required this.confirmed,
+    required this.executing,
+    required this.lastResult,
+    required this.onSelect,
+    required this.onConfirmChanged,
+    required this.onExecute,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final registry = DspAddressRegistry.createDefault();
+    final entries = [
+      ...registry.addressesForKind(DspParameterKind.mute),
+      ...registry.addressesForKind(DspParameterKind.gain),
+    ];
+
+    final bool hasValueFormat  = selected?.dataFormat != null;
+    final bool isEligible      = selected?.isActualWriteEligible ?? false;
+    final bool canExecute      = deviceOpen && confirmed && !executing &&
+        selected != null && isEligible && hasValueFormat;
+
+    return _MvpPanelContainer(
+      icon:       Icons.tune_outlined,
+      title:      'USBi Temporary Mute/Gain Validation',
+      badgeLabel: 'GUARDED',
+      badgeColor: kProAmber,
+      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (entries.isEmpty) ...[
+          Row(children: [
+            const Icon(Icons.info_outline, color: Colors.white24, size: 12),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'No Mute/Gain addresses in registry. '
+                'Address confirmation required before validation.',
+                style: proSubtitle(size: 10),
+              ),
+            ),
+          ]),
+        ] else ...[
+          Text('Select parameter:', style: proLabel(size: 9)),
+          const SizedBox(height: 6),
+          ...entries.map((addr) {
+            final valueKnown = addr.dataFormat != null;
+            final isSel      = selected?.id == addr.id;
+            return GestureDetector(
+              onTap: () => onSelect(addr),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isSel
+                      ? kProAccent.withValues(alpha: 0.1)
+                      : kProPanel,
+                  border: Border.all(
+                      color: isSel
+                          ? kProAccent.withValues(alpha: 0.4)
+                          : kProBorder),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(addr.logicalName, style: proTitle(size: 11)),
+                  Text(
+                    '${addr.addressHex} · ${addr.verificationStatus.label}',
+                    style: proLabel(size: 9, color: Colors.white38),
+                  ),
+                  if (!valueKnown)
+                    const Text(
+                      'blocked: value format requires confirmation',
+                      style: TextStyle(fontSize: 9, color: kProAmber),
+                    ),
+                  if (valueKnown)
+                    Text('format: ${addr.dataFormat}',
+                        style: const TextStyle(
+                            fontSize: 9, color: Colors.greenAccent)),
+                ]),
+              ),
+            );
+          }),
+
+          if (selected != null) ...[
+            const SizedBox(height: 10),
+            if (!hasValueFormat)
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: kProAmber.withValues(alpha: 0.06),
+                  border: Border.all(color: kProAmber.withValues(alpha: 0.25)),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'Execution blocked: value format not confirmed for '
+                  '${selected!.logicalName}.',
+                  style: const TextStyle(fontSize: 9, color: kProAmber),
+                ),
+              )
+            else if (!isEligible)
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: kProAmber.withValues(alpha: 0.06),
+                  border: Border.all(color: kProAmber.withValues(alpha: 0.25)),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'Execution blocked: ${selected!.logicalName} is not '
+                  'live-write eligible (${selected!.verificationStatus.label}).',
+                  style: const TextStyle(fontSize: 9, color: kProAmber),
+                ),
+              )
+            else ...[
+              Row(children: [
+                Checkbox(
+                  value: confirmed,
+                  onChanged: deviceOpen
+                      ? (v) => onConfirmChanged(v ?? false)
+                      : null,
+                  side: const BorderSide(color: Colors.white38),
+                  activeColor: kProAccent,
+                ),
+                Expanded(
+                  child: Text(
+                    'I confirm this is a single-parameter Mute/Gain write. '
+                    'No EEPROM. No Selfboot. No PEQ/XO/Delay/SafeLoad.',
+                    style: proSubtitle(size: 9),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: canExecute ? onExecute : null,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: canExecute
+                        ? kProAccent.withValues(alpha: 0.1)
+                        : kProPanel,
+                    border: Border.all(
+                        color: canExecute
+                            ? kProAccent.withValues(alpha: 0.4)
+                            : kProBorder),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    executing
+                        ? 'Executing...'
+                        : !deviceOpen
+                            ? 'Device not open — connect USBi first'
+                            : !confirmed
+                                ? 'Check confirmation above'
+                                : 'Execute Mute/Gain Write',
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: canExecute ? kProAccent : Colors.white24,
+                        fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ),
+            ],
+          ],
+
+          if (lastResult != null) ...[
+            const SizedBox(height: 10),
+            _T4cResultLog(result: lastResult!),
+          ],
+        ],
+      ]),
+    );
+  }
+}
+
+// ── MVP: Delay Validation Panel (dry-run only) ────────────────────────────────
+
+class _T4cDelayPanel extends StatelessWidget {
+  const _T4cDelayPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = DspAddressRegistry.createDefault()
+        .addressesForKind(DspParameterKind.delay);
+
+    return _MvpPanelContainer(
+      icon:       Icons.access_time_outlined,
+      title:      'USBi Temporary Delay Validation — Dry Run Only',
+      badgeLabel: 'DRY RUN ONLY',
+      badgeColor: Colors.blueAccent,
+      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: kProAmber.withValues(alpha: 0.06),
+            border: Border.all(color: kProAmber.withValues(alpha: 0.25)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Delay requires oscilloscope or interface timing measurement. '
+                'Actual write disabled today.',
+                style: TextStyle(fontSize: 9, color: kProAmber),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        if (entries.isEmpty)
+          Text(
+            'No Delay addresses in registry. '
+            'Address confirmation required before validation.',
+            style: proSubtitle(size: 10),
+          )
+        else
+          ...entries.map((a) => _MvpAddressRow(addr: a, dryRunOnly: true)),
+      ]),
+    );
+  }
+}
+
+// ── MVP: PEQ Band 1 Validation Panel (dry-run only) ──────────────────────────
+
+class _T4cPeqBand1Panel extends StatelessWidget {
+  const _T4cPeqBand1Panel();
+
+  static const _coeffLabels = ['b0', 'b1', 'b2', 'a1', 'a2'];
+
+  @override
+  Widget build(BuildContext context) {
+    final allPeq = DspAddressRegistry.createDefault()
+        .addressesForKind(DspParameterKind.peq);
+    final band1 = allPeq
+        .where((a) =>
+            a.bandOrStage == '1' ||
+            a.id.contains('band1') ||
+            a.id.contains('peq_1'))
+        .toList();
+
+    return _MvpPanelContainer(
+      icon:       Icons.graphic_eq_outlined,
+      title:      'USBi Temporary PEQ Band 1 Validation — Dry Run Only',
+      badgeLabel: 'DRY RUN ONLY',
+      badgeColor: Colors.blueAccent,
+      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.red.withValues(alpha: 0.05),
+            border: Border.all(color: Colors.red.withValues(alpha: 0.2)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(Icons.block_outlined, color: Colors.redAccent, size: 12),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'PEQ coefficient write requires SafeLoad validation first. '
+                'No PEQ write today.',
+                style: TextStyle(fontSize: 9, color: Colors.redAccent),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        Text('PEQ Band 1 coefficient group (preview only):',
+            style: proLabel(size: 9)),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: _coeffLabels
+              .map((c) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: kProPanel,
+                      border: Border.all(color: kProBorder),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text(c,
+                        style: const TextStyle(
+                            fontSize: 9,
+                            color: Colors.white38,
+                            fontFamily: 'monospace')),
+                  ))
+              .toList(),
+        ),
+        const SizedBox(height: 8),
+        if (band1.isEmpty)
+          Text(
+            'No PEQ Band 1 addresses in registry. '
+            'Address confirmation required.',
+            style: proSubtitle(size: 10),
+          )
+        else
+          ...band1.map((a) => _MvpAddressRow(addr: a, dryRunOnly: true)),
+      ]),
+    );
+  }
+}
+
+// ── MVP: XO Validation Panel (hard-blocked) ───────────────────────────────────
+
+class _T4cXoPanel extends StatelessWidget {
+  const _T4cXoPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = DspAddressRegistry.createDefault()
+        .addressesForKind(DspParameterKind.crossover);
+
+    return _MvpPanelContainer(
+      icon:        Icons.device_hub_outlined,
+      title:       'USBi Temporary XO Validation — BLOCKED',
+      badgeLabel:  'BLOCKED',
+      badgeColor:  Colors.redAccent,
+      borderColor: Colors.red.withValues(alpha: 0.35),
+      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.red.withValues(alpha: 0.06),
+            border: Border.all(color: Colors.red.withValues(alpha: 0.25)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.block_outlined, color: Colors.redAccent, size: 12),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'XO write is hard-blocked. No XO execution. No SafeLoad. '
+                  'No speaker-connected testing. No tweeter-risk path.',
+                  style: TextStyle(fontSize: 9, color: Colors.redAccent),
+                ),
+              ),
+            ]),
+            SizedBox(height: 6),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'OUT1/2/3/4/7/8 output mapping must be verified without speakers first.',
+                  style: TextStyle(fontSize: 9, color: kProAmber),
+                ),
+              ),
+            ]),
+            SizedBox(height: 4),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'BLOCKED UNTIL: SafeLoad validated + output mapping verified.',
+                  style: TextStyle(fontSize: 9, color: kProAmber),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        if (entries.isEmpty)
+          Text(
+            'No XO addresses in registry.',
+            style: proSubtitle(size: 10),
+          )
+        else
+          ...entries.map(
+              (a) => _MvpAddressRow(addr: a, dryRunOnly: true, blocked: true)),
+      ]),
+    );
+  }
+}
+
+// ── MVP: SafeLoad Validation Panel (dry-run only) ─────────────────────────────
+
+class _T4cSafeloadPanel extends StatelessWidget {
+  const _T4cSafeloadPanel();
+
+  static const _plannedAddresses = [
+    '0x6000', '0x6001', '0x6002', '0x6003',
+    '0x6004', '0x6005', '0x6006', '0x6007',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = DspAddressRegistry.createDefault()
+        .addressesForKind(DspParameterKind.safeload);
+
+    return _MvpPanelContainer(
+      icon:       Icons.save_outlined,
+      title:      'SafeLoad Validation — Dry Run Only',
+      badgeLabel: 'DRY RUN ONLY',
+      badgeColor: Colors.blueAccent,
+      body: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: kProAmber.withValues(alpha: 0.06),
+            border: Border.all(color: kProAmber.withValues(alpha: 0.25)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'SafeLoad must be validated before PEQ/XO live coefficient write. '
+                'No SafeLoad execution today.',
+                style: TextStyle(fontSize: 9, color: kProAmber),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        Text('Planned SafeLoad address sequence (preview only):',
+            style: proLabel(size: 9)),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: _plannedAddresses
+              .map((hex) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: kProPanel,
+                      border: Border.all(color: kProBorder),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text(hex,
+                        style: const TextStyle(
+                            fontSize: 9,
+                            color: Colors.white38,
+                            fontFamily: 'monospace')),
+                  ))
+              .toList(),
+        ),
+        const SizedBox(height: 8),
+        if (entries.isEmpty)
+          Text(
+            'No SafeLoad addresses in registry. '
+            'Address confirmation required before live SafeLoad.',
+            style: proSubtitle(size: 10),
+          )
+        else
+          ...entries.map((a) => _MvpAddressRow(addr: a, dryRunOnly: true)),
+      ]),
+    );
+  }
+}
+
+// ── T4C: Result log ───────────────────────────────────────────────────────────
 
 class _T4cResultLog extends StatelessWidget {
   final UsbiExecutionResult result;
