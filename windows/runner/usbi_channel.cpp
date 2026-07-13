@@ -287,6 +287,8 @@ void UsbiChannel::SendSetup(
             flutter::EncodableValue(
                 "ControlTransfer (setup+body) failed (error " +
                 std::to_string(err) + "): " + WinErrorToString(err));
+        res[flutter::EncodableValue("transferred")] =
+            flutter::EncodableValue(static_cast<int>(transferred));
     }
     result->Success(flutter::EncodableValue(res));
 }
@@ -384,6 +386,8 @@ void UsbiChannel::ReadAck(
             flutter::EncodableValue(true);
         res[flutter::EncodableValue("ack")] =
             flutter::EncodableValue(ackBytes);
+        res[flutter::EncodableValue("transferred")] =
+            flutter::EncodableValue(static_cast<int>(transferred));
     } else {
         DWORD err = GetLastError();
         res[flutter::EncodableValue("success")] =
@@ -392,6 +396,8 @@ void UsbiChannel::ReadAck(
             flutter::EncodableValue(
                 "ACK ControlTransfer failed (error " +
                 std::to_string(err) + "): " + WinErrorToString(err));
+        res[flutter::EncodableValue("transferred")] =
+            flutter::EncodableValue(static_cast<int>(transferred));
     }
     result->Success(flutter::EncodableValue(res));
 }

@@ -33,6 +33,52 @@ abstract class ProUsbiNativeBackend {
   });
 }
 
+/// Optional read-only diagnostics exposed by native backends.
+/// Executors must not use this metadata to widen an address allowlist.
+abstract interface class ProUsbiTransactionDiagnosticsProvider {
+  UsbiNativeTransactionDiagnostics? get lastTransactionDiagnostics;
+}
+
+class UsbiNativeTransactionDiagnostics {
+  final List<int> setupPacket;
+  final List<int> bodyPacket;
+  final List<int> ackRequestPacket;
+  final bool? setupTransferSuccess;
+  final bool? bodyTransferSuccess;
+  final int? bytesTransferred;
+  final bool? ackReadSuccess;
+  final int? ackBytesTransferred;
+  final List<int>? rawAckBytes;
+  final String? transferError;
+  final String? ackReadError;
+  final String? nativeException;
+  final int? setupElapsedMilliseconds;
+  final int? ackElapsedMilliseconds;
+  final String timeoutDescription;
+  final String bodyTransferDescription;
+
+  const UsbiNativeTransactionDiagnostics({
+    required this.setupPacket,
+    required this.bodyPacket,
+    required this.ackRequestPacket,
+    this.setupTransferSuccess,
+    this.bodyTransferSuccess,
+    this.bytesTransferred,
+    this.ackReadSuccess,
+    this.ackBytesTransferred,
+    this.rawAckBytes,
+    this.transferError,
+    this.ackReadError,
+    this.nativeException,
+    this.setupElapsedMilliseconds,
+    this.ackElapsedMilliseconds,
+    this.timeoutDescription =
+        'No explicit timeout; synchronous WinUsb_ControlTransfer.',
+    this.bodyTransferDescription =
+        'Body is the data phase of the setup control transfer.',
+  });
+}
+
 // ── Production disabled stub ──────────────────────────────────────────────────
 
 /// Disabled stub used in all production builds.

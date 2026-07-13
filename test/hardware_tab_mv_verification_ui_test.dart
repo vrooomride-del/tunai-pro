@@ -7,12 +7,15 @@ import 'package:tunai_pro/core/pro_adau1466_sigma_executor.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
 import 'package:tunai_pro/features/workbench/tabs/hardware_tab.dart';
 
-class _RealMuteBackend implements ProUsbiNativeBackend {
+class _RealMuteBackend
+    implements ProUsbiNativeBackend, ProUsbiTransactionDiagnosticsProvider {
   final List<List<int>> acknowledgements;
+  @override
+  final UsbiNativeTransactionDiagnostics? lastTransactionDiagnostics;
   final List<List<int>> capturedBodyPackets = [];
   int callCount = 0;
 
-  _RealMuteBackend(this.acknowledgements);
+  _RealMuteBackend(this.acknowledgements, {this.lastTransactionDiagnostics});
 
   @override
   bool get isAvailable => true;
@@ -82,7 +85,8 @@ void main() {
     expect(find.text('Address 0x060E'), findsOneWidget);
     expect(find.text('Captured states: unchecked=0, checked=1'), findsOneWidget);
     expect(find.text('Current assumed baseline: 1'), findsOneWidget);
-    expect(find.text('Controlled Mute Smoke Test'), findsOneWidget);
+    expect(find.text('Controlled Mute Smoke Test — DIAGNOSTIC HOLD'),
+        findsOneWidget);
     expect(find.text('audible verification pending'), findsOneWidget);
     expect(find.textContaining('Physical WFL / OUT3 mapping remains pending'),
         findsOneWidget);
@@ -145,14 +149,11 @@ void main() {
         equals({0x0067, 0x0064}));
   });
 
-  testWidgets('Controlled Mute Smoke Test writes 0 then restores 1',
+  testWidgets('Controlled Mute Smoke Test is disabled on diagnostic hold',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400, 1500));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final backend = _RealMuteBackend([
-      [0x01],
-      [0x01],
-    ]);
+    final backend = _RealMuteBackend(const []);
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
@@ -173,28 +174,34 @@ void main() {
 
     final button = find.byKey(const Key('controlled-mute-smoke-test'));
     await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-
-    expect(backend.capturedBodyPackets, [
-      [0x06, 0x0E, 0x00, 0x00, 0x00, 0x00],
-      [0x06, 0x0E, 0x00, 0x00, 0x00, 0x01],
-    ]);
-    expect(find.text('test ACK status: PASS_ACK'), findsOneWidget);
-    expect(find.text('restore ACK status: PASS_ACK'), findsOneWidget);
-    expect(find.text('wasActualWrite status: true'), findsOneWidget);
-    expect(find.textContaining('VERIFIED'), findsWidgets);
-    expect(find.text('Mute1_3 VERIFIED'), findsNothing);
+    expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
+    expect(backend.callCount, 0);
+    expect(find.text('test ACK status: diagnostic hold'), findsOneWidget);
+    expect(find.text('restore ACK status: diagnostic hold'), findsOneWidget);
+    expect(find.text('wasActualWrite status: false'), findsWidgets);
   });
 
-  testWidgets('Mute restore ACK failure shows prominent warning',
+  testWidgets('Mute panel exposes native transfer and ACK diagnostics',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400, 1500));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final backend = _RealMuteBackend([
-      [0x01],
-      [0x00],
-    ]);
+    final backend = _RealMuteBackend(
+      const [],
+      lastTransactionDiagnostics: const UsbiNativeTransactionDiagnostics(
+        setupPacket: [0x40, 0xB2, 0x00, 0x00, 0x01, 0x01, 0x06, 0x00],
+        bodyPacket: [0x06, 0x0E, 0x00, 0x00, 0x00, 0x00],
+        ackRequestPacket: [0xC0, 0xB5, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00],
+        setupTransferSuccess: true,
+        bodyTransferSuccess: true,
+        bytesTransferred: 6,
+        ackReadSuccess: false,
+        ackBytesTransferred: 0,
+        rawAckBytes: [],
+        ackReadError: 'ACK ControlTransfer failed (error 121): timeout',
+        setupElapsedMilliseconds: 2,
+        ackElapsedMilliseconds: 1000,
+      ),
+    );
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
@@ -213,14 +220,14 @@ void main() {
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
 
-    final button = find.byKey(const Key('controlled-mute-smoke-test'));
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-
-    expect(backend.callCount, 2);
-    expect(find.byKey(const Key('mute-restore-failure-warning')), findsOneWidget);
-    expect(find.text('restore ACK status: FAIL'), findsOneWidget);
+    expect(find.text('setup transfer result: success'), findsOneWidget);
+    expect(find.text('body transfer result: success (included in setup control transfer)'),
+        findsOneWidget);
+    expect(find.text('bytes transferred: 6'), findsOneWidget);
+    expect(find.text('raw ACK bytes: '), findsOneWidget);
+    expect(find.textContaining('ACK ControlTransfer failed'), findsOneWidget);
+    expect(find.text('native backend exception: none captured'), findsOneWidget);
+    expect(backend.callCount, 0);
   });
 
   test('executor blocks every non-MV category before backend I/O', () async {

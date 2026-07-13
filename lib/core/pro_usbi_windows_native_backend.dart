@@ -30,16 +30,22 @@ enum UsbiWindowsStatus {
 
 // ── Backend ───────────────────────────────────────────────────────────────────
 
-class ProUsbiWindowsNativeBackend implements ProUsbiNativeBackend {
+class ProUsbiWindowsNativeBackend
+    implements ProUsbiNativeBackend, ProUsbiTransactionDiagnosticsProvider {
   static const _channel = MethodChannel('tunai/usbi');
 
   UsbiWindowsStatus _status = UsbiWindowsStatus.unavailable;
   bool _connected = false;
   String? _lastError;
+  UsbiNativeTransactionDiagnostics? _lastTransactionDiagnostics;
 
   UsbiWindowsStatus get status => _status;
   bool get isConnected => _connected;
   String? get lastError => _lastError;
+
+  @override
+  UsbiNativeTransactionDiagnostics? get lastTransactionDiagnostics =>
+      _lastTransactionDiagnostics;
 
   @override
   bool get isAvailable {
@@ -141,38 +147,128 @@ class ProUsbiWindowsNativeBackend implements ProUsbiNativeBackend {
     required List<int> bodyPacket,
     required List<int> ackReadRequest,
   }) async {
-    if (!Platform.isWindows || !_connected) return null;
+    void record({
+      bool? setupSuccess,
+      bool? bodySuccess,
+      int? transferred,
+      bool? ackSuccess,
+      int? ackTransferred,
+      List<int>? rawAck,
+      String? transferError,
+      String? ackError,
+      String? nativeException,
+      int? setupElapsedMs,
+      int? ackElapsedMs,
+    }) {
+      _lastTransactionDiagnostics = UsbiNativeTransactionDiagnostics(
+        setupPacket: List<int>.from(setupPacket),
+        bodyPacket: List<int>.from(bodyPacket),
+        ackRequestPacket: List<int>.from(ackReadRequest),
+        setupTransferSuccess: setupSuccess,
+        bodyTransferSuccess: bodySuccess,
+        bytesTransferred: transferred,
+        ackReadSuccess: ackSuccess,
+        ackBytesTransferred: ackTransferred,
+        rawAckBytes: rawAck == null ? null : List<int>.from(rawAck),
+        transferError: transferError,
+        ackReadError: ackError,
+        nativeException: nativeException,
+        setupElapsedMilliseconds: setupElapsedMs,
+        ackElapsedMilliseconds: ackElapsedMs,
+      );
+    }
+
+    if (!Platform.isWindows || !_connected) {
+      const error = 'Backend is not connected on Windows.';
+      record(transferError: error);
+      _lastError = error;
+      return null;
+    }
 
     // Phase 1: send setup + body as single control OUT transfer
+    final setupWatch = Stopwatch()..start();
+    int? transferred;
     try {
       final setupRes = await _channel.invokeMethod<Map>('usbi_send_setup', {
         'setup': setupPacket,
         'body':  bodyPacket,
       });
       final setupMap = Map<String, dynamic>.from(setupRes ?? {});
+      setupWatch.stop();
+      transferred = setupMap['transferred'] as int?;
       if (setupMap['success'] != true) {
         _lastError = setupMap['error'] as String? ?? 'Setup transfer failed';
+        record(
+          setupSuccess: false,
+          bodySuccess: false,
+          transferred: transferred,
+          transferError: _lastError,
+          setupElapsedMs: setupWatch.elapsedMilliseconds,
+        );
         return null;
       }
     } on PlatformException catch (e) {
+      setupWatch.stop();
       _lastError = e.message;
+      record(
+        setupSuccess: false,
+        bodySuccess: false,
+        transferred: transferred,
+        transferError: e.message,
+        nativeException: '${e.code}: ${e.message ?? "PlatformException"}',
+        setupElapsedMs: setupWatch.elapsedMilliseconds,
+      );
       return null;
     }
 
     // Phase 2: read ACK
+    final ackWatch = Stopwatch()..start();
     try {
       final ackRes = await _channel.invokeMethod<Map>('usbi_read_ack', {
         'ack_request': ackReadRequest,
       });
       final ackMap = Map<String, dynamic>.from(ackRes ?? {});
+      ackWatch.stop();
       if (ackMap['success'] != true) {
         _lastError = ackMap['error'] as String? ?? 'ACK read failed';
+        record(
+          setupSuccess: true,
+          bodySuccess: true,
+          transferred: transferred,
+          ackSuccess: false,
+          ackTransferred: ackMap['transferred'] as int?,
+          ackError: _lastError,
+          setupElapsedMs: setupWatch.elapsedMilliseconds,
+          ackElapsedMs: ackWatch.elapsedMilliseconds,
+        );
         return null;
       }
       final ackBytes = (ackMap['ack'] as List?)?.cast<int>();
+      record(
+        setupSuccess: true,
+        bodySuccess: true,
+        transferred: transferred,
+        ackSuccess: true,
+        ackTransferred: ackMap['transferred'] as int? ?? ackBytes?.length,
+        rawAck: ackBytes,
+        setupElapsedMs: setupWatch.elapsedMilliseconds,
+        ackElapsedMs: ackWatch.elapsedMilliseconds,
+      );
+      _lastError = null;
       return ackBytes;
     } on PlatformException catch (e) {
+      ackWatch.stop();
       _lastError = e.message;
+      record(
+        setupSuccess: true,
+        bodySuccess: true,
+        transferred: transferred,
+        ackSuccess: false,
+        ackError: e.message,
+        nativeException: '${e.code}: ${e.message ?? "PlatformException"}',
+        setupElapsedMs: setupWatch.elapsedMilliseconds,
+        ackElapsedMs: ackWatch.elapsedMilliseconds,
+      );
       return null;
     }
   }

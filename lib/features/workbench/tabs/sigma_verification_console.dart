@@ -13,6 +13,7 @@
 
 import 'package:flutter/material.dart';
 import '../../../core/pro_usbi_native_backend.dart';
+import '../../../core/pro_usbi_packet_builder.dart';
 import '../../../core/pro_adau1466_sigma_candidate.dart';
 import '../../../core/pro_adau1466_sigma_loader.dart';
 import '../../../core/pro_adau1466_sigma_executor.dart';
@@ -62,8 +63,6 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
   SigmaVerificationWriteResult? _lastResult;
   int? _smokeTestingAddress;
   final Map<int, SigmaVerificationWriteResult> _smokeResults = {};
-  bool _muteSmokeTesting = false;
-  Adau1466MuteValidationResult? _muteSmokeResult;
 
   // ── Log ──────────────────────────────────────────────────────────────────
   List<SigmaValidationLogEntry> _log = [];
@@ -253,20 +252,6 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     });
   }
 
-  Future<void> _runMuteSmokeTest() async {
-    if (_muteSmokeTesting) return;
-    setState(() => _muteSmokeTesting = true);
-    final result = await _muteExecutor.runSmokeTest(
-      addressInt: ProAdau1466MuteValidationExecutor.mute1_3Address,
-      deviceOpen: widget.deviceOpen,
-    );
-    if (!mounted) return;
-    setState(() {
-      _muteSmokeTesting = false;
-      _muteSmokeResult = result;
-    });
-  }
-
   void _markVerified() {
     final c = _selected;
     if (c == null) return;
@@ -324,9 +309,10 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
       _MuteValidationPanel(
         executorAvailable: _muteExecutor.isRealExecutorAvailable,
         deviceOpen: widget.deviceOpen,
-        executing: _muteSmokeTesting,
-        result: _muteSmokeResult,
-        onSmokeTest: _runMuteSmokeTest,
+        diagnostics: widget.backend is ProUsbiTransactionDiagnosticsProvider
+            ? (widget.backend as ProUsbiTransactionDiagnosticsProvider)
+                .lastTransactionDiagnostics
+            : null,
       ),
       const SizedBox(height: 12),
       // ── S1: Console header ──────────────────────────────────────────────
@@ -416,21 +402,26 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
 class _MuteValidationPanel extends StatelessWidget {
   final bool executorAvailable;
   final bool deviceOpen;
-  final bool executing;
-  final Adau1466MuteValidationResult? result;
-  final VoidCallback onSmokeTest;
+  final UsbiNativeTransactionDiagnostics? diagnostics;
 
   const _MuteValidationPanel({
     required this.executorAvailable,
     required this.deviceOpen,
-    required this.executing,
-    required this.result,
-    required this.onSmokeTest,
+    required this.diagnostics,
   });
+
+  String _transferLabel(bool? success) => success == null
+      ? 'not captured'
+      : success
+          ? 'success'
+          : 'failure';
+
+  String _hex(List<int>? bytes) =>
+      bytes == null ? 'not captured' : bytesToHex(bytes);
 
   @override
   Widget build(BuildContext context) {
-    final canRun = executorAvailable && deviceOpen && !executing;
+    final d = diagnostics;
     return Container(
       key: const Key('adau1466-mute1-3-validation-ui'),
       padding: const EdgeInsets.all(14),
@@ -448,35 +439,43 @@ class _MuteValidationPanel extends StatelessWidget {
         const _StatusText('Captured states: unchecked=0, checked=1'),
         const _StatusText('Current assumed baseline: 1'),
         _StatusText('real executor status: ${executorAvailable ? "available" : "unavailable"}'),
+        _StatusText('USBi device-open status: ${deviceOpen ? "open" : "closed"}'),
         const SizedBox(height: 8),
-        OutlinedButton(
-          key: const Key('controlled-mute-smoke-test'),
-          onPressed: canRun ? onSmokeTest : null,
-          child: Text(executing
-              ? 'Controlled Mute Smoke Test running…'
-              : 'Controlled Mute Smoke Test'),
+        const OutlinedButton(
+          key: Key('controlled-mute-smoke-test'),
+          onPressed: null,
+          child: Text('Controlled Mute Smoke Test — DIAGNOSTIC HOLD'),
         ),
         const SizedBox(height: 8),
-        _StatusText('test ACK status: ${result == null ? "not run" : result!.testAckOk ? "PASS_ACK" : "FAIL"}'),
-        _StatusText('restore ACK status: ${result == null ? "not run" : result!.restoreAckOk ? "PASS_ACK" : "FAIL"}'),
-        _StatusText('wasActualWrite status: ${result?.wasActualWrite ?? false}'),
+        const _StatusText('test ACK status: diagnostic hold'),
+        const _StatusText('restore ACK status: diagnostic hold'),
+        const _StatusText('wasActualWrite status: false'),
         const _StatusText('audible verification pending'),
-        if (result?.restoreFailed ?? false) ...[
-          const SizedBox(height: 6),
-          const Text(
-            'RESTORE FAILURE — baseline 1 was not ACK-confirmed. Output may remain muted.',
-            key: Key('mute-restore-failure-warning'),
-            style: TextStyle(fontSize: 10, color: Colors.redAccent,
-                fontWeight: FontWeight.w700),
-          ),
-        ],
-        if (result?.error != null) ...[
-          const SizedBox(height: 5),
-          Text(result!.error!,
-              style: const TextStyle(fontSize: 9, color: Colors.orange)),
-        ],
+        const SizedBox(height: 8),
+        const Text('NATIVE TRANSACTION DIAGNOSTICS',
+            style: TextStyle(fontSize: 9, color: Colors.white54,
+                fontWeight: FontWeight.w700)),
+        const _StatusText('expected setup packet: 40 B2 00 00 01 01 06 00'),
+        const _StatusText('expected body length: 6 bytes'),
+        const _StatusText('expected ACK request: C0 B5 00 00 00 00 01 00'),
+        _StatusText('last setup packet: ${_hex(d?.setupPacket)}'),
+        _StatusText('last body packet: ${_hex(d?.bodyPacket)}'),
+        _StatusText('last ACK request: ${_hex(d?.ackRequestPacket)}'),
+        _StatusText('setup transfer result: ${_transferLabel(d?.setupTransferSuccess)}'),
+        _StatusText('body transfer result: ${_transferLabel(d?.bodyTransferSuccess)} '
+            '(included in setup control transfer)'),
+        _StatusText('bytes transferred: ${d?.bytesTransferred ?? "not captured"}'),
+        _StatusText('ACK read result: ${_transferLabel(d?.ackReadSuccess)}'),
+        _StatusText('ACK bytes transferred: ${d?.ackBytesTransferred ?? "not captured"}'),
+        _StatusText('raw ACK bytes: ${_hex(d?.rawAckBytes)}'),
+        _StatusText('ACK read error/timeout: ${d?.ackReadError ?? d?.timeoutDescription ?? "not captured"}'),
+        _StatusText('native backend exception: ${d?.nativeException ?? "none captured"}'),
+        _StatusText('native transfer error: ${d?.transferError ?? "none captured"}'),
+        _StatusText('timing: setup=${d?.setupElapsedMilliseconds ?? "not captured"} ms · '
+            'ACK=${d?.ackElapsedMilliseconds ?? "not captured"} ms'),
         const SizedBox(height: 7),
         const Text(
+          'Diagnostic hold: this control cannot write. Diagnostics describe the last native backend transaction only. '
           'Physical WFL / OUT3 mapping remains pending. ACK means PASS_ACK only, never VERIFIED. '
           'All other Mute addresses, Gain, Delay, XO, PEQ, SafeLoad, unknown addresses, EEPROM, and Selfboot remain blocked.',
           style: TextStyle(fontSize: 8, color: Colors.white38, height: 1.4),
