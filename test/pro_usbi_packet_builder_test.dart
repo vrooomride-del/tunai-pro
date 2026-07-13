@@ -143,6 +143,7 @@ void main() {
   });
 
   group('isAckSuccess', () {
+    // 8-byte full ACK format
     test('true for standard ACK [C0 B5 00 00 00 00 01 00]', () {
       expect(
         isAckSuccess([0xC0, 0xB5, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00]),
@@ -157,14 +158,6 @@ void main() {
       );
     });
 
-    test('false for payload shorter than 7 bytes', () {
-      expect(isAckSuccess([0xC0, 0xB5, 0x01, 0x00, 0x01, 0x00]), false);
-    });
-
-    test('false for empty payload', () {
-      expect(isAckSuccess([]), false);
-    });
-
     test('true when byte 6 is 0x01 regardless of other bytes', () {
       expect(
         isAckSuccess([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0xFF]),
@@ -177,6 +170,30 @@ void main() {
         isAckSuccess([0xC0, 0xB5, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00]),
         false,
       );
+    });
+
+    // Single-byte compact ACK — observed in hardware testing
+    test('true for single-byte ACK [0x01]', () {
+      expect(isAckSuccess([0x01]), true);
+    });
+
+    test('false for single-byte NAK [0x00]', () {
+      expect(isAckSuccess([0x00]), false);
+    });
+
+    test('false for single-byte wrong value [0x02]', () {
+      expect(isAckSuccess([0x02]), false);
+    });
+
+    // Edge cases
+    test('false for empty payload', () {
+      expect(isAckSuccess([]), false);
+    });
+
+    test('false for 2–6 byte payload (ambiguous length)', () {
+      // 2-6 bytes: not single-byte, not full 7+ byte format → false
+      expect(isAckSuccess([0x01, 0x00]), false);
+      expect(isAckSuccess([0xC0, 0xB5, 0x01, 0x00, 0x01, 0x00]), false);
     });
   });
 

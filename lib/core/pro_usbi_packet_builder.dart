@@ -68,11 +68,16 @@ List<int> buildAckReadRequest() => [
   kUsbiAckByte0, kUsbiAckByte1, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
 ];
 
-/// Returns true if [ackPayload] contains the expected ACK byte (0x01) at byte 6
-/// (index 6, 0-indexed), matching the known USBi ACK response format.
+/// Returns true if ACK payload indicates success.
+///
+/// Accepts two confirmed USBi ACK formats:
+///   1. Single-byte [0x01]  — compact ACK observed in hardware testing
+///   2. 8-byte response where byte index 6 == 0x01  — full USBi ACK format
 bool isAckSuccess(List<int> ackPayload) {
-  if (ackPayload.length < 7) return false;
-  return ackPayload[6] == kExpectedAckByte;
+  if (ackPayload.isEmpty) return false;
+  if (ackPayload.length == 1) return ackPayload[0] == kExpectedAckByte;
+  if (ackPayload.length >= 7) return ackPayload[6] == kExpectedAckByte;
+  return false;
 }
 
 /// Formats a byte list as an uppercase hex string for display/logging.
