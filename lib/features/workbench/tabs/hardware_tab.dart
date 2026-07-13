@@ -26,6 +26,7 @@ import '../../../core/pro_usbi_executor_data.dart';
 import '../../../core/pro_usbi_temporary_executor.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_usbi_windows_native_backend.dart';
+import '../../../core/pro_usbi_packet_builder.dart';
 import 'dart:io';
 
 class HardwareTab extends ConsumerStatefulWidget {
@@ -65,6 +66,9 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   bool _usbiChecking = false;
   bool _usbiDeviceOpen = false;
   String? _usbiOpenError;
+  // T4C: self-contained panel state (no Transport Command Preview dependency)
+  String _t4cSide = 'L';           // 'L' or 'R'
+  double _t4cValue = 1.0;          // 1.0 / 0.5 / 0.0
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
   bool _checkingTransport = false;
@@ -329,8 +333,13 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           ),
         ]),
         const SizedBox(height: 4),
-        Text('Dry-run hardware planning. No USBi/BLE write is enabled.',
-            style: proSubtitle()),
+        Text(
+          Platform.isWindows
+              ? 'Dry-run planning + T4C USBi Master Volume executor (Windows). '
+                'Select USBi transport below to access the write path.'
+              : 'Dry-run hardware planning. No USBi/BLE write is enabled.',
+          style: proSubtitle(),
+        ),
         const SizedBox(height: 24),
 
         // A: Connection State Panel
@@ -516,23 +525,33 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           onGenerate:      _generateTransportCommand,
         ),
 
-        // ── L: USBi Temporary Master Volume Executor (Phase T4A) ────────
-        if (_commandEnvelope != null &&
-            _usbiExecutor.isEnvelopeEligible(_commandEnvelope!)) ...[
+        // ── L: T4C — USBi Temporary Master Volume Executor ──────────────
+        // Visible directly when Windows + USBi transport selected.
+        // No Transport Command Preview prerequisite.
+        if (Platform.isWindows &&
+            _selectedTransport ==
+                HardwareTransportBackend.usbiWindowsTemporary) ...[
           const SizedBox(height: 20),
-          const _SectionHeader(
-              'USBI TEMPORARY MASTER VOLUME EXECUTOR', Icons.usb_outlined),
-          const SizedBox(height: 8),
-          _UsbiTemporaryExecutorPanel(
-            envelope:         _commandEnvelope!,
-            executor:         _usbiExecutor,
-            userConfirmed:    _usbiUserConfirmed,
-            executing:        _executingUsbi,
-            lastResult:       _lastUsbiResult,
-            usbiDeviceOpen:   _usbiDeviceOpen,
-            usbiChecking:     _usbiChecking,
-            usbiOpenError:    _usbiOpenError,
-            onOpenDevice: Platform.isWindows ? () async {
+          _T4cMasterVolumePanel(
+            side:           _t4cSide,
+            value:          _t4cValue,
+            deviceOpen:     _usbiDeviceOpen,
+            checking:       _usbiChecking,
+            openError:      _usbiOpenError,
+            executing:      _executingUsbi,
+            userConfirmed:  _usbiUserConfirmed,
+            lastResult:     _lastUsbiResult,
+            onSideChanged:  (s) => setState(() {
+              _t4cSide           = s;
+              _usbiUserConfirmed = false;
+              _lastUsbiResult    = null;
+            }),
+            onValueChanged: (v) => setState(() {
+              _t4cValue          = v;
+              _usbiUserConfirmed = false;
+              _lastUsbiResult    = null;
+            }),
+            onOpenDevice: () async {
               setState(() { _usbiChecking = true; _usbiOpenError = null; });
               final backend = _usbiNativeBackend as ProUsbiWindowsNativeBackend;
               final res = await backend.openDevice();
@@ -541,26 +560,67 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
                 _usbiDeviceOpen = res.success;
                 _usbiOpenError  = res.success ? null : res.error;
               });
-            } : null,
-            onCloseDevice: Platform.isWindows ? () async {
+            },
+            onCloseDevice: () async {
               final backend = _usbiNativeBackend as ProUsbiWindowsNativeBackend;
               await backend.closeDevice();
               if (mounted) setState(() {
                 _usbiDeviceOpen    = false;
                 _usbiUserConfirmed = false;
                 _usbiOpenError     = null;
+                _lastUsbiResult    = null;
               });
-            } : null,
+            },
             onConfirmChanged: (v) => setState(() {
               _usbiUserConfirmed = v;
               _lastUsbiResult    = null;
             }),
             onExecute: () async {
-              if (!_usbiUserConfirmed || _executingUsbi) return;
+              if (!_usbiUserConfirmed || _executingUsbi || !_usbiDeviceOpen) return;
               setState(() => _executingUsbi = true);
-              final req = _usbiExecutor.buildRequest(
-                envelope:      _commandEnvelope!,
-                userConfirmed: _usbiUserConfirmed,
+              final addrInt = _t4cSide == 'L'
+                  ? kMasterVolumeLAddr : kMasterVolumeRAddr;
+              final fixedInt = _t4cValue >= 1.0
+                  ? 0x01000000
+                  : _t4cValue >= 0.5
+                      ? 0x00800000
+                      : 0x00000000;
+              final req = UsbiExecutionRequest(
+                id:                't4c_${DateTime.now().millisecondsSinceEpoch}',
+                commandEnvelopeId: 't4c_direct',
+                transportBackend:  HardwareTransportBackend.usbiWindowsTemporary,
+                parameterId:       'master_volume_${_t4cSide.toLowerCase()}',
+                logicalName:       'Master Volume ${_t4cSide}',
+                addressHex:        '0x${addrInt.toRadixString(16).padLeft(4, '0').toUpperCase()}',
+                addressInt:        addrInt,
+                fixedPointHex:     '0x${fixedInt.toRadixString(16).padLeft(8, '0').toUpperCase()}',
+                fixedPointInt:     fixedInt,
+                valueFloat:        _t4cValue,
+                userConfirmed:     _usbiUserConfirmed,
+              );
+              final result = await _usbiExecutor.execute(req);
+              if (mounted) setState(() {
+                _executingUsbi  = false;
+                _lastUsbiResult = result;
+              });
+            },
+            onRestore: () async {
+              if (_executingUsbi || !_usbiDeviceOpen) return;
+              setState(() => _executingUsbi = true);
+              final addrInt = _t4cSide == 'L'
+                  ? kMasterVolumeLAddr : kMasterVolumeRAddr;
+              final req = UsbiExecutionRequest(
+                id:                't4c_restore_${DateTime.now().millisecondsSinceEpoch}',
+                commandEnvelopeId: 't4c_restore',
+                transportBackend:  HardwareTransportBackend.usbiWindowsTemporary,
+                parameterId:       'master_volume_${_t4cSide.toLowerCase()}_restore',
+                logicalName:       'Master Volume ${_t4cSide} Restore 1.0',
+                addressHex:        '0x${addrInt.toRadixString(16).padLeft(4, '0').toUpperCase()}',
+                addressInt:        addrInt,
+                fixedPointHex:     '0x01000000',
+                fixedPointInt:     0x01000000,
+                valueFloat:        1.0,
+                userConfirmed:     true,
               );
               final result = await _usbiExecutor.execute(req);
               if (mounted) setState(() {
@@ -571,7 +631,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           ),
         ],
 
-        // Hardware write disabled notice (always shown)
+        // ── Scoped safety notice ──────────────────────────────────────────
         const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
@@ -585,10 +645,16 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Hardware write remains disabled. '
-                'Selected transport write backend is not enabled. '
-                'No USB, BLE, or ICP5 packets are sent. No SafeLoad is executed. '
-                'No EEPROM/Selfboot write is performed.',
+                Platform.isWindows &&
+                    _selectedTransport ==
+                        HardwareTransportBackend.usbiWindowsTemporary
+                    ? 'Only verified Master Volume L/R can use the temporary '
+                      'USBi executor. All other writes remain blocked. '
+                      'No PEQ/XO/Gain/Mute/Delay/SafeLoad/EEPROM/Selfboot. '
+                      'USBi is temporary — ICP5 is the final target.'
+                    : 'Hardware write remains disabled for the selected transport. '
+                      'No USB, BLE, or ICP5 packets are sent. No SafeLoad is executed. '
+                      'No EEPROM/Selfboot write is performed.',
                 style: proSubtitle(size: 9),
               ),
             ),
@@ -2641,8 +2707,8 @@ class _CommandEnvelopeCard extends StatelessWidget {
   );
 }
 
-// ── Phase T4A: USBi Temporary Executor Panel ──────────────────────────────────
-
+// ── Phase T4A: USBi Temporary Executor Panel (superseded by T4C panel) ────────
+// ignore: unused_element
 class _UsbiTemporaryExecutorPanel extends StatelessWidget {
   final TransportCommandEnvelope envelope;
   final ProUsbiTemporaryExecutor executor;
@@ -2938,4 +3004,385 @@ class _CmdRow extends StatelessWidget {
       ),
     ]),
   );
+}
+
+// ── T4C: Self-contained Master Volume Executor Panel ─────────────────────────
+// Shown directly in Hardware tab when Windows + USBi transport selected.
+// No Transport Command Preview prerequisite.
+// Only ADAU1466 Master Volume L (0x0067) / R (0x0064). Volatile only.
+
+class _T4cMasterVolumePanel extends StatelessWidget {
+  final String side;
+  final double value;
+  final bool deviceOpen;
+  final bool checking;
+  final String? openError;
+  final bool executing;
+  final bool userConfirmed;
+  final UsbiExecutionResult? lastResult;
+  final ValueChanged<String> onSideChanged;
+  final ValueChanged<double> onValueChanged;
+  final VoidCallback onOpenDevice;
+  final VoidCallback onCloseDevice;
+  final ValueChanged<bool> onConfirmChanged;
+  final VoidCallback onExecute;
+  final VoidCallback onRestore;
+
+  const _T4cMasterVolumePanel({
+    required this.side,
+    required this.value,
+    required this.deviceOpen,
+    required this.checking,
+    required this.openError,
+    required this.executing,
+    required this.userConfirmed,
+    required this.lastResult,
+    required this.onSideChanged,
+    required this.onValueChanged,
+    required this.onOpenDevice,
+    required this.onCloseDevice,
+    required this.onConfirmChanged,
+    required this.onExecute,
+    required this.onRestore,
+  });
+
+  int get _addrInt => side == 'L' ? kMasterVolumeLAddr : kMasterVolumeRAddr;
+  String get _addrHex => side == 'L' ? '0x0067' : '0x0064';
+  int get _fixedInt => value >= 1.0
+      ? 0x01000000
+      : value >= 0.5
+          ? 0x00800000
+          : 0x00000000;
+  String get _fixedHex =>
+      '0x${_fixedInt.toRadixString(16).padLeft(8, '0').toUpperCase()}';
+  String get _bodyHex {
+    final b = buildParameterWriteBody(
+        addressInt: _addrInt, fixedPointInt: _fixedInt);
+    return bytesToHex(b);
+  }
+
+  bool get _canExecute =>
+      deviceOpen && userConfirmed && !executing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1A2E),
+        border: Border.all(color: const Color(0xFF1E4080)),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Build marker
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.blueAccent.withValues(alpha: 0.1),
+            border: Border.all(color: Colors.blueAccent.withValues(alpha: 0.3)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: const Text(
+            'TUNAI PRO · T4C USBi MV Test Build · USBi MV executor present',
+            style: TextStyle(fontSize: 8, color: Colors.blueAccent,
+                fontWeight: FontWeight.w600, letterSpacing: 0.5),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Section header
+        Row(children: [
+          const Icon(Icons.usb_outlined, size: 13, color: Colors.orange),
+          const SizedBox(width: 6),
+          const Text('USBi Temporary Master Volume Executor',
+              style: TextStyle(fontSize: 11, color: Colors.white,
+                  fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 6),
+
+        // Warning
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.07),
+            border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: const Text(
+            'PHASE T4C — Temporary USBi engineering path. '
+            'ADAU1466 Master Volume L/R ONLY (0x0067 / 0x0064). '
+            'Volatile write — no EEPROM, no Selfboot, no SafeLoad. '
+            'ICP5 is the final transport target.',
+            style: TextStyle(fontSize: 8, color: Colors.orange),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Backend status + open/close
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: (deviceOpen ? Colors.greenAccent : Colors.orange)
+                  .withValues(alpha: 0.1),
+              border: Border.all(
+                  color: (deviceOpen ? Colors.greenAccent : Colors.orange)
+                      .withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Text(
+              deviceOpen ? 'USBi CONNECTED' : 'USBi NOT OPEN',
+              style: TextStyle(
+                  fontSize: 8,
+                  color: deviceOpen ? Colors.greenAccent : Colors.orange,
+                  fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            height: 24,
+            child: OutlinedButton.icon(
+              onPressed: (!deviceOpen && !checking) ? onOpenDevice : null,
+              icon: checking
+                  ? const SizedBox(width: 10, height: 10,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 1.2, color: Colors.white54))
+                  : const Icon(Icons.usb_outlined, size: 11),
+              label: const Text('Open USBi Device',
+                  style: TextStyle(fontSize: 9)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: deviceOpen ? Colors.white24 : Colors.white70,
+                side: BorderSide(
+                    color: deviceOpen ? Colors.white12 : Colors.white38),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(3)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            height: 24,
+            child: OutlinedButton.icon(
+              onPressed: deviceOpen ? onCloseDevice : null,
+              icon: const Icon(Icons.usb_off_outlined, size: 11),
+              label: const Text('Close', style: TextStyle(fontSize: 9)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor:
+                    deviceOpen ? Colors.redAccent : Colors.white24,
+                side: BorderSide(
+                    color: deviceOpen
+                        ? Colors.redAccent.withValues(alpha: 0.5)
+                        : Colors.white12),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(3)),
+              ),
+            ),
+          ),
+        ]),
+        if (openError != null) ...[
+          const SizedBox(height: 4),
+          Text(openError!,
+              style: const TextStyle(fontSize: 8, color: Colors.redAccent)),
+        ],
+        const SizedBox(height: 12),
+
+        // Side selector: L / R
+        Row(children: [
+          const Text('Channel:',
+              style: TextStyle(fontSize: 9, color: Colors.white38)),
+          const SizedBox(width: 8),
+          for (final s in ['L', 'R']) ...[
+            GestureDetector(
+              onTap: () => onSideChanged(s),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                margin: const EdgeInsets.only(right: 4),
+                decoration: BoxDecoration(
+                  color: side == s
+                      ? Colors.orange.withValues(alpha: 0.2)
+                      : Colors.white10,
+                  border: Border.all(
+                      color: side == s ? Colors.orange : Colors.white24),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(s,
+                    style: TextStyle(
+                        fontSize: 9,
+                        color: side == s ? Colors.orange : Colors.white60,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ]),
+        const SizedBox(height: 8),
+
+        // Value preset: 1.0 / 0.5 / 0.0
+        Row(children: [
+          const Text('Value:',
+              style: TextStyle(fontSize: 9, color: Colors.white38)),
+          const SizedBox(width: 8),
+          for (final v in [1.0, 0.5, 0.0]) ...[
+            GestureDetector(
+              onTap: () => onValueChanged(v),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                margin: const EdgeInsets.only(right: 4),
+                decoration: BoxDecoration(
+                  color: value == v
+                      ? Colors.orange.withValues(alpha: 0.2)
+                      : Colors.white10,
+                  border: Border.all(
+                      color: value == v ? Colors.orange : Colors.white24),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(v.toStringAsFixed(1),
+                    style: TextStyle(
+                        fontSize: 9,
+                        color: value == v ? Colors.orange : Colors.white60,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        ]),
+        const SizedBox(height: 10),
+
+        // Address / packet preview
+        _CmdRow('Address', '$_addrHex  (Master Volume $side)'),
+        _CmdRow('Fixed 8.24', _fixedHex),
+        _CmdRow('Body hex', _bodyHex),
+        const SizedBox(height: 12),
+
+        // Confirm checkbox
+        Row(children: [
+          SizedBox(
+            width: 18, height: 18,
+            child: Checkbox(
+              value: userConfirmed,
+              onChanged: deviceOpen
+                  ? (v) => onConfirmChanged(v ?? false)
+                  : null,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              activeColor: Colors.orange,
+              side: const BorderSide(color: Colors.white30),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'I understand this is a volatile Master Volume write only. '
+              'No EEPROM. No Selfboot. Address verified.',
+              style: TextStyle(fontSize: 9, color: Colors.white60),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
+
+        // Execute + Restore buttons
+        Row(children: [
+          Expanded(
+            child: SizedBox(
+              height: 32,
+              child: ElevatedButton.icon(
+                onPressed: _canExecute ? onExecute : null,
+                icon: executing
+                    ? const SizedBox(width: 12, height: 12,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 1.5, color: Colors.white))
+                    : const Icon(Icons.send_outlined, size: 13),
+                label: Text(
+                  executing
+                      ? 'Sending...'
+                      : !deviceOpen
+                          ? 'Open USBi device first'
+                          : !userConfirmed
+                              ? 'Check confirmation above'
+                              : 'Execute via USBi Temporary',
+                  style: const TextStyle(fontSize: 10),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _canExecute
+                      ? Colors.orange.withValues(alpha: 0.8)
+                      : Colors.white10,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(4)),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            height: 32,
+            child: OutlinedButton.icon(
+              onPressed: (deviceOpen && !executing) ? onRestore : null,
+              icon: const Icon(Icons.restore_outlined, size: 13),
+              label: const Text('Restore L/R to 1.0',
+                  style: TextStyle(fontSize: 10)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor:
+                    deviceOpen ? Colors.white70 : Colors.white24,
+                side: BorderSide(
+                    color: deviceOpen ? Colors.white38 : Colors.white12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4)),
+              ),
+            ),
+          ),
+        ]),
+
+        // Result log
+        if (lastResult != null) ...[
+          const SizedBox(height: 12),
+          _T4cResultLog(result: lastResult!),
+        ],
+
+        // Footer
+        const SizedBox(height: 10),
+        const Text(
+          'ICP5 remains final target. '
+          'No PEQ/XO/Gain/Mute/Delay/SafeLoad/EEPROM/Selfboot.',
+          style: TextStyle(fontSize: 8, color: Colors.white24),
+        ),
+      ]),
+    );
+  }
+}
+
+class _T4cResultLog extends StatelessWidget {
+  final UsbiExecutionResult result;
+  const _T4cResultLog({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = result.status == UsbiExecutionStatus.ackReceived;
+    final color = ok
+        ? Colors.greenAccent
+        : result.status == UsbiExecutionStatus.ackFailed
+            ? Colors.orange
+            : Colors.redAccent;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Result: ${result.status.label}',
+            style: TextStyle(
+                fontSize: 9, color: color, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        _CmdRow('wasActualWrite', result.wasActualWrite.toString(),
+            color: result.wasActualWrite ? Colors.greenAccent : null),
+        _CmdRow('ackReceived', result.ackReceived.toString()),
+        if (result.ackByteHex != null)
+          _CmdRow('ACK bytes', result.ackByteHex!),
+        if (result.error != null)
+          _CmdRow('Error', result.error!, color: Colors.redAccent),
+      ]),
+    );
+  }
 }
