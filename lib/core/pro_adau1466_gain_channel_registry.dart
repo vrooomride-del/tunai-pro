@@ -118,6 +118,16 @@ class ProAdau1466GainChannelRegistry {
           Adau1466MappedGainChannel channel) =>
       _buildLockedPlan(channel, channel.exportedRestoreWord);
 
+  /// Operational values are accepted only for a fixed registry channel.
+  /// There is intentionally no raw target-address API.
+  static Adau1466GainSafeLoadPacketPlan buildOperationalPlan(
+      Adau1466MappedGainChannel channel, int gainWord) {
+    if (gainWord < 0 || gainWord > 0x00FFFFFF) {
+      throw ArgumentError('Gain word must be below ADAU1466 8.24 unity.');
+    }
+    return _buildLockedPlan(channel, gainWord);
+  }
+
   static Adau1466GainSafeLoadPacketPlan _buildLockedPlan(
       Adau1466MappedGainChannel channel, int lockedValue) {
     if (!channels.contains(channel)) {

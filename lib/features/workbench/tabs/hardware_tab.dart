@@ -37,12 +37,16 @@ class HardwareTab extends ConsumerStatefulWidget {
   final ProUsbiNativeBackend? usbiBackend;
   final bool Function()? isWindowsPlatform;
   final bool initialUsbiDeviceOpen;
+  final ValueChanged<bool>? onUsbiDeviceOpenChanged;
+  final ValueChanged<bool>? onDspWritesDisabledChanged;
   const HardwareTab({
     super.key,
     required this.projectId,
     this.usbiBackend,
     this.isWindowsPlatform,
     this.initialUsbiDeviceOpen = false,
+    this.onUsbiDeviceOpenChanged,
+    this.onDspWritesDisabledChanged,
   });
 
   @override
@@ -879,6 +883,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
                           _dspWriteStopWarning = null;
                           _muteDiagnosticUsedForSession = false;
                           _gainDiagnosticUsedForSession = false;
+                          widget.onUsbiDeviceOpenChanged?.call(true);
+                          widget.onDspWritesDisabledChanged?.call(false);
                         }
                       });
                     }
@@ -930,6 +936,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
             setState(() {
               _dspWritesDisabledForSession = true;
               _dspWriteStopWarning = warning;
+              widget.onDspWritesDisabledChanged?.call(true);
             });
           },
         ),

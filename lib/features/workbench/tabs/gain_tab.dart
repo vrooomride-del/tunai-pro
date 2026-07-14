@@ -4,14 +4,26 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:io';
+import 'dart:math';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../core/pro_usbi_native_backend.dart';
+import '../../../core/pro_adau1466_gain_channel_registry.dart';
+import '../../../core/pro_adau1466_operational_gain_executor.dart';
 
 class GainTab extends ConsumerStatefulWidget {
   final String projectId;
-  const GainTab({super.key, required this.projectId});
+  final ProUsbiNativeBackend? usbiBackend;
+  final bool Function()? isWindowsPlatform;
+  final bool deviceOpen;
+  final bool dspWritesDisabled;
+  final void Function(String warning)? onDspWriteStop;
+  const GainTab({super.key, required this.projectId, this.usbiBackend,
+    this.isWindowsPlatform, this.deviceOpen = false,
+    this.dspWritesDisabled = false, this.onDspWriteStop});
 
   @override
   ConsumerState<GainTab> createState() => _GainTabState();
@@ -57,10 +69,19 @@ class _GainTabState extends ConsumerState<GainTab> {
     final project = store.projects.where((p) => p.id == widget.projectId).firstOrNull;
     final drivers = project?.acousticState.driverChannels ?? [];
     final tuning = project?.tuningState ?? TuningProjectState.createDefault();
+    final operational = OperationalAdau1466GainControls(
+      backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
+      isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
+      deviceOpen: widget.deviceOpen,
+      dspWritesDisabled: widget.dspWritesDisabled,
+      onDspWriteStop: widget.onDspWriteStop,
+    );
 
     if (drivers.isEmpty) {
-      return const _EmptyState(
-          message: 'No driver channels configured yet. Import measurements first.');
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: operational,
+      );
     }
 
     final selectedId = _selectedChannelId ?? drivers.first.id;
@@ -99,6 +120,8 @@ class _GainTabState extends ConsumerState<GainTab> {
             Text('Channel level matching and output trim. '
                 'Hardware write remains disabled. Use the Hardware tab for dry-run planning.',
                 style: proSubtitle()),
+            const SizedBox(height: 16),
+            operational,
             const SizedBox(height: 16),
 
             // Channel header
@@ -393,16 +416,213 @@ class _SmallBtn extends StatelessWidget {
   );
 }
 
-class _EmptyState extends StatelessWidget {
-  final String message;
-  const _EmptyState({required this.message});
+class OperationalAdau1466GainControls extends StatefulWidget {
+  final ProUsbiNativeBackend backend;
+  final bool Function() isWindowsPlatform;
+  final bool deviceOpen;
+  final bool dspWritesDisabled;
+  final void Function(String warning)? onDspWriteStop;
+
+  const OperationalAdau1466GainControls({super.key, required this.backend,
+    required this.isWindowsPlatform, required this.deviceOpen,
+    this.dspWritesDisabled = false, this.onDspWriteStop});
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.bar_chart_outlined, color: Colors.white12, size: 28),
-      const SizedBox(height: 12),
-      Text(message, style: proSubtitle(size: 11), textAlign: TextAlign.center),
-    ]),
-  );
+  State<OperationalAdau1466GainControls> createState() =>
+      _OperationalAdau1466GainControlsState();
+}
+
+class _OperationalAdau1466GainControlsState
+    extends State<OperationalAdau1466GainControls> {
+  late ProAdau1466OperationalGainExecutor _executor;
+  late final Map<String, int> _confirmed;
+  late final Map<String, int> _preview;
+  final Map<String, String> _ack = {};
+  final Set<String> _links = {};
+  bool _writing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _executor = ProAdau1466OperationalGainExecutor(
+      backend: widget.backend,
+      isWindowsPlatform: widget.isWindowsPlatform,
+    );
+    _confirmed = {for (final c in ProAdau1466GainChannelRegistry.channels)
+      c.channel: c.exportedRestoreWord};
+    _preview = Map.of(_confirmed);
+  }
+
+  @override
+  void didUpdateWidget(covariant OperationalAdau1466GainControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.backend != widget.backend) {
+      _executor = ProAdau1466OperationalGainExecutor(
+        backend: widget.backend,
+        isWindowsPlatform: widget.isWindowsPlatform,
+      );
+    }
+  }
+
+  bool get _enabled => !_writing && !widget.dspWritesDisabled &&
+      widget.deviceOpen && _executor.isRealExecutorAvailable;
+
+  static double _wordToDb(int word) =>
+      word <= 0 ? -96 : 20 * log(word / 0x01000000) / ln10;
+  static int _dbToWord(double db) =>
+      (pow(10, db / 20) * 0x01000000).round().clamp(0, 0x00FFFFFF);
+  static String _hex(int word) =>
+      '0x${word.toRadixString(16).padLeft(8, '0').toUpperCase()}';
+
+  String? _pairFor(String channel) => switch (channel) {
+    'WFL' => 'WFR', 'WFR' => 'WFL',
+    'MID_L' => 'MID_R', 'MID_R' => 'MID_L',
+    'TWL' => 'TWR', 'TWR' => 'TWL',
+    _ => null,
+  };
+
+  String _linkKey(String channel) => switch (channel) {
+    'WFL' || 'WFR' => 'WFL+WFR',
+    'MID_L' || 'MID_R' => 'MID_L+MID_R',
+    _ => 'TWL+TWR',
+  };
+
+  Future<bool> _writeOne(Adau1466MappedGainChannel channel, int word) async {
+    final result = await _executor.writeWithRollback(
+      channel: channel,
+      requestedWord: word,
+      previousConfirmedWord: _confirmed[channel.channel]!,
+      deviceOpen: widget.deviceOpen,
+    );
+    _ack[channel.channel] = result.ackStatus;
+    if (result.restoreFailed) {
+      widget.onDspWriteStop?.call(
+          'STOP — ${channel.channel} Gain restore failed. All DSP writes disabled.');
+    }
+    if (result.success) _confirmed[channel.channel] = word;
+    _preview[channel.channel] = _confirmed[channel.channel]!;
+    return result.success;
+  }
+
+  Future<void> _commit(Adau1466MappedGainChannel source, int word,
+      {bool honorLink = true}) async {
+    if (!_enabled) {
+      setState(() => _preview[source.channel] = _confirmed[source.channel]!);
+      return;
+    }
+    setState(() => _writing = true);
+    final link = honorLink && _links.contains(_linkKey(source.channel));
+    if (!link) {
+      await _writeOne(source, word);
+    } else {
+      final pair = ProAdau1466GainChannelRegistry.findByChannel(
+          _pairFor(source.channel)!)!;
+      final left = source.channel.endsWith('_R') || source.channel == 'WFR' ||
+              source.channel == 'TWR' ? pair : source;
+      final right = identical(left, source) ? pair : source;
+      final leftPrevious = _confirmed[left.channel]!;
+      final leftOk = await _writeOne(left, word);
+      if (leftOk) {
+        final rightOk = await _writeOne(right, word);
+        if (!rightOk) {
+          final rollback = await _executor.writeWithRollback(
+            channel: left,
+            requestedWord: leftPrevious,
+            previousConfirmedWord: leftPrevious,
+            deviceOpen: widget.deviceOpen,
+          );
+          _ack[left.channel] = rollback.success ? 'ROLLED_BACK' : 'FAIL';
+          _confirmed[left.channel] = leftPrevious;
+          _preview[left.channel] = leftPrevious;
+          if (!rollback.success || rollback.restoreFailed) {
+            widget.onDspWriteStop?.call(
+                'STOP — linked Gain rollback failed. All DSP writes disabled.');
+          }
+        }
+      }
+    }
+    if (mounted) setState(() => _writing = false);
+  }
+
+  Future<void> _reset(Adau1466MappedGainChannel channel) =>
+      _commit(channel, channel.exportedRestoreWord, honorLink: false);
+
+  Future<void> _resetAll() async {
+    for (final channel in ProAdau1466GainChannelRegistry.channels) {
+      if (widget.dspWritesDisabled) break;
+      await _commit(channel, channel.exportedRestoreWord, honorLink: false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: const Key('operational-adau1466-gain-controls'),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(color: kProSurface,
+      border: Border.all(color: kProAccent.withValues(alpha: 0.4)),
+      borderRadius: BorderRadius.circular(4)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Operational ADAU1466 Gain Controls', style: proTitle(size: 13)),
+      Text('USBi device: ${widget.deviceOpen ? "open" : "closed"} · '
+          'real executor: ${_executor.isRealExecutorAvailable ? "available" : "unavailable"} · '
+          'DSP writes: ${widget.dspWritesDisabled ? "STOPPED" : "enabled"}',
+          style: proSubtitle(size: 9)),
+      const SizedBox(height: 8),
+      Wrap(spacing: 12, children: ['WFL+WFR', 'MID_L+MID_R', 'TWL+TWR'].map((p) =>
+        FilterChip(label: Text('Link $p'), selected: _links.contains(p),
+          onSelected: _writing ? null : (v) => setState(() => v ? _links.add(p) : _links.remove(p)))).toList()),
+      const SizedBox(height: 8),
+      for (final channel in ProAdau1466GainChannelRegistry.channels)
+        _OperationalGainRow(
+          channel: channel,
+          previewWord: _preview[channel.channel]!,
+          confirmedWord: _confirmed[channel.channel]!,
+          ack: _ack[channel.channel] ?? 'not written',
+          enabled: _enabled,
+          wordToDb: _wordToDb,
+          hex: _hex,
+          onChanged: (db) => setState(() =>
+              _preview[channel.channel] = _dbToWord(db)),
+          onChangeEnd: (db) => _commit(channel, _dbToWord(db)),
+          onReset: () => _reset(channel),
+        ),
+      OutlinedButton(key: const Key('gain-reset-all'),
+        onPressed: _enabled ? _resetAll : null,
+        child: const Text('Reset All to Exported Baselines')),
+      const Text('ACK means PASS_ACK only, never VERIFIED. Physical mapping and audible verification remain pending. '
+          'XO, PEQ, Delay, EEPROM, Selfboot, and unmapped Gain 0x0057/0x0054 remain blocked.',
+          style: TextStyle(fontSize: 8, color: Colors.white38)),
+    ]));
+}
+
+class _OperationalGainRow extends StatelessWidget {
+  final Adau1466MappedGainChannel channel;
+  final int previewWord;
+  final int confirmedWord;
+  final String ack;
+  final bool enabled;
+  final double Function(int) wordToDb;
+  final String Function(int) hex;
+  final ValueChanged<double> onChanged;
+  final ValueChanged<double> onChangeEnd;
+  final VoidCallback onReset;
+  const _OperationalGainRow({required this.channel, required this.previewWord,
+    required this.confirmedWord, required this.ack, required this.enabled,
+    required this.wordToDb, required this.hex, required this.onChanged,
+    required this.onChangeEnd, required this.onReset});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [Expanded(child: Text(channel.channel, style: proTitle(size: 10))),
+        Text('${wordToDb(previewWord).toStringAsFixed(1)} dB · ${hex(previewWord)}', style: proSubtitle(size: 9))]),
+      Slider(key: Key('gain-slider-${channel.channel}'), min: -96, max: -0.1,
+        value: wordToDb(previewWord).clamp(-96, -0.1),
+        onChanged: enabled ? onChanged : null,
+        onChangeEnd: enabled ? onChangeEnd : null),
+      Row(children: [Expanded(child: Text('confirmed ${wordToDb(confirmedWord).toStringAsFixed(1)} dB · ${hex(confirmedWord)} · ACK $ack',
+        style: proSubtitle(size: 8))), OutlinedButton(key: Key('gain-reset-${channel.channel}'),
+          onPressed: enabled ? onReset : null, child: const Text('Reset baseline'))]),
+    ]));
 }

@@ -6,6 +6,9 @@ import 'tabs/workbench_tabs.dart';
 import '../../core/pro_project_store.dart';
 import '../../core/pro_measurement_store.dart';
 import '../../shared/pro_widgets.dart';
+import 'dart:io';
+import '../../core/pro_usbi_native_backend.dart';
+import '../../core/pro_usbi_windows_native_backend.dart';
 
 class WorkbenchShell extends ConsumerStatefulWidget {
   final String projectId;
@@ -17,10 +20,20 @@ class WorkbenchShell extends ConsumerStatefulWidget {
 
 class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
   int _tabIndex = 0;
+  late final ProUsbiNativeBackend _usbiBackend;
+  bool _usbiDeviceOpen = false;
+  bool _dspWritesDisabled = false;
 
   @override
   void initState() {
     super.initState();
+    if (Platform.isWindows) {
+      final backend = ProUsbiWindowsNativeBackend();
+      _usbiBackend = backend;
+      backend.initialise();
+    } else {
+      _usbiBackend = const ProUsbiNativeBackendDisabled();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(proMeasurementProvider.notifier).loadForProject(widget.projectId);
     });
@@ -55,11 +68,19 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     XoTab(projectId: projectId),
     PhaseTab(projectId: projectId),
     DelayTab(projectId: projectId),
-    GainTab(projectId: projectId),
+    GainTab(projectId: projectId, usbiBackend: _usbiBackend,
+      isWindowsPlatform: () => Platform.isWindows,
+      deviceOpen: _usbiDeviceOpen, dspWritesDisabled: _dspWritesDisabled,
+      onDspWriteStop: (_) => setState(() => _dspWritesDisabled = true)),
     SimulationTab(projectId: projectId),
     ProtectionTab(projectId: projectId),
     ExportTab(projectId: projectId),
-    HardwareTab(projectId: projectId),
+    HardwareTab(projectId: projectId, usbiBackend: _usbiBackend,
+      isWindowsPlatform: () => Platform.isWindows,
+      initialUsbiDeviceOpen: _usbiDeviceOpen,
+      onUsbiDeviceOpenChanged: (open) => setState(() => _usbiDeviceOpen = open),
+      onDspWritesDisabledChanged: (stopped) =>
+          setState(() => _dspWritesDisabled = stopped)),
     DeployTab(projectId: projectId),
     ReportTab(projectId: projectId),
   ];
