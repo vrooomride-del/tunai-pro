@@ -19,6 +19,7 @@ import '../../../core/pro_adau1466_sigma_loader.dart';
 import '../../../core/pro_adau1466_sigma_executor.dart';
 import '../../../core/pro_adau1466_mute_validation_executor.dart';
 import '../../../core/pro_adau1466_gain_safeload_executor.dart';
+import '../../../core/pro_adau1466_gain_channel_registry.dart';
 import '../../../core/pro_adau1466_sigma_persistence.dart';
 import '../../../shared/pro_widgets.dart';
 
@@ -345,7 +346,7 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     }
   }
 
-  Future<void> _runGainDiagnostic() async {
+  Future<void> _runGainDiagnostic(Adau1466MappedGainChannel channel) async {
     if (_gainDiagnosticRunning ||
         widget.gainDiagnosticUsedThisSession ||
         widget.dspWritesDisabled ||
@@ -358,12 +359,17 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Confirm one-shot Gain Single 1 diagnostic'),
-        content: const Text(
-          'This runs the capture-proven three-stage TEST SafeLoad sequence for '
-          'target 0x03B8, then always runs the complete three-stage RESTORE '
-          'sequence. It can run only once during this USBi device-open session. '
-          'ACK means PASS_ACK only, not VERIFIED.',
+        title: Text('Confirm one-shot Gain ${channel.channel} diagnostic'),
+        content: Text(
+          'Channel: ${channel.channel} / ${channel.sigmaCellName}\n'
+          'Target: ${_hexWord(channel.targetAddress, digits: 4)}\n'
+          'Slew: ${_hexWord(channel.slewAddress, digits: 4)}\n'
+          'Test value: ${_hexWord(channel.testWord)}\n'
+          'Restore value: ${_hexWord(channel.exportedRestoreWord)}\n\n'
+          'This runs the capture-proven three-stage TEST sequence, then always '
+          'runs the complete three-stage RESTORE sequence. Only one Gain '
+          'channel can run during this USBi device-open session. ACK means '
+          'PASS_ACK only, not VERIFIED.',
         ),
         actions: [
           TextButton(
@@ -387,9 +393,7 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
       _gainDiagnosticResult = null;
     });
     final result = await _gainExecutor.runDiagnostic(
-      requestedTargetAddress: ProAdau1466GainSafeLoadExecutor.targetAddress,
-      requestedTestValue: ProAdau1466GainSafeLoadExecutor.testGainValue,
-      requestedRestoreValue: ProAdau1466GainSafeLoadExecutor.restoreGainValue,
+      channel: channel,
       deviceOpen: widget.deviceOpen,
     );
     if (!mounted) return;
@@ -399,12 +403,15 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     });
     if (!result.allRestoreStagesReturnedRawAck01) {
       widget.onDspWriteStop?.call(
-        'STOP — Gain Single 1 restore did not return raw ACK 01 for all '
+        'STOP — Gain ${channel.channel} restore did not return raw ACK 01 for all '
         'three stages. All further DSP writes are disabled for this '
         'device-open session.',
       );
     }
   }
+
+  static String _hexWord(int value, {int digits = 8}) =>
+      '0x${value.toRadixString(16).padLeft(digits, '0').toUpperCase()}';
 
   void _markVerified() {
     final c = _selected;
@@ -659,7 +666,7 @@ class _GainSafeLoadDiagnosticPanel extends StatelessWidget {
   final bool usedThisSession;
   final bool dspWritesDisabled;
   final Adau1466GainSafeLoadResult? result;
-  final VoidCallback onRun;
+  final void Function(Adau1466MappedGainChannel channel) onRun;
 
   const _GainSafeLoadDiagnosticPanel({
     required this.executorAvailable,
@@ -678,8 +685,12 @@ class _GainSafeLoadDiagnosticPanel extends StatelessWidget {
     final stages = result == null
         ? const <Adau1466GainSafeLoadStageResult>[]
         : [...result!.testStages, ...result!.restoreStages];
+    final executedChannel = result == null
+        ? null
+        : ProAdau1466GainChannelRegistry.findByTargetAddress(
+            result!.requestedTargetAddress);
     return Container(
-      key: const Key('adau1466-gain-single-1-diagnostic-ui'),
+      key: const Key('adau1466-gain-diagnostics-ui'),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF161B18),
@@ -687,29 +698,52 @@ class _GainSafeLoadDiagnosticPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(5),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Gain Single 1',
+        const Text('ADAU1466 Mapped Gain One-Shot Diagnostics',
             style: TextStyle(fontSize: 13, color: Colors.greenAccent,
                 fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
-        const _StatusText('Target address 0x03B8'),
-        const _StatusText('Slew address 0x03B9'),
-        const _StatusText('Test value 0x00000840'),
-        const _StatusText('Restore value 0x0000068E'),
         _StatusText('real executor status: ${executorAvailable ? "available" : "unavailable"}'),
         _StatusText('USBi device-open status: ${deviceOpen ? "open" : "closed"}'),
-        const SizedBox(height: 8),
-        OutlinedButton(
-          key: const Key('run-one-shot-gain-diagnostic'),
-          onPressed: canRun ? onRun : null,
-          child: Text(running
-              ? 'Gain Diagnostic Running…'
-              : 'Run One-Shot Gain Diagnostic'),
-        ),
         const SizedBox(height: 8),
         _StatusText('one-shot session status: ${usedThisSession ? "used" : "available"}'),
         _StatusText('wasActualWrite status: ${result?.wasActualWrite ?? false}'),
         const _StatusText('audible verification pending'),
-        const _StatusText('physical WFL / OUT3 mapping pending'),
+        const _StatusText('physical mapping pending for all six channels'),
+        const SizedBox(height: 10),
+        for (final channel in ProAdau1466GainChannelRegistry.channels) ...[
+          Container(
+            key: Key('gain-channel-${channel.channel}'),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.white12),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${channel.channel} — ${channel.sigmaCellName}',
+                  style: const TextStyle(fontSize: 10, color: Colors.greenAccent,
+                      fontWeight: FontWeight.w700)),
+              _StatusText('Target ${_formatHex(channel.targetAddress, 4)}'),
+              _StatusText('Slew ${_formatHex(channel.slewAddress, 4)}'),
+              _StatusText('Test ${_formatHex(channel.testWord, 8)}'),
+              _StatusText('Restore ${_formatHex(channel.exportedRestoreWord, 8)}'),
+              _StatusText('Planned mapping ${channel.sigmaOutputCell} / ${channel.plannedPhysicalOutput}'),
+              const _StatusText('audible verification pending · mapping pending'),
+              const SizedBox(height: 5),
+              OutlinedButton(
+                key: Key('run-one-shot-gain-diagnostic-${channel.channel}'),
+                onPressed: canRun ? () => onRun(channel) : null,
+                child: Text(running
+                    ? 'Gain Diagnostic Running…'
+                    : 'Run One-Shot Gain Diagnostic'),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 7),
+        ],
+        if (executedChannel != null)
+          Text('Diagnostics: ${executedChannel.channel} — ${executedChannel.sigmaCellName}',
+              style: const TextStyle(fontSize: 10, color: Colors.greenAccent,
+                  fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         for (var index = 0; index < 6; index++) ...[
           _GainStageDiagnosticsPanel(
@@ -741,6 +775,9 @@ class _GainSafeLoadDiagnosticPanel extends StatelessWidget {
       ]),
     );
   }
+
+  static String _formatHex(int value, int digits) =>
+      '0x${value.toRadixString(16).padLeft(digits, '0').toUpperCase()}';
 }
 
 class _GainStageDiagnosticsPanel extends StatelessWidget {

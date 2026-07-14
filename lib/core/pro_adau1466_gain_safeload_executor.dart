@@ -1,12 +1,13 @@
 import 'pro_adau1466_sigma_candidate.dart';
+import 'pro_adau1466_gain_channel_registry.dart';
 import 'pro_usbi_native_backend.dart';
 import 'pro_usbi_packet_builder.dart';
 
-/// Capture-locked, one-shot diagnostic for ADAU1466 Sigma cell Single 1.
+/// Capture-locked, one-shot diagnostic for the six mapped ADAU1466 HWGain cells.
 ///
 /// This is intentionally not a general SafeLoad implementation. It accepts
-/// one target and one test/restore pair, and emits only the six packet bodies
-/// captured from SigmaStudio. It has no EEPROM, Selfboot, arbitrary-address,
+/// a registry channel, and emits only its locked test/restore packet bodies.
+/// It has no EEPROM, Selfboot, arbitrary-address/value,
 /// or legacy transport entry point.
 class ProAdau1466GainSafeLoadExecutor {
   static const int targetAddress = 0x03B8;
@@ -14,34 +15,14 @@ class ProAdau1466GainSafeLoadExecutor {
   static const int slewValue = 0x0000208A;
   static const int testGainValue = 0x00000840;
   static const int restoreGainValue = 0x0000068E;
-  static const Set<int> writeEnabledTargets = {targetAddress};
-
-  static const List<int> _slewBody = [0x03, 0xB9, 0x00, 0x00, 0x20, 0x8A];
-  static const List<int> _testDataBody = [0x60, 0x00, 0x00, 0x00, 0x08, 0x40];
-  static const List<int> _restoreDataBody = [
-    0x60,
-    0x00,
-    0x00,
-    0x00,
-    0x06,
-    0x8E
-  ];
-  static const List<int> _targetCountBody = [
-    0x60,
-    0x05,
-    0x00,
-    0x00,
-    0x03,
-    0xB8,
-    0x00,
-    0x00,
-    0x00,
-    0x01,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-  ];
+  static const Set<int> writeEnabledTargets = {
+    0x03B8,
+    0x03C4,
+    0x03C7,
+    0x03BB,
+    0x03CA,
+    0x03CD,
+  };
 
   final ProUsbiNativeBackend backend;
   final bool Function() isWindowsPlatform;
@@ -54,51 +35,39 @@ class ProAdau1466GainSafeLoadExecutor {
   bool get isRealExecutorAvailable =>
       isWindowsPlatform() && backend.isAvailable && !backend.isFake;
 
-  static List<Adau1466GainSafeLoadStage> testStages() => [
-        const Adau1466GainSafeLoadStage(
-          label: 'TEST stage 1',
-          setupPacket: [0x40, 0xB2, 0x00, 0x00, 0x01, 0x01, 0x06, 0x00],
-          bodyPacket: _slewBody,
-        ),
-        const Adau1466GainSafeLoadStage(
-          label: 'TEST stage 2',
-          setupPacket: [0x40, 0xB2, 0x00, 0x00, 0x01, 0x01, 0x06, 0x00],
-          bodyPacket: _testDataBody,
-        ),
-        const Adau1466GainSafeLoadStage(
-          label: 'TEST stage 3',
-          setupPacket: [0x40, 0xB2, 0x00, 0x00, 0x01, 0x01, 0x0E, 0x00],
-          bodyPacket: _targetCountBody,
-        ),
-      ];
+  static List<Adau1466GainSafeLoadStage> testStages(
+          Adau1466MappedGainChannel channel) =>
+      _stagesFor(channel: channel, restore: false, phase: 'TEST');
 
-  static List<Adau1466GainSafeLoadStage> restoreStages() => [
-        const Adau1466GainSafeLoadStage(
-          label: 'RESTORE stage 1',
-          setupPacket: [0x40, 0xB2, 0x00, 0x00, 0x01, 0x01, 0x06, 0x00],
-          bodyPacket: _slewBody,
-        ),
-        const Adau1466GainSafeLoadStage(
-          label: 'RESTORE stage 2',
-          setupPacket: [0x40, 0xB2, 0x00, 0x00, 0x01, 0x01, 0x06, 0x00],
-          bodyPacket: _restoreDataBody,
-        ),
-        const Adau1466GainSafeLoadStage(
-          label: 'RESTORE stage 3',
-          setupPacket: [0x40, 0xB2, 0x00, 0x00, 0x01, 0x01, 0x0E, 0x00],
-          bodyPacket: _targetCountBody,
-        ),
-      ];
+  static List<Adau1466GainSafeLoadStage> restoreStages(
+          Adau1466MappedGainChannel channel) =>
+      _stagesFor(channel: channel, restore: true, phase: 'RESTORE');
+
+  static List<Adau1466GainSafeLoadStage> _stagesFor({
+    required Adau1466MappedGainChannel channel,
+    required bool restore,
+    required String phase,
+  }) {
+    final plan = restore
+        ? ProAdau1466GainChannelRegistry.buildRestorePlan(channel)
+        : ProAdau1466GainChannelRegistry.buildTestPlan(channel);
+    return List.generate(plan.stages.length, (index) {
+      final stage = plan.stages[index];
+      return Adau1466GainSafeLoadStage(
+        label: '$phase stage ${index + 1}',
+        setupPacket: stage.setupPacket,
+        bodyPacket: stage.bodyPacket,
+      );
+    });
+  }
 
   Future<Adau1466GainSafeLoadResult> runDiagnostic({
-    required int requestedTargetAddress,
-    required int requestedTestValue,
-    required int requestedRestoreValue,
+    required Adau1466MappedGainChannel channel,
     required bool deviceOpen,
   }) async {
     Adau1466GainSafeLoadResult blocked(String error) =>
         Adau1466GainSafeLoadResult(
-          requestedTargetAddress: requestedTargetAddress,
+          requestedTargetAddress: channel.targetAddress,
           error: error,
           resultStatus: CandidateValidationStatus.blocked,
         );
@@ -109,23 +78,19 @@ class ProAdau1466GainSafeLoadExecutor {
     if (backend.isFake) {
       return blocked('Gain diagnostic requires a real executor.');
     }
-    if (!writeEnabledTargets.contains(requestedTargetAddress)) {
-      return blocked('Only Gain Single 1 target 0x03B8 is enabled.');
-    }
-    if (requestedTestValue != testGainValue ||
-        requestedRestoreValue != restoreGainValue) {
-      return blocked(
-          'Only test 0x00000840 and restore 0x0000068E are enabled.');
+    if (!ProAdau1466GainChannelRegistry.channels.contains(channel) ||
+        !writeEnabledTargets.contains(channel.targetAddress)) {
+      return blocked('Only the six fixed mapped Gain channels are enabled.');
     }
 
     final testResults = <Adau1466GainSafeLoadStageResult>[];
     final restoreResults = <Adau1466GainSafeLoadStageResult>[];
-    for (final stage in testStages()) {
+    for (final stage in testStages(channel)) {
       testResults.add(await _executeStage(stage));
     }
     // Restore is unconditional once execution starts. Every restore stage is
     // attempted independently, even if any test or earlier restore stage fails.
-    for (final stage in restoreStages()) {
+    for (final stage in restoreStages(channel)) {
       restoreResults.add(await _executeStage(stage));
     }
 
@@ -138,7 +103,7 @@ class ProAdau1466GainSafeLoadExecutor {
             '${stage.stage.label}: ${stage.error ?? "raw ACK was not 01"}')
         .join(' ');
     return Adau1466GainSafeLoadResult(
-      requestedTargetAddress: requestedTargetAddress,
+      requestedTargetAddress: channel.targetAddress,
       testStages: testResults,
       restoreStages: restoreResults,
       error: failures.isEmpty ? null : failures,

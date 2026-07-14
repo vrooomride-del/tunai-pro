@@ -85,7 +85,7 @@ void main() {
 
     expect(find.byKey(const Key('adau1466-mv-verification-ui')), findsOneWidget);
     expect(find.byKey(const Key('adau1466-mute1-3-validation-ui')), findsOneWidget);
-    expect(find.byKey(const Key('adau1466-gain-single-1-diagnostic-ui')),
+    expect(find.byKey(const Key('adau1466-gain-diagnostics-ui')),
         findsOneWidget);
     expect(find.byKey(const Key('operational-master-volume-control')), findsOneWidget);
     expect(find.text('Linked Stereo Master Volume'), findsOneWidget);
@@ -107,14 +107,24 @@ void main() {
     expect(find.text('Current assumed baseline: 1'), findsOneWidget);
     expect(find.text('Run One-Shot Mute Diagnostic'),
         findsOneWidget);
-    expect(find.text('Gain Single 1'), findsOneWidget);
-    expect(find.text('Target address 0x03B8'), findsOneWidget);
-    expect(find.text('Slew address 0x03B9'), findsOneWidget);
-    expect(find.text('Test value 0x00000840'), findsOneWidget);
-    expect(find.text('Restore value 0x0000068E'), findsOneWidget);
-    expect(find.text('Run One-Shot Gain Diagnostic'), findsOneWidget);
+    expect(find.text('ADAU1466 Mapped Gain One-Shot Diagnostics'), findsOneWidget);
+    for (final row in const [
+      ('WFL — Single 1', 'Target 0x03B8', 'Slew 0x03B9', 'Test 0x00000840', 'Restore 0x0000068E'),
+      ('MID_L — Single 1_4', 'Target 0x03C4', 'Slew 0x03C5', 'Test 0x000014B9', 'Restore 0x00001076'),
+      ('TWL — Single 1_5', 'Target 0x03C7', 'Slew 0x03C8', 'Test 0x000020D8', 'Restore 0x00001A17'),
+      ('WFR — Single 1_6', 'Target 0x03BB', 'Slew 0x03BC', 'Test 0x00000840', 'Restore 0x0000068E'),
+      ('MID_R — Single 1_7', 'Target 0x03CA', 'Slew 0x03CB', 'Test 0x00005281', 'Restore 0x00004189'),
+      ('TWR — Single 1_8', 'Target 0x03CD', 'Slew 0x03CE', 'Test 0x00001A17', 'Restore 0x000014B9'),
+    ]) {
+      expect(find.text(row.$1), findsOneWidget);
+      expect(find.text(row.$2), findsOneWidget);
+      expect(find.text(row.$3), findsOneWidget);
+      expect(find.text(row.$4), findsWidgets);
+      expect(find.text(row.$5), findsWidgets);
+    }
+    expect(find.text('Run One-Shot Gain Diagnostic'), findsNWidgets(6));
     expect(find.text('audible verification pending'), findsNWidgets(2));
-    expect(find.text('physical WFL / OUT3 mapping pending'), findsOneWidget);
+    expect(find.text('physical mapping pending for all six channels'), findsOneWidget);
     expect(find.textContaining('Physical WFL / OUT3 mapping remains pending'),
         findsOneWidget);
 
@@ -296,11 +306,26 @@ void main() {
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
 
-    final button = find.byKey(const Key('run-one-shot-gain-diagnostic'));
+    final midLButton =
+        find.byKey(const Key('run-one-shot-gain-diagnostic-MID_L'));
+    await tester.ensureVisible(midLButton);
+    await tester.tap(midLButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Confirm one-shot Gain MID_L diagnostic'), findsOneWidget);
+    expect(find.textContaining('Channel: MID_L / Single 1_4'), findsOneWidget);
+    expect(find.textContaining('Target: 0x03C4'), findsOneWidget);
+    expect(find.textContaining('Slew: 0x03C5'), findsOneWidget);
+    expect(find.textContaining('Test value: 0x000014B9'), findsOneWidget);
+    expect(find.textContaining('Restore value: 0x00001076'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('cancel-gain-diagnostic')));
+    await tester.pumpAndSettle();
+    expect(backend.callCount, 0);
+
+    final button = find.byKey(const Key('run-one-shot-gain-diagnostic-WFL'));
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
-    expect(find.text('Confirm one-shot Gain Single 1 diagnostic'), findsOneWidget);
+    expect(find.text('Confirm one-shot Gain WFL diagnostic'), findsOneWidget);
     expect(backend.callCount, 0);
 
     await tester.tap(find.byKey(const Key('confirm-gain-diagnostic')));
@@ -323,6 +348,10 @@ void main() {
     }
     expect(find.text('one-shot session status: used'), findsOneWidget);
     expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
+    for (final channel in ['MID_L', 'TWL', 'WFR', 'MID_R', 'TWR']) {
+      expect(tester.widget<OutlinedButton>(find.byKey(
+          Key('run-one-shot-gain-diagnostic-$channel'))).onPressed, isNull);
+    }
     expect(find.text('Gain Single 1 VERIFIED'), findsNothing);
   });
 
@@ -350,7 +379,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
-    final button = find.byKey(const Key('run-one-shot-gain-diagnostic'));
+    final button = find.byKey(const Key('run-one-shot-gain-diagnostic-WFL'));
     await tester.ensureVisible(button);
     await tester.tap(button);
     await tester.pumpAndSettle();
