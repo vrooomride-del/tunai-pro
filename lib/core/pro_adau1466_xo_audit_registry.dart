@@ -231,3 +231,85 @@ class ProAdau1466XoAuditRegistry {
   static bool acceptsWrite(int address, List<int> words) => false;
   const ProAdau1466XoAuditRegistry._();
 }
+
+class ProAdau1466WflLpf2DiagnosticEvidence {
+  static const channel = 'WFL';
+  static const block = 'LPF_2';
+  static const slewAddress = 0x01FA;
+  static const slewWord = 0x0000208A;
+  static const coefficientOrder = ['b2', 'b1', 'b0', 'a2', 'a1'];
+  static const coefficientAddresses = {
+    0x618D,
+    0x618E,
+    0x618F,
+    0x6190,
+    0x6191,
+  };
+  static const baseline280Hz = <int>[
+    0x000015BA,
+    0x00002B73,
+    0x000015BA,
+    0xFF069155,
+    0x01F917C5,
+  ];
+  static const test281Hz = <int>[
+    0x000015E1,
+    0x00002BC2,
+    0x000015E1,
+    0xFF069742,
+    0x01F9113A,
+  ];
+  static const baselinePayload = <int>[
+    0x00,
+    0x00,
+    0x15,
+    0xBA,
+    0x00,
+    0x00,
+    0x2B,
+    0x73,
+    0x00,
+    0x00,
+    0x15,
+    0xBA,
+    0xFF,
+    0x06,
+    0x91,
+    0x55,
+    0x01,
+    0xF9,
+    0x17,
+    0xC5,
+  ];
+  static const testPayload = <int>[
+    0x00,
+    0x00,
+    0x15,
+    0xE1,
+    0x00,
+    0x00,
+    0x2B,
+    0xC2,
+    0x00,
+    0x00,
+    0x15,
+    0xE1,
+    0xFF,
+    0x06,
+    0x97,
+    0x42,
+    0x01,
+    0xF9,
+    0x11,
+    0x3A,
+  ];
+  static const transactionShapeProven = false;
+  static const writeEnabledAddresses = <int>{};
+  static const unresolvedTrigger =
+      'Missing capture of the five-word target/count/trigger body: exact '
+      '0x6005–0x6007 bytes and count encoding are not proven.';
+  static bool acceptsTransaction(
+          int slew, Set<int> addresses, List<int> coefficients) =>
+      false;
+  const ProAdau1466WflLpf2DiagnosticEvidence._();
+}

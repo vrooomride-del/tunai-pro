@@ -148,6 +148,86 @@ void main() {
         isFalse);
   });
 
+  test('WFL LPF_2 captured 280 and 281 Hz vectors are exact', () {
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.coefficientOrder,
+        ['b2', 'b1', 'b0', 'a2', 'a1']);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.baseline280Hz,
+        [0x000015BA, 0x00002B73, 0x000015BA, 0xFF069155, 0x01F917C5]);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.test281Hz,
+        [0x000015E1, 0x00002BC2, 0x000015E1, 0xFF069742, 0x01F9113A]);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.baselinePayload, [
+      0x00,
+      0x00,
+      0x15,
+      0xBA,
+      0x00,
+      0x00,
+      0x2B,
+      0x73,
+      0x00,
+      0x00,
+      0x15,
+      0xBA,
+      0xFF,
+      0x06,
+      0x91,
+      0x55,
+      0x01,
+      0xF9,
+      0x17,
+      0xC5,
+    ]);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.testPayload, [
+      0x00,
+      0x00,
+      0x15,
+      0xE1,
+      0x00,
+      0x00,
+      0x2B,
+      0xC2,
+      0x00,
+      0x00,
+      0x15,
+      0xE1,
+      0xFF,
+      0x06,
+      0x97,
+      0x42,
+      0x01,
+      0xF9,
+      0x11,
+      0x3A,
+    ]);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.baselinePayload, hasLength(20));
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.testPayload, hasLength(20));
+  });
+
+  test('signed 8.24 high bytes are preserved without numeric conversion', () {
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.baselinePayload.sublist(12, 16),
+        [0xFF, 0x06, 0x91, 0x55]);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.testPayload.sublist(12, 16),
+        [0xFF, 0x06, 0x97, 0x42]);
+  });
+
+  test('five-word trigger is unproven so strict diagnostic rejects all writes',
+      () {
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.slewAddress, 0x01FA);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.coefficientAddresses,
+        {0x618D, 0x618E, 0x618F, 0x6190, 0x6191});
+    expect(
+        ProAdau1466WflLpf2DiagnosticEvidence.transactionShapeProven, isFalse);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.writeEnabledAddresses, isEmpty);
+    expect(
+        ProAdau1466WflLpf2DiagnosticEvidence.acceptsTransaction(
+            0x01FA,
+            {0x618D, 0x618E, 0x618F, 0x6190, 0x6191},
+            ProAdau1466WflLpf2DiagnosticEvidence.test281Hz),
+        isFalse);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.unresolvedTrigger,
+        contains('0x6005–0x6007'));
+  });
+
   testWidgets('unproven format and transaction cannot call backend',
       (tester) async {
     final backend = _CountingRealBackend();
@@ -163,6 +243,11 @@ void main() {
     expect(find.text('ADAU1466 XO Hardware Mapping'), findsOneWidget);
     expect(find.textContaining('all XO coefficient writes remain blocked'),
         findsOneWidget);
+    expect(
+        find.byKey(const Key('wfl-lpf2-safeload-diagnostic')), findsOneWidget);
+    expect(find.textContaining('TEST 281 Hz — BLOCKED'), findsOneWidget);
+    expect(
+        find.textContaining('No USBi transaction is emitted'), findsOneWidget);
     expect(find.textContaining('WRITE BLOCKED'), findsNWidgets(10));
     expect(
         find.textContaining('PASS_ACK only, never VERIFIED'), findsOneWidget);
