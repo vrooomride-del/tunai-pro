@@ -24,6 +24,13 @@ class _CountingBackend implements ProUsbiNativeBackend {
 
 void main() {
   test('embedded PEQ evidence reports count but contains no individual rows', () {
+    expect(ProAdau1466PeqAuditRegistry.fullOriginalExportFound, isFalse);
+    expect(ProAdau1466PeqAuditRegistry.requiredExportArtifact,
+        'TUNAI_ADAU1466_v0_8B_GLOBAL_DRIVER_160BAND_PEQ.params');
+    expect(ProAdau1466PeqAuditRegistry.requiredSigmaStudioOperation,
+        contains('Export System Files'));
+    expect(ProAdau1466PeqAuditRegistry.requiredSigmaStudioOperation,
+        contains('without filtering PEQ rows'));
     expect(kTunaiAdau1466ThreeWayPeqRowCount, 875);
     expect(ProAdau1466PeqAuditRegistry.sourcePeqRowCount, 875);
     expect(ProAdau1466PeqAuditRegistry.embeddedPeqRowCount, 0);
@@ -67,6 +74,9 @@ void main() {
     ))));
     expect(find.text('ADAU1466 PEQ Hardware Mapping'), findsOneWidget);
     expect(find.byKey(const Key('peq-representative-blocked')), findsOneWidget);
+    expect(find.byKey(const Key('peq-required-export-file')), findsOneWidget);
+    expect(find.byKey(const Key('peq-required-export-operation')), findsOneWidget);
+    expect(find.textContaining('USBPcap is not requested'), findsOneWidget);
     expect(find.textContaining('PEQ WRITE BLOCKED'), findsOneWidget);
     expect(find.widgetWithText(ElevatedButton, 'TEST'), findsNothing);
     expect(find.widgetWithText(OutlinedButton, 'RESTORE'), findsNothing);

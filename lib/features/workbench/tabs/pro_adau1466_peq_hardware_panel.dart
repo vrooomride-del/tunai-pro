@@ -83,6 +83,17 @@ class Adau1466PeqHardwareMappingPanel extends StatelessWidget {
           key: Key('peq-representative-blocked'),
           style: TextStyle(fontSize: 8, color: Colors.amber),
         ),
+        const SizedBox(height: 6),
+        const Text(
+          'Required original export file: TUNAI_ADAU1466_v0_8B_GLOBAL_DRIVER_160BAND_PEQ.params',
+          key: Key('peq-required-export-file'),
+          style: TextStyle(fontSize: 8, color: Colors.white54),
+        ),
+        const Text(
+          'Required SigmaStudio operation: open the matching project, compile/link it, run Export System Files, and retain the complete generated .params parameter export without filtering PEQ rows. USBPcap is not requested.',
+          key: Key('peq-required-export-operation'),
+          style: TextStyle(fontSize: 8, color: Colors.white54),
+        ),
         const Text(
           'No TEST/RESTORE action is exposed. No arbitrary address or coefficient input. PASS_ACK only, never VERIFIED. Audible/measurement verification pending. EEPROM, Selfboot, legacy transport, and ADAU1701 remain blocked.',
           style: TextStyle(fontSize: 8, color: Colors.white38),

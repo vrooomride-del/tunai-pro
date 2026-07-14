@@ -21,6 +21,11 @@ class Adau1466PeqOutputAudit {
 class ProAdau1466PeqAuditRegistry {
   static const sourceFile =
       'TUNAI_ADAU1466_v0_8B_GLOBAL_DRIVER_160BAND_PEQ.params';
+  static const fullOriginalExportFound = false;
+  static const requiredExportArtifact =
+      'TUNAI_ADAU1466_v0_8B_GLOBAL_DRIVER_160BAND_PEQ.params';
+  static const requiredSigmaStudioOperation =
+      'Open the matching TUNAI_ADAU1466_v0_8B_GLOBAL_DRIVER_160BAND_PEQ SigmaStudio project, compile/link it, then use SigmaStudio Export System Files and retain the complete generated .params parameter export without filtering PEQ rows.';
   static const sourcePeqRowCount = 875;
   static const embeddedPeqRowCount = 0;
   static const coefficientOrder = ['b2', 'b1', 'b0', 'a2', 'a1'];
