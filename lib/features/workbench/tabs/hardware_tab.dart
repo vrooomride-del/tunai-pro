@@ -31,6 +31,7 @@ import 'dart:io';
 import 'pro_hardware_mvp_status_card.dart';
 import 'sigma_verification_console.dart';
 import 'operational_master_volume_control.dart';
+import 'transport_connection_panel.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -383,6 +384,14 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           style: proSubtitle(),
         ),
         const SizedBox(height: 24),
+
+        const _SectionHeader('TRANSPORT ARCHITECTURE — ICP5 PHASE A', Icons.alt_route_outlined),
+        const SizedBox(height: 8),
+        TransportConnectionPanel(
+          backend: _usbiNativeBackend,
+          deviceOpen: _usbiDeviceOpen,
+        ),
+        const SizedBox(height: 20),
 
         // A: Connection State Panel
         const _SectionHeader('CONNECTION STATE', Icons.usb_outlined),
