@@ -303,13 +303,31 @@ class ProAdau1466WflLpf2DiagnosticEvidence {
     0x11,
     0x3A,
   ];
-  static const transactionShapeProven = false;
-  static const writeEnabledAddresses = <int>{};
+  static const transactionShapeProven = true;
+  static const writeEnabledAddresses = <int>{
+    0x01FA,
+    0x618D,
+    0x618E,
+    0x618F,
+    0x6190,
+    0x6191,
+  };
   static const unresolvedTrigger =
-      'Missing capture of the five-word target/count/trigger body: exact '
-      '0x6005–0x6007 bytes and count encoding are not proven.';
+      'Resolved: lower-memory count 5, upper-memory count 0.';
   static bool acceptsTransaction(
-          int slew, Set<int> addresses, List<int> coefficients) =>
-      false;
+      int slew, Set<int> addresses, List<int> coefficients) {
+    if (slew != slewAddress ||
+        addresses.length != coefficientAddresses.length ||
+        !addresses.containsAll(coefficientAddresses)) {
+      return false;
+    }
+    bool matches(List<int> expected) =>
+        coefficients.length == expected.length &&
+        List.generate(expected.length,
+                (index) => coefficients[index] == expected[index])
+            .every((value) => value);
+    return matches(baseline280Hz) || matches(test281Hz);
+  }
+
   const ProAdau1466WflLpf2DiagnosticEvidence._();
 }

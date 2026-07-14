@@ -35,70 +35,89 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
       _usbiBackend = const ProUsbiNativeBackendDisabled();
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(proMeasurementProvider.notifier).loadForProject(widget.projectId);
+      ref
+          .read(proMeasurementProvider.notifier)
+          .loadForProject(widget.projectId);
     });
   }
 
   static const _tabs = [
-    _TabDef('Project',    Icons.folder_outlined),
-    _TabDef('Measure',    Icons.mic_none_outlined),
-    _TabDef('Import',     Icons.folder_open_outlined),
-    _TabDef('Target',     Icons.track_changes_outlined),
-    _TabDef('Optimizer',  Icons.auto_awesome_outlined),
-    _TabDef('PEQ',        Icons.tune_outlined),
-    _TabDef('XO',         Icons.device_hub_outlined),
-    _TabDef('Phase',      Icons.timeline_outlined),
-    _TabDef('Delay',      Icons.access_time_outlined),
-    _TabDef('Gain',       Icons.bar_chart_outlined),
-    _TabDef('Mute',       Icons.volume_off_outlined),
+    _TabDef('Project', Icons.folder_outlined),
+    _TabDef('Measure', Icons.mic_none_outlined),
+    _TabDef('Import', Icons.folder_open_outlined),
+    _TabDef('Target', Icons.track_changes_outlined),
+    _TabDef('Optimizer', Icons.auto_awesome_outlined),
+    _TabDef('PEQ', Icons.tune_outlined),
+    _TabDef('XO', Icons.device_hub_outlined),
+    _TabDef('Phase', Icons.timeline_outlined),
+    _TabDef('Delay', Icons.access_time_outlined),
+    _TabDef('Gain', Icons.bar_chart_outlined),
+    _TabDef('Mute', Icons.volume_off_outlined),
     _TabDef('Simulation', Icons.show_chart_outlined),
     _TabDef('Protection', Icons.verified_user_outlined),
-    _TabDef('Export',     Icons.upload_outlined),
-    _TabDef('Hardware',   Icons.security_outlined),
-    _TabDef('Deploy',     Icons.inventory_2_outlined),
-    _TabDef('Report',     Icons.summarize_outlined),
+    _TabDef('Export', Icons.upload_outlined),
+    _TabDef('Hardware', Icons.security_outlined),
+    _TabDef('Deploy', Icons.inventory_2_outlined),
+    _TabDef('Report', Icons.summarize_outlined),
   ];
 
   List<Widget> _screens(String projectId) => [
-    ProjectTab(projectId: projectId),
-    MeasureTab(projectId: projectId),
-    ImportTab(projectId: projectId),
-    TargetTab(projectId: projectId),
-    OptimizerTab(projectId: projectId),
-    PeqTab(projectId: projectId),
-    XoTab(projectId: projectId, usbiBackend: _usbiBackend,
-      isWindowsPlatform: () => Platform.isWindows,
-      deviceOpen: _usbiDeviceOpen, dspWritesDisabled: _dspWritesDisabled),
-    PhaseTab(projectId: projectId),
-    DelayTab(projectId: projectId, usbiBackend: _usbiBackend,
-      isWindowsPlatform: () => Platform.isWindows,
-      deviceOpen: _usbiDeviceOpen, dspWritesDisabled: _dspWritesDisabled,
-      onDspWriteStop: (_) => setState(() => _dspWritesDisabled = true)),
-    GainTab(projectId: projectId, usbiBackend: _usbiBackend,
-      isWindowsPlatform: () => Platform.isWindows,
-      deviceOpen: _usbiDeviceOpen, dspWritesDisabled: _dspWritesDisabled,
-      onDspWriteStop: (_) => setState(() => _dspWritesDisabled = true)),
-    MuteTab(projectId: projectId, usbiBackend: _usbiBackend,
-      isWindowsPlatform: () => Platform.isWindows,
-      deviceOpen: _usbiDeviceOpen, dspWritesDisabled: _dspWritesDisabled,
-      onDspWriteStop: (_) => setState(() => _dspWritesDisabled = true)),
-    SimulationTab(projectId: projectId),
-    ProtectionTab(projectId: projectId),
-    ExportTab(projectId: projectId),
-    HardwareTab(projectId: projectId, usbiBackend: _usbiBackend,
-      isWindowsPlatform: () => Platform.isWindows,
-      initialUsbiDeviceOpen: _usbiDeviceOpen,
-      onUsbiDeviceOpenChanged: (open) => setState(() => _usbiDeviceOpen = open),
-      onDspWritesDisabledChanged: (stopped) =>
-          setState(() => _dspWritesDisabled = stopped)),
-    DeployTab(projectId: projectId),
-    ReportTab(projectId: projectId),
-  ];
+        ProjectTab(projectId: projectId),
+        MeasureTab(projectId: projectId),
+        ImportTab(projectId: projectId),
+        TargetTab(projectId: projectId),
+        OptimizerTab(projectId: projectId),
+        PeqTab(projectId: projectId),
+        XoTab(
+            projectId: projectId,
+            usbiBackend: _usbiBackend,
+            isWindowsPlatform: () => Platform.isWindows,
+            deviceOpen: _usbiDeviceOpen,
+            dspWritesDisabled: _dspWritesDisabled,
+            onDspWriteStop: (_) => setState(() => _dspWritesDisabled = true)),
+        PhaseTab(projectId: projectId),
+        DelayTab(
+            projectId: projectId,
+            usbiBackend: _usbiBackend,
+            isWindowsPlatform: () => Platform.isWindows,
+            deviceOpen: _usbiDeviceOpen,
+            dspWritesDisabled: _dspWritesDisabled,
+            onDspWriteStop: (_) => setState(() => _dspWritesDisabled = true)),
+        GainTab(
+            projectId: projectId,
+            usbiBackend: _usbiBackend,
+            isWindowsPlatform: () => Platform.isWindows,
+            deviceOpen: _usbiDeviceOpen,
+            dspWritesDisabled: _dspWritesDisabled,
+            onDspWriteStop: (_) => setState(() => _dspWritesDisabled = true)),
+        MuteTab(
+            projectId: projectId,
+            usbiBackend: _usbiBackend,
+            isWindowsPlatform: () => Platform.isWindows,
+            deviceOpen: _usbiDeviceOpen,
+            dspWritesDisabled: _dspWritesDisabled,
+            onDspWriteStop: (_) => setState(() => _dspWritesDisabled = true)),
+        SimulationTab(projectId: projectId),
+        ProtectionTab(projectId: projectId),
+        ExportTab(projectId: projectId),
+        HardwareTab(
+            projectId: projectId,
+            usbiBackend: _usbiBackend,
+            isWindowsPlatform: () => Platform.isWindows,
+            initialUsbiDeviceOpen: _usbiDeviceOpen,
+            onUsbiDeviceOpenChanged: (open) =>
+                setState(() => _usbiDeviceOpen = open),
+            onDspWritesDisabledChanged: (stopped) =>
+                setState(() => _dspWritesDisabled = stopped)),
+        DeployTab(projectId: projectId),
+        ReportTab(projectId: projectId),
+      ];
 
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(proProjectStoreProvider);
-    final project = store.projects.where((p) => p.id == widget.projectId).firstOrNull;
+    final project =
+        store.projects.where((p) => p.id == widget.projectId).firstOrNull;
     final screens = _screens(widget.projectId);
 
     return Scaffold(
@@ -181,7 +200,8 @@ class _Sidebar extends StatelessWidget {
         // Tab section label
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-          child: Text('WORKBENCH', style: proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
+          child: Text('WORKBENCH',
+              style: proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
         ),
         Expanded(
           child: ListView.builder(
@@ -192,9 +212,12 @@ class _Sidebar extends StatelessWidget {
               return GestureDetector(
                 onTap: () => onSelect(i),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
-                    color: active ? kProAccent.withValues(alpha: 0.1) : Colors.transparent,
+                    color: active
+                        ? kProAccent.withValues(alpha: 0.1)
+                        : Colors.transparent,
                     border: Border(
                       left: BorderSide(
                         color: active ? kProAccent : Colors.transparent,
@@ -203,12 +226,17 @@ class _Sidebar extends StatelessWidget {
                     ),
                   ),
                   child: Row(children: [
-                    Icon(tabs[i].icon, size: 14, color: active ? kProAccent : Colors.white38),
+                    Icon(tabs[i].icon,
+                        size: 14, color: active ? kProAccent : Colors.white38),
                     const SizedBox(width: 9),
                     Expanded(
                       child: Text(
                         tabs[i].label,
-                        style: proTitle(size: 11, color: active ? Colors.white : const Color(0xFF6B7280)),
+                        style: proTitle(
+                            size: 11,
+                            color: active
+                                ? Colors.white
+                                : const Color(0xFF6B7280)),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -220,7 +248,8 @@ class _Sidebar extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-          child: Text('TUNAI PRO · T4C', style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
+          child: Text('TUNAI PRO · T4C',
+              style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
         ),
       ]),
     );

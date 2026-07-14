@@ -5,12 +5,18 @@ import 'package:tunai_pro/core/pro_adau1466_delay_audit_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_gain_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_mute_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_xo_audit_registry.dart';
+import 'package:tunai_pro/core/pro_adau1466_wfl_lpf2_safeload_executor.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
 import 'package:tunai_pro/features/workbench/tabs/xo_tab.dart';
 import 'package:tunai_pro/features/workbench/workbench_shell.dart';
 
 class _CountingRealBackend implements ProUsbiNativeBackend {
   int calls = 0;
+  final List<List<int>> setups = [];
+  final List<List<int>> bodies = [];
+  final List<List<int>> ackRequests = [];
+  final List<List<int>?> responses;
+  _CountingRealBackend({this.responses = const []});
   @override
   bool get isAvailable => true;
   @override
@@ -21,7 +27,10 @@ class _CountingRealBackend implements ProUsbiNativeBackend {
       required List<int> bodyPacket,
       required List<int> ackReadRequest}) async {
     calls++;
-    return [1];
+    setups.add(List.of(setupPacket));
+    bodies.add(List.of(bodyPacket));
+    ackRequests.add(List.of(ackReadRequest));
+    return calls <= responses.length ? responses[calls - 1] : [1];
   }
 }
 
@@ -210,25 +219,139 @@ void main() {
         [0xFF, 0x06, 0x97, 0x42]);
   });
 
-  test('five-word trigger is unproven so strict diagnostic rejects all writes',
-      () {
+  test('official five-word trigger enables only exact WFL vectors', () {
     expect(ProAdau1466WflLpf2DiagnosticEvidence.slewAddress, 0x01FA);
     expect(ProAdau1466WflLpf2DiagnosticEvidence.coefficientAddresses,
         {0x618D, 0x618E, 0x618F, 0x6190, 0x6191});
-    expect(
-        ProAdau1466WflLpf2DiagnosticEvidence.transactionShapeProven, isFalse);
-    expect(ProAdau1466WflLpf2DiagnosticEvidence.writeEnabledAddresses, isEmpty);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.transactionShapeProven, isTrue);
+    expect(ProAdau1466WflLpf2DiagnosticEvidence.writeEnabledAddresses,
+        {0x01FA, 0x618D, 0x618E, 0x618F, 0x6190, 0x6191});
     expect(
         ProAdau1466WflLpf2DiagnosticEvidence.acceptsTransaction(
             0x01FA,
             {0x618D, 0x618E, 0x618F, 0x6190, 0x6191},
             ProAdau1466WflLpf2DiagnosticEvidence.test281Hz),
+        isTrue);
+    expect(
+        ProAdau1466WflLpf2DiagnosticEvidence.acceptsTransaction(
+            0x01FA, {0x618D, 0x618E, 0x618F, 0x6190, 0x6191}, [1, 2, 3, 4, 5]),
         isFalse);
     expect(ProAdau1466WflLpf2DiagnosticEvidence.unresolvedTrigger,
-        contains('0x6005–0x6007'));
+        contains('lower-memory count 5'));
   });
 
-  testWidgets('unproven format and transaction cannot call backend',
+  test('exact TEST and RESTORE packets use setup lengths 6, 22, 14', () {
+    final testStages = ProAdau1466WflLpf2SafeLoadExecutor.testStages();
+    final restoreStages = ProAdau1466WflLpf2SafeLoadExecutor.restoreStages();
+    const setupPrefix = [0x40, 0xB2, 0x00, 0x00, 0x01, 0x01];
+    expect(testStages.map((stage) => stage.setupPacket), [
+      [...setupPrefix, 0x06, 0x00],
+      [...setupPrefix, 0x16, 0x00],
+      [...setupPrefix, 0x0E, 0x00],
+    ]);
+    expect(testStages.map((stage) => stage.bodyPacket), [
+      [0x01, 0xFA, 0x00, 0x00, 0x20, 0x8A],
+      [0x60, 0x00, ...ProAdau1466WflLpf2DiagnosticEvidence.testPayload],
+      [
+        0x60,
+        0x05,
+        0x00,
+        0x00,
+        0x61,
+        0x8D,
+        0x00,
+        0x00,
+        0x00,
+        0x05,
+        0x00,
+        0x00,
+        0x00,
+        0x00
+      ],
+    ]);
+    expect(restoreStages.map((stage) => stage.bodyPacket), [
+      [0x01, 0xFA, 0x00, 0x00, 0x20, 0x8A],
+      [0x60, 0x00, ...ProAdau1466WflLpf2DiagnosticEvidence.baselinePayload],
+      [
+        0x60,
+        0x05,
+        0x00,
+        0x00,
+        0x61,
+        0x8D,
+        0x00,
+        0x00,
+        0x00,
+        0x05,
+        0x00,
+        0x00,
+        0x00,
+        0x00
+      ],
+    ]);
+  });
+
+  test('one TEST action emits one transaction and exact ACK requests',
+      () async {
+    final backend = _CountingRealBackend();
+    final waits = <Duration>[];
+    final executor = ProAdau1466WflLpf2SafeLoadExecutor(
+        backend: backend,
+        isWindowsPlatform: () => true,
+        wait: (duration) async => waits.add(duration));
+    final result = await executor.runTest(deviceOpen: true);
+    expect(backend.calls, 3);
+    expect(backend.ackRequests,
+        List.filled(3, [0xC0, 0xB5, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00]));
+    expect(waits, isEmpty);
+    expect(result.confirmedState, '281 Hz TEST · PASS_ACK');
+    expect(result.restoreStages, isEmpty);
+  });
+
+  test('TEST failure runs complete restore after one audio-frame wait',
+      () async {
+    final backend = _CountingRealBackend(responses: [
+      [1],
+      [0],
+      [1],
+      [1],
+      [1],
+      [1]
+    ]);
+    final waits = <Duration>[];
+    final executor = ProAdau1466WflLpf2SafeLoadExecutor(
+        backend: backend,
+        isWindowsPlatform: () => true,
+        wait: (duration) async => waits.add(duration));
+    final result = await executor.runTest(deviceOpen: true);
+    expect(backend.calls, 6);
+    expect(
+        backend.bodies.sublist(3),
+        ProAdau1466WflLpf2SafeLoadExecutor.restoreStages()
+            .map((stage) => stage.bodyPacket));
+    expect(waits, [ProAdau1466WflLpf2SafeLoadExecutor.minimumAudioFrameWait]);
+    expect(result.confirmedState, '280 Hz BASELINE · PASS_ACK');
+    expect(result.restoreFailed, isFalse);
+  });
+
+  test('restore failure is reported and no partial state is confirmed',
+      () async {
+    final backend = _CountingRealBackend(responses: [
+      [1],
+      [0],
+      [1],
+      [1],
+      [0],
+      [1]
+    ]);
+    final executor = ProAdau1466WflLpf2SafeLoadExecutor(
+        backend: backend, isWindowsPlatform: () => true, wait: (_) async {});
+    final result = await executor.runTest(deviceOpen: true);
+    expect(result.restoreFailed, isTrue);
+    expect(result.confirmedState, 'UNCONFIRMED');
+  });
+
+  testWidgets('visible diagnostic enables WFL only and does not auto-write',
       (tester) async {
     final backend = _CountingRealBackend();
     await tester.pumpWidget(ProviderScope(
@@ -241,17 +364,42 @@ void main() {
           deviceOpen: true),
     ))));
     expect(find.text('ADAU1466 XO Hardware Mapping'), findsOneWidget);
-    expect(find.textContaining('all XO coefficient writes remain blocked'),
-        findsOneWidget);
+    expect(find.textContaining('WFL LPF_2 WRITE ENABLED'), findsOneWidget);
     expect(
         find.byKey(const Key('wfl-lpf2-safeload-diagnostic')), findsOneWidget);
-    expect(find.textContaining('TEST 281 Hz — BLOCKED'), findsOneWidget);
+    expect(find.text('TEST 281 Hz'), findsOneWidget);
+    expect(find.text('RESTORE 280 Hz'), findsOneWidget);
     expect(
-        find.textContaining('No USBi transaction is emitted'), findsOneWidget);
-    expect(find.textContaining('WRITE BLOCKED'), findsNWidgets(10));
-    expect(
-        find.textContaining('PASS_ACK only, never VERIFIED'), findsOneWidget);
+        find.textContaining('WRITE ENABLED — exact 280/281'), findsOneWidget);
+    expect(find.textContaining('WRITE BLOCKED'), findsNWidgets(9));
+    expect(find.textContaining('PASS_ACK only, never VERIFIED'), findsNWidgets(2));
     expect(backend.calls, 0);
+  });
+
+  testWidgets('restore failure activates shared STOP', (tester) async {
+    final backend = _CountingRealBackend(responses: [
+      [1],
+      [0],
+      [1],
+      [1],
+      [0],
+      [1]
+    ]);
+    final stops = <String>[];
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: WflLpf2SafeLoadDiagnosticCard(
+                backend: backend,
+                isWindowsPlatform: () => true,
+                deviceOpen: true,
+                dspWritesDisabled: false,
+                onDspWriteStop: stops.add))));
+    await tester.tap(find.byKey(const Key('xo-test-281')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('xo-stop-warning')), findsOneWidget);
+    expect(stops.single, contains('shared DSP STOP'));
+    expect(find.textContaining('Current confirmed state: UNCONFIRMED'),
+        findsOneWidget);
   });
 
   testWidgets('launched Workbench retains visible XO navigation',
