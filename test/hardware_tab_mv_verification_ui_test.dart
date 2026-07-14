@@ -85,6 +85,8 @@ void main() {
 
     expect(find.byKey(const Key('adau1466-mv-verification-ui')), findsOneWidget);
     expect(find.byKey(const Key('adau1466-mute1-3-validation-ui')), findsOneWidget);
+    expect(find.byKey(const Key('adau1466-gain-single-1-diagnostic-ui')),
+        findsOneWidget);
     expect(find.byKey(const Key('operational-master-volume-control')), findsOneWidget);
     expect(find.text('Linked Stereo Master Volume'), findsOneWidget);
     expect(find.text('MV WRITE ACTIVE'), findsWidgets);
@@ -105,7 +107,14 @@ void main() {
     expect(find.text('Current assumed baseline: 1'), findsOneWidget);
     expect(find.text('Run One-Shot Mute Diagnostic'),
         findsOneWidget);
-    expect(find.text('audible verification pending'), findsOneWidget);
+    expect(find.text('Gain Single 1'), findsOneWidget);
+    expect(find.text('Target address 0x03B8'), findsOneWidget);
+    expect(find.text('Slew address 0x03B9'), findsOneWidget);
+    expect(find.text('Test value 0x00000840'), findsOneWidget);
+    expect(find.text('Restore value 0x0000068E'), findsOneWidget);
+    expect(find.text('Run One-Shot Gain Diagnostic'), findsOneWidget);
+    expect(find.text('audible verification pending'), findsNWidgets(2));
+    expect(find.text('physical WFL / OUT3 mapping pending'), findsOneWidget);
     expect(find.textContaining('Physical WFL / OUT3 mapping remains pending'),
         findsOneWidget);
 
@@ -143,7 +152,7 @@ void main() {
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
 
-    expect(find.text('wasActualWrite status: false'), findsNWidgets(3));
+    expect(find.text('wasActualWrite status: false'), findsNWidgets(4));
     expect(backend.callCount, 0);
 
     await tester.tap(find.byKey(const Key('smoke-test-0067')));
@@ -262,6 +271,100 @@ void main() {
         isNull);
     expect(tester.widget<OutlinedButton>(
         find.byKey(const Key('smoke-test-0067'))).onPressed, isNull);
+  });
+
+  testWidgets('Gain diagnostic confirms, runs six stages once, and stays PASS_ACK',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 2200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final backend = _RealMuteBackend(List<List<int>>.generate(6, (_) => [0x01]));
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: HardwareTab(
+              projectId: 'gain-widget-test',
+              usbiBackend: backend,
+              isWindowsPlatform: () => true,
+              initialUsbiDeviceOpen: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('USBi — Windows Temporary Engineering'));
+    await tester.pumpAndSettle();
+
+    final button = find.byKey(const Key('run-one-shot-gain-diagnostic'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('Confirm one-shot Gain Single 1 diagnostic'), findsOneWidget);
+    expect(backend.callCount, 0);
+
+    await tester.tap(find.byKey(const Key('confirm-gain-diagnostic')));
+    await tester.pumpAndSettle();
+
+    expect(backend.callCount, 6);
+    expect(backend.capturedBodyPackets, const [
+      [0x03, 0xB9, 0x00, 0x00, 0x20, 0x8A],
+      [0x60, 0x00, 0x00, 0x00, 0x08, 0x40],
+      [0x60, 0x05, 0x00, 0x00, 0x03, 0xB8, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x00],
+      [0x03, 0xB9, 0x00, 0x00, 0x20, 0x8A],
+      [0x60, 0x00, 0x00, 0x00, 0x06, 0x8E],
+      [0x60, 0x05, 0x00, 0x00, 0x03, 0xB8, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x00],
+    ]);
+    for (var stage = 1; stage <= 3; stage++) {
+      expect(find.text('TEST stage $stage ACK: PASS_ACK'), findsOneWidget);
+      expect(find.text('RESTORE stage $stage ACK: PASS_ACK'), findsOneWidget);
+    }
+    expect(find.text('one-shot session status: used'), findsOneWidget);
+    expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
+    expect(find.text('Gain Single 1 VERIFIED'), findsNothing);
+  });
+
+  testWidgets('Gain restore failure stops all further session writes',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 2200));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final backend = _RealMuteBackend(const [
+      [0x01], [0x01], [0x01], [0x01], [0x00], [0x01],
+    ]);
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: HardwareTab(
+              projectId: 'gain-restore-widget-test',
+              usbiBackend: backend,
+              isWindowsPlatform: () => true,
+              initialUsbiDeviceOpen: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('USBi — Windows Temporary Engineering'));
+    await tester.pumpAndSettle();
+    final button = find.byKey(const Key('run-one-shot-gain-diagnostic'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-gain-diagnostic')));
+    await tester.pumpAndSettle();
+
+    expect(backend.callCount, 6);
+    expect(find.byKey(const Key('gain-diagnostic-stop-warning')), findsOneWidget);
+    expect(find.byKey(const Key('session-dsp-write-stop-warning')), findsOneWidget);
+    expect(tester.widget<Slider>(
+        find.byKey(const Key('operational-master-volume-slider'))).onChanged,
+        isNull);
+    expect(tester.widget<OutlinedButton>(
+        find.byKey(const Key('controlled-mute-smoke-test'))).onPressed, isNull);
   });
 
   test('executor blocks every non-MV category before backend I/O', () async {

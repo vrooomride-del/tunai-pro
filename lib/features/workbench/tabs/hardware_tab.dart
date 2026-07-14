@@ -83,6 +83,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   bool _dspWritesDisabledForSession = false;
   String? _dspWriteStopWarning;
   bool _muteDiagnosticUsedForSession = false;
+  bool _gainDiagnosticUsedForSession = false;
   // T4C: self-contained panel state (no Transport Command Preview dependency)
   String _t4cSide = 'L';           // 'L' or 'R'
   double _t4cValue = 1.0;          // 1.0 / 0.5 / 0.0
@@ -877,6 +878,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
                           _dspWritesDisabledForSession = false;
                           _dspWriteStopWarning = null;
                           _muteDiagnosticUsedForSession = false;
+                          _gainDiagnosticUsedForSession = false;
                         }
                       });
                     }
@@ -914,9 +916,14 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           deviceOpen: _usbiDeviceOpen,
           dspWritesDisabled: _dspWritesDisabledForSession,
           muteDiagnosticUsedThisSession: _muteDiagnosticUsedForSession,
+          gainDiagnosticUsedThisSession: _gainDiagnosticUsedForSession,
           onMuteDiagnosticConsumed: () {
             if (!mounted) return;
             setState(() => _muteDiagnosticUsedForSession = true);
+          },
+          onGainDiagnosticConsumed: () {
+            if (!mounted) return;
+            setState(() => _gainDiagnosticUsedForSession = true);
           },
           onDspWriteStop: (warning) {
             if (!mounted) return;

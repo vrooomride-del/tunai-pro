@@ -18,6 +18,7 @@ import '../../../core/pro_adau1466_sigma_candidate.dart';
 import '../../../core/pro_adau1466_sigma_loader.dart';
 import '../../../core/pro_adau1466_sigma_executor.dart';
 import '../../../core/pro_adau1466_mute_validation_executor.dart';
+import '../../../core/pro_adau1466_gain_safeload_executor.dart';
 import '../../../core/pro_adau1466_sigma_persistence.dart';
 import '../../../shared/pro_widgets.dart';
 
@@ -29,7 +30,9 @@ class SigmaVerificationConsole extends StatefulWidget {
   final bool deviceOpen;
   final bool dspWritesDisabled;
   final bool muteDiagnosticUsedThisSession;
+  final bool gainDiagnosticUsedThisSession;
   final VoidCallback? onMuteDiagnosticConsumed;
+  final VoidCallback? onGainDiagnosticConsumed;
   final void Function(String warning)? onDspWriteStop;
 
   const SigmaVerificationConsole({
@@ -39,7 +42,9 @@ class SigmaVerificationConsole extends StatefulWidget {
     required this.deviceOpen,
     this.dspWritesDisabled = false,
     this.muteDiagnosticUsedThisSession = false,
+    this.gainDiagnosticUsedThisSession = false,
     this.onMuteDiagnosticConsumed,
+    this.onGainDiagnosticConsumed,
     this.onDspWriteStop,
   });
 
@@ -54,6 +59,7 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
   late List<Adau1466SigmaCandidate> _candidates;
   late ProUsbiSigmaVerificationExecutor _executor;
   late ProAdau1466MuteValidationExecutor _muteExecutor;
+  late ProAdau1466GainSafeLoadExecutor _gainExecutor;
 
   // ── Filter / selection ───────────────────────────────────────────────────
   CandidateKind? _filterKind;
@@ -73,6 +79,8 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
   final Map<int, SigmaVerificationWriteResult> _smokeResults = {};
   bool _muteDiagnosticRunning = false;
   Adau1466MuteValidationResult? _muteDiagnosticResult;
+  bool _gainDiagnosticRunning = false;
+  Adau1466GainSafeLoadResult? _gainDiagnosticResult;
 
   // ── Log ──────────────────────────────────────────────────────────────────
   List<SigmaValidationLogEntry> _log = [];
@@ -90,6 +98,10 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
       backend: widget.backend,
       isWindowsPlatform: widget.isWindowsPlatform,
     );
+    _gainExecutor = ProAdau1466GainSafeLoadExecutor(
+      backend: widget.backend,
+      isWindowsPlatform: widget.isWindowsPlatform,
+    );
     _loadPersisted();
   }
 
@@ -98,6 +110,7 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     super.didUpdateWidget(oldWidget);
     if (!oldWidget.deviceOpen && widget.deviceOpen) {
       _muteDiagnosticResult = null;
+      _gainDiagnosticResult = null;
     }
   }
 
@@ -332,6 +345,67 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
     }
   }
 
+  Future<void> _runGainDiagnostic() async {
+    if (_gainDiagnosticRunning ||
+        widget.gainDiagnosticUsedThisSession ||
+        widget.dspWritesDisabled ||
+        !widget.deviceOpen ||
+        !_gainExecutor.isRealExecutorAvailable) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm one-shot Gain Single 1 diagnostic'),
+        content: const Text(
+          'This runs the capture-proven three-stage TEST SafeLoad sequence for '
+          'target 0x03B8, then always runs the complete three-stage RESTORE '
+          'sequence. It can run only once during this USBi device-open session. '
+          'ACK means PASS_ACK only, not VERIFIED.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('cancel-gain-diagnostic'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('confirm-gain-diagnostic'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Confirm and Run Once'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    widget.onGainDiagnosticConsumed?.call();
+    setState(() {
+      _gainDiagnosticRunning = true;
+      _gainDiagnosticResult = null;
+    });
+    final result = await _gainExecutor.runDiagnostic(
+      requestedTargetAddress: ProAdau1466GainSafeLoadExecutor.targetAddress,
+      requestedTestValue: ProAdau1466GainSafeLoadExecutor.testGainValue,
+      requestedRestoreValue: ProAdau1466GainSafeLoadExecutor.restoreGainValue,
+      deviceOpen: widget.deviceOpen,
+    );
+    if (!mounted) return;
+    setState(() {
+      _gainDiagnosticRunning = false;
+      _gainDiagnosticResult = result;
+    });
+    if (!result.allRestoreStagesReturnedRawAck01) {
+      widget.onDspWriteStop?.call(
+        'STOP — Gain Single 1 restore did not return raw ACK 01 for all '
+        'three stages. All further DSP writes are disabled for this '
+        'device-open session.',
+      );
+    }
+  }
+
   void _markVerified() {
     final c = _selected;
     if (c == null) return;
@@ -395,6 +469,16 @@ class _SigmaVerificationConsoleState extends State<SigmaVerificationConsole> {
         dspWritesDisabled: widget.dspWritesDisabled,
         result: _muteDiagnosticResult,
         onRun: _runMuteDiagnostic,
+      ),
+      const SizedBox(height: 12),
+      _GainSafeLoadDiagnosticPanel(
+        executorAvailable: _gainExecutor.isRealExecutorAvailable,
+        deviceOpen: widget.deviceOpen,
+        running: _gainDiagnosticRunning,
+        usedThisSession: widget.gainDiagnosticUsedThisSession,
+        dspWritesDisabled: widget.dspWritesDisabled,
+        result: _gainDiagnosticResult,
+        onRun: _runGainDiagnostic,
       ),
       const SizedBox(height: 12),
       // ── S1: Console header ──────────────────────────────────────────────
@@ -566,6 +650,116 @@ class _MuteValidationPanel extends StatelessWidget {
       ]),
     );
   }
+}
+
+class _GainSafeLoadDiagnosticPanel extends StatelessWidget {
+  final bool executorAvailable;
+  final bool deviceOpen;
+  final bool running;
+  final bool usedThisSession;
+  final bool dspWritesDisabled;
+  final Adau1466GainSafeLoadResult? result;
+  final VoidCallback onRun;
+
+  const _GainSafeLoadDiagnosticPanel({
+    required this.executorAvailable,
+    required this.deviceOpen,
+    required this.running,
+    required this.usedThisSession,
+    required this.dspWritesDisabled,
+    required this.result,
+    required this.onRun,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final canRun = executorAvailable && deviceOpen && !running &&
+        !usedThisSession && !dspWritesDisabled;
+    final stages = result == null
+        ? const <Adau1466GainSafeLoadStageResult>[]
+        : [...result!.testStages, ...result!.restoreStages];
+    return Container(
+      key: const Key('adau1466-gain-single-1-diagnostic-ui'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161B18),
+        border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Gain Single 1',
+            style: TextStyle(fontSize: 13, color: Colors.greenAccent,
+                fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        const _StatusText('Target address 0x03B8'),
+        const _StatusText('Slew address 0x03B9'),
+        const _StatusText('Test value 0x00000840'),
+        const _StatusText('Restore value 0x0000068E'),
+        _StatusText('real executor status: ${executorAvailable ? "available" : "unavailable"}'),
+        _StatusText('USBi device-open status: ${deviceOpen ? "open" : "closed"}'),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          key: const Key('run-one-shot-gain-diagnostic'),
+          onPressed: canRun ? onRun : null,
+          child: Text(running
+              ? 'Gain Diagnostic Running…'
+              : 'Run One-Shot Gain Diagnostic'),
+        ),
+        const SizedBox(height: 8),
+        _StatusText('one-shot session status: ${usedThisSession ? "used" : "available"}'),
+        _StatusText('wasActualWrite status: ${result?.wasActualWrite ?? false}'),
+        const _StatusText('audible verification pending'),
+        const _StatusText('physical WFL / OUT3 mapping pending'),
+        const SizedBox(height: 8),
+        for (var index = 0; index < 6; index++) ...[
+          _GainStageDiagnosticsPanel(
+            title: index < 3
+                ? 'TEST stage ${index + 1}'
+                : 'RESTORE stage ${index - 2}',
+            result: index < stages.length ? stages[index] : null,
+          ),
+          if (index != 5) const SizedBox(height: 8),
+        ],
+        if (result != null && result!.restoreFailed) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'STOP — RESTORE DID NOT RETURN RAW ACK 01 FOR ALL THREE STAGES. '
+            'ALL FURTHER DSP WRITES ARE DISABLED FOR THIS DEVICE-OPEN SESSION.',
+            key: Key('gain-diagnostic-stop-warning'),
+            style: TextStyle(fontSize: 11, color: Colors.redAccent,
+                fontWeight: FontWeight.w900, height: 1.35),
+          ),
+        ],
+        const SizedBox(height: 7),
+        const Text(
+          'Capture-locked one-shot diagnostic only. No automatic retry. '
+          'ACK is PASS_ACK only, not VERIFIED. All other Gain and Mute '
+          'addresses, XO, PEQ, Delay, unknown addresses, EEPROM, and Selfboot '
+          'remain blocked.',
+          style: TextStyle(fontSize: 8, color: Colors.white38, height: 1.4),
+        ),
+      ]),
+    );
+  }
+}
+
+class _GainStageDiagnosticsPanel extends StatelessWidget {
+  final String title;
+  final Adau1466GainSafeLoadStageResult? result;
+
+  const _GainStageDiagnosticsPanel({required this.title, required this.result});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _StatusText('$title ACK: ${result == null ? "not run" : result!.ackOk ? "PASS_ACK" : "FAIL"}'),
+      _NativeTransactionDiagnosticsPanel(
+        title: '$title DIAGNOSTICS',
+        diagnostics: result?.diagnostics,
+      ),
+    ],
+  );
 }
 
 class _NativeTransactionDiagnosticsPanel extends StatelessWidget {
