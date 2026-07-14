@@ -2,16 +2,25 @@
 // Parametric EQ editor per driver channel.
 // No DSP write. No SafeLoad. No register addresses. Data model only.
 
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../core/pro_usbi_native_backend.dart';
+import 'pro_adau1466_peq_hardware_panel.dart';
 
 class PeqTab extends ConsumerStatefulWidget {
   final String projectId;
-  const PeqTab({super.key, required this.projectId});
+  final ProUsbiNativeBackend? usbiBackend;
+  final bool Function()? isWindowsPlatform;
+  final bool deviceOpen;
+  final bool dspWritesDisabled;
+  const PeqTab({super.key, required this.projectId, this.usbiBackend,
+    this.isWindowsPlatform, this.deviceOpen = false,
+    this.dspWritesDisabled = false});
 
   @override
   ConsumerState<PeqTab> createState() => _PeqTabState();
@@ -79,9 +88,22 @@ class _PeqTabState extends ConsumerState<PeqTab> {
     final project = store.projects.where((p) => p.id == widget.projectId).firstOrNull;
     final drivers = project?.acousticState.driverChannels ?? [];
     final tuning = project?.tuningState ?? TuningProjectState.createDefault();
+    final hardwareAudit = Adau1466PeqHardwareMappingPanel(
+      backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
+      isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
+      deviceOpen: widget.deviceOpen,
+      dspWritesDisabled: widget.dspWritesDisabled,
+    );
 
     if (drivers.isEmpty) {
-      return const _EmptyState(message: 'No driver channels configured yet. Import measurements first.');
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(children: [
+          hardwareAudit,
+          const SizedBox(height: 14),
+          const _EmptyState(message: 'No driver channels configured yet. Import measurements first.'),
+        ]),
+      );
     }
 
     final selectedId = _selectedChannelId ?? drivers.first.id;
@@ -121,6 +143,8 @@ class _PeqTabState extends ConsumerState<PeqTab> {
             const SizedBox(height: 3),
             Text('Parametric correction per driver channel. Use the Optimizer tab for automated target matching.',
                 style: proSubtitle()),
+            const SizedBox(height: 16),
+            hardwareAudit,
             const SizedBox(height: 16),
 
             // Channel header + controls

@@ -67,7 +67,9 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
         ImportTab(projectId: projectId),
         TargetTab(projectId: projectId),
         OptimizerTab(projectId: projectId),
-        PeqTab(projectId: projectId),
+        PeqTab(projectId: projectId, usbiBackend: _usbiBackend,
+          isWindowsPlatform: () => Platform.isWindows,
+          deviceOpen: _usbiDeviceOpen, dspWritesDisabled: _dspWritesDisabled),
         XoTab(
             projectId: projectId,
             usbiBackend: _usbiBackend,
