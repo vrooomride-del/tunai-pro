@@ -11,6 +11,7 @@ import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_delay_audit_registry.dart';
+import '../../../core/pro_adau1466_operational_delay_executor.dart';
 
 class DelayTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -18,13 +19,15 @@ class DelayTab extends ConsumerStatefulWidget {
   final bool Function()? isWindowsPlatform;
   final bool deviceOpen;
   final bool dspWritesDisabled;
+  final void Function(String warning)? onDspWriteStop;
   const DelayTab(
       {super.key,
       required this.projectId,
       this.usbiBackend,
       this.isWindowsPlatform,
       this.deviceOpen = false,
-      this.dspWritesDisabled = false});
+      this.dspWritesDisabled = false,
+      this.onDspWriteStop});
 
   @override
   ConsumerState<DelayTab> createState() => _DelayTabState();
@@ -72,6 +75,7 @@ class _DelayTabState extends ConsumerState<DelayTab> {
       isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
       deviceOpen: widget.deviceOpen,
       dspWritesDisabled: widget.dspWritesDisabled,
+      onDspWriteStop: widget.onDspWriteStop,
     );
 
     if (drivers.isEmpty) {
@@ -161,25 +165,170 @@ class _DelayTabState extends ConsumerState<DelayTab> {
   }
 }
 
-class OperationalAdau1466DelayAudit extends StatelessWidget {
+class OperationalAdau1466DelayAudit extends StatefulWidget {
   final ProUsbiNativeBackend backend;
   final bool Function() isWindowsPlatform;
   final bool deviceOpen;
   final bool dspWritesDisabled;
+  final void Function(String warning)? onDspWriteStop;
   const OperationalAdau1466DelayAudit(
       {super.key,
       required this.backend,
       required this.isWindowsPlatform,
       required this.deviceOpen,
-      required this.dspWritesDisabled});
+      required this.dspWritesDisabled,
+      this.onDspWriteStop});
+
+  @override
+  State<OperationalAdau1466DelayAudit> createState() =>
+      _OperationalAdau1466DelayAuditState();
+}
+
+class _OperationalAdau1466DelayAuditState
+    extends State<OperationalAdau1466DelayAudit> {
+  late ProAdau1466OperationalDelayExecutor _executor;
+  late final Map<String, int> _confirmed;
+  late final Map<String, int> _preview;
+  final Map<String, String> _ack = {};
+  final Set<String> _links = {};
+  bool _writing = false;
+  bool _localStop = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _createExecutor();
+    _confirmed = {
+      for (final channel in ProAdau1466DelayAuditRegistry.channels)
+        channel.channel: channel.exportedBaselineWord
+    };
+    _preview = Map.of(_confirmed);
+  }
+
+  void _createExecutor() {
+    _executor = ProAdau1466OperationalDelayExecutor(
+        backend: widget.backend, isWindowsPlatform: widget.isWindowsPlatform);
+  }
+
+  @override
+  void didUpdateWidget(covariant OperationalAdau1466DelayAudit oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.backend != widget.backend ||
+        oldWidget.isWindowsPlatform != widget.isWindowsPlatform) {
+      _createExecutor();
+    }
+  }
 
   static String _hex(int value, int width) =>
       '0x${value.toRadixString(16).padLeft(width, '0').toUpperCase()}';
 
+  bool _enabled(Adau1466MappedDelayAudit channel) =>
+      !_writing &&
+      !_localStop &&
+      !widget.dspWritesDisabled &&
+      widget.deviceOpen &&
+      _executor.isRealExecutorAvailable &&
+      channel.writeEnabled;
+
+  String _linkKey(String channel) => switch (channel) {
+        'WFL' || 'WFR' => 'WFL + WFR',
+        'MID_L' || 'MID_R' => 'MID_L + MID_R',
+        _ => 'TWL + TWR',
+      };
+  String _pairFor(String channel) => switch (channel) {
+        'WFL' => 'WFR',
+        'WFR' => 'WFL',
+        'MID_L' => 'MID_R',
+        'MID_R' => 'MID_L',
+        'TWL' => 'TWR',
+        _ => 'TWL',
+      };
+
+  void _stop(String warning) {
+    _localStop = true;
+    widget.onDspWriteStop?.call(warning);
+  }
+
+  Future<bool> _writeOne(Adau1466MappedDelayAudit channel, int samples) async {
+    final result = await _executor.writeOnce(
+        channel: channel, samples: samples, deviceOpen: widget.deviceOpen);
+    _ack[channel.channel] = result.ackStatus;
+    if (result.success) _confirmed[channel.channel] = samples;
+    _preview[channel.channel] = _confirmed[channel.channel]!;
+    return result.success;
+  }
+
+  Future<void> _commit(Adau1466MappedDelayAudit source, int samples,
+      {bool honorLink = true}) async {
+    if (!_enabled(source)) return;
+    setState(() => _writing = true);
+    final pair = ProAdau1466DelayAuditRegistry.find(_pairFor(source.channel));
+    final linked = honorLink &&
+        _links.contains(_linkKey(source.channel)) &&
+        pair != null &&
+        pair.writeEnabled;
+    if (!linked) {
+      await _writeOne(source, samples);
+    } else {
+      final sourceIsRight = source.channel.endsWith('_R') ||
+          source.channel == 'WFR' ||
+          source.channel == 'TWR';
+      final left = sourceIsRight ? pair : source;
+      final right = sourceIsRight ? source : pair;
+      final leftPrevious = _confirmed[left.channel]!;
+      if (await _writeOne(left, samples) && !await _writeOne(right, samples)) {
+        final rollback = await _executor.writeOnce(
+            channel: left,
+            samples: leftPrevious,
+            deviceOpen: widget.deviceOpen);
+        _ack[left.channel] = rollback.success ? 'ROLLED_BACK' : 'FAIL';
+        if (rollback.success) {
+          _confirmed[left.channel] = leftPrevious;
+          _preview[left.channel] = leftPrevious;
+        } else {
+          _stop(
+              'STOP — linked Delay rollback failed. All DSP writes disabled.');
+        }
+      }
+    }
+    if (mounted) setState(() => _writing = false);
+  }
+
+  Future<void> _resetAll() async {
+    if (_writing || _localStop || widget.dspWritesDisabled) return;
+    setState(() => _writing = true);
+    final changed = <(Adau1466MappedDelayAudit, int)>[];
+    for (final channel in ProAdau1466DelayAuditRegistry.channels
+        .where((entry) => entry.writeEnabled)) {
+      final previous = _confirmed[channel.channel]!;
+      if (await _writeOne(channel, channel.exportedBaselineWord)) {
+        if (previous != channel.exportedBaselineWord) {
+          changed.add((channel, previous));
+        }
+        continue;
+      }
+      for (final entry in changed.reversed) {
+        final rollback = await _executor.writeOnce(
+            channel: entry.$1,
+            samples: entry.$2,
+            deviceOpen: widget.deviceOpen);
+        _ack[entry.$1.channel] =
+            rollback.success ? 'BATCH_ROLLED_BACK' : 'FAIL';
+        if (rollback.success) {
+          _confirmed[entry.$1.channel] = entry.$2;
+          _preview[entry.$1.channel] = entry.$2;
+        } else {
+          _stop('STOP — Delay batch rollback failed. All DSP writes disabled.');
+          break;
+        }
+      }
+      break;
+    }
+    if (mounted) setState(() => _writing = false);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final realExecutor =
-        isWindowsPlatform() && backend.isAvailable && !backend.isFake;
     return Container(
         key: const Key('adau1466-operational-delay-audit'),
         padding: const EdgeInsets.all(14),
@@ -190,31 +339,40 @@ class OperationalAdau1466DelayAudit extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('ADAU1466 Operational Delay', style: proTitle(size: 13)),
           Text(
-              'USBi device: ${deviceOpen ? "open" : "closed"} · '
-              'real executor: ${realExecutor ? "available" : "unavailable"} · '
-              'DSP writes: ${dspWritesDisabled ? "STOPPED" : "enabled"}',
+              'USBi device: ${widget.deviceOpen ? "open" : "closed"} · '
+              'real executor: ${_executor.isRealExecutorAvailable ? "available" : "unavailable"} · '
+              'DSP writes: ${widget.dspWritesDisabled || _localStop ? "STOPPED" : "enabled"}',
               style: proSubtitle(size: 9)),
-          const Text('Sample rate: UNPROVEN for these exported parameters',
+          const Text(
+              'Unit: integer samples · time conversion/sample rate: pending',
               style: TextStyle(fontSize: 9, color: Colors.amber)),
           const Text(
-              'EXPORT AUDIT ONLY — real Delay writes are blocked. Format, valid range, units, and write transaction require SigmaStudio capture.',
+              'Direct 6-byte parameter write; no SafeLoad. Channels without an individually proven configured Max remain disabled.',
               style: TextStyle(fontSize: 9, color: Colors.amber)),
           const SizedBox(height: 8),
-          const Wrap(spacing: 10, children: [
-            FilterChip(
-                label: Text('Link WFL + WFR'),
-                selected: false,
-                onSelected: null),
-            FilterChip(
-                label: Text('Link MID_L + MID_R'),
-                selected: false,
-                onSelected: null),
-            FilterChip(
-                label: Text('Link TWL + TWR'),
-                selected: false,
-                onSelected: null),
+          Wrap(spacing: 10, children: [
+            for (final pair in ['WFL + WFR', 'MID_L + MID_R', 'TWL + TWR'])
+              FilterChip(
+                  key: Key('delay-link-$pair'),
+                  label: Text('Link $pair'),
+                  selected: _links.contains(pair),
+                  onSelected: ProAdau1466DelayAuditRegistry.find(
+                                  pair.split(' + ').first)!
+                              .writeEnabled &&
+                          ProAdau1466DelayAuditRegistry.find(
+                                  pair.split(' + ').last)!
+                              .writeEnabled &&
+                          !_writing
+                      ? (value) => setState(
+                          () => value ? _links.add(pair) : _links.remove(pair))
+                      : null),
             OutlinedButton(
-                onPressed: null, child: Text('Reset All to Export Baseline')),
+                key: const Key('delay-reset-all'),
+                onPressed: ProAdau1466DelayAuditRegistry.channels
+                        .any((entry) => _enabled(entry))
+                    ? _resetAll
+                    : null,
+                child: const Text('Reset All to Export Baseline')),
           ]),
           const SizedBox(height: 8),
           for (final channel in ProAdau1466DelayAuditRegistry.channels)
@@ -232,18 +390,37 @@ class OperationalAdau1466DelayAudit extends StatelessWidget {
                           '${channel.physicalOutput}',
                           style: proSubtitle(size: 8)),
                       Text(
-                          'baseline ${_hex(channel.exportedBaselineWord, 8)} · '
-                          'preview ${_hex(channel.exportedBaselineWord, 8)} · '
-                          'confirmed ${_hex(channel.exportedBaselineWord, 8)} · '
-                          'last ACK not written',
+                          'configured Max ${channel.configuredMaxSamples?.toString() ?? "UNPROVEN — BLOCKED"} samples · '
+                          'baseline ${channel.exportedBaselineWord} samples · '
+                          'preview ${_preview[channel.channel]} samples · '
+                          'confirmed ${_confirmed[channel.channel]} samples · '
+                          'last ACK ${_ack[channel.channel] ?? "not written"}',
                           style: proSubtitle(size: 8)),
                       Text(
                           'format ${channel.parameterFormat} · range '
                           '${channel.validRawRange} · unit ${channel.engineeringUnit}',
                           style: proSubtitle(size: 8)),
+                      if (channel.configuredMaxSamples != null)
+                        Slider(
+                            key: Key('delay-slider-${channel.channel}'),
+                            min: 0,
+                            max: channel.configuredMaxSamples!.toDouble(),
+                            divisions: channel.configuredMaxSamples!,
+                            value: _preview[channel.channel]!.toDouble(),
+                            onChanged: _enabled(channel)
+                                ? (value) => setState(() =>
+                                    _preview[channel.channel] = value.round())
+                                : null,
+                            onChangeEnd: _enabled(channel)
+                                ? (value) => _commit(channel, value.round())
+                                : null),
                       OutlinedButton(
                           key: Key('delay-reset-${channel.channel}'),
-                          onPressed: null,
+                          onPressed: _enabled(channel)
+                              ? () => _commit(
+                                  channel, channel.exportedBaselineWord,
+                                  honorLink: false)
+                              : null,
                           child: const Text('Reset to Export Baseline')),
                     ])),
           const Text(
