@@ -2,16 +2,25 @@
 // Crossover editor per driver channel.
 // No DSP write. No SafeLoad. No register addresses. Data model only.
 
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../core/pro_usbi_native_backend.dart';
+import '../../../core/pro_adau1466_xo_audit_registry.dart';
 
 class XoTab extends ConsumerStatefulWidget {
   final String projectId;
-  const XoTab({super.key, required this.projectId});
+  final ProUsbiNativeBackend? usbiBackend;
+  final bool Function()? isWindowsPlatform;
+  final bool deviceOpen;
+  final bool dspWritesDisabled;
+  const XoTab({super.key, required this.projectId, this.usbiBackend,
+    this.isWindowsPlatform, this.deviceOpen = false,
+    this.dspWritesDisabled = false});
 
   @override
   ConsumerState<XoTab> createState() => _XoTabState();
@@ -46,9 +55,16 @@ class _XoTabState extends ConsumerState<XoTab> {
     final project = store.projects.where((p) => p.id == widget.projectId).firstOrNull;
     final drivers = project?.acousticState.driverChannels ?? [];
     final tuning  = project?.tuningState ?? TuningProjectState.createDefault();
+    final hardwareAudit = Adau1466XoHardwareMappingPanel(
+      backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
+      isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
+      deviceOpen: widget.deviceOpen,
+      dspWritesDisabled: widget.dspWritesDisabled,
+    );
 
     if (drivers.isEmpty) {
-      return const _EmptyState(message: 'No driver channels configured. Import measurements first.');
+      return SingleChildScrollView(padding: const EdgeInsets.all(20),
+        child: hardwareAudit);
     }
 
     final selectedId = _selectedChannelId ?? drivers.first.id;
@@ -87,6 +103,8 @@ class _XoTabState extends ConsumerState<XoTab> {
             const SizedBox(height: 3),
             Text('High-pass and low-pass structure per channel. DSP export draft is available after protection verification.',
                 style: proSubtitle()),
+            const SizedBox(height: 16),
+            hardwareAudit,
             const SizedBox(height: 16),
 
             // Channel header
@@ -162,6 +180,75 @@ class _XoTabState extends ConsumerState<XoTab> {
         ),
       ),
     ]);
+  }
+}
+
+class Adau1466XoHardwareMappingPanel extends StatelessWidget {
+  final ProUsbiNativeBackend backend;
+  final bool Function() isWindowsPlatform;
+  final bool deviceOpen;
+  final bool dspWritesDisabled;
+  const Adau1466XoHardwareMappingPanel({super.key, required this.backend,
+    required this.isWindowsPlatform, required this.deviceOpen,
+    required this.dspWritesDisabled});
+
+  static String _hex(int value, int width) =>
+      '0x${value.toRadixString(16).padLeft(width, '0').toUpperCase()}';
+
+  @override
+  Widget build(BuildContext context) {
+    final realExecutor = isWindowsPlatform() && backend.isAvailable &&
+        !backend.isFake;
+    return Container(key: const Key('adau1466-xo-hardware-mapping'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: kProSurface,
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.55)),
+        borderRadius: BorderRadius.circular(4)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('ADAU1466 XO Hardware Mapping', style: proTitle(size: 13)),
+        Text('USBi device: ${deviceOpen ? "open" : "closed"} · '
+            'real executor: ${realExecutor ? "available" : "unavailable"} · '
+            'DSP writes: ${dspWritesDisabled ? "STOPPED" : "enabled"}',
+            style: proSubtitle(size: 9)),
+        const Text('AUDIT ONLY — all XO coefficient writes remain blocked.',
+          style: TextStyle(fontSize: 9, color: Colors.amber)),
+        const SizedBox(height: 8),
+        for (final channel in ['WFL', 'MID_L', 'TWL', 'WFR', 'MID_R', 'TWR']) ...[
+          Text(channel, style: proTitle(size: 11)),
+          for (final block in ProAdau1466XoAuditRegistry.blocks
+              .where((entry) => entry.channel == channel))
+            Container(key: Key('xo-map-${block.channel}-${block.sigmaCell}'),
+              margin: const EdgeInsets.only(top: 5, bottom: 7),
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(color: kProPanel,
+                border: Border.all(color: kProBorder),
+                borderRadius: BorderRadius.circular(3)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${block.sigmaCell} · ${block.role}${block.safetyBlock ? " · SAFETY" : ""} · '
+                      '${block.sigmaOutput} / ${block.physicalOutput}',
+                      style: proTitle(size: 9)),
+                  Text('slew ${block.slewSymbol} @ ${_hex(block.slewAddress, 4)} = '
+                      '${_hex(block.slewWord, 8)}', style: proSubtitle(size: 8)),
+                  Text('${block.coefficientSymbol} · ${block.addressRange} · '
+                      '${block.coefficients.length} words', style: proSubtitle(size: 8)),
+                  Text(block.coefficients.map((coefficient) =>
+                      '${coefficient.label}@${_hex(coefficient.address, 4)}=${_hex(coefficient.exportedWord, 8)}')
+                      .join(' · '), style: proSubtitle(size: 8)),
+                  Text('export row order ${block.exportOrder} · ${block.topologyStatus}',
+                      style: proSubtitle(size: 8)),
+                  Text('${block.formatStatus} · ${block.transactionStatus}',
+                      style: proSubtitle(size: 8)),
+                  Text(block.bypassStatus, style: proSubtitle(size: 8)),
+                  Text(block.blockedReason,
+                      style: const TextStyle(fontSize: 8, color: Colors.amber)),
+                ])),
+        ],
+        const Text('Required capture: WFL LPF_2 only — change one crossover parameter by one controlled step, capture slew write plus the complete five-coefficient SafeLoad transaction and ACKs, then restore the original setting and capture the complete restore transaction.',
+          style: TextStyle(fontSize: 9, color: Colors.amber)),
+        const Text('PASS_ACK only, never VERIFIED. Audible/measurement verification pending. RBJ output alone cannot enable writes. PEQ, arbitrary coefficients, legacy transport, ADAU1701, EEPROM, and Selfboot remain blocked.',
+          style: TextStyle(fontSize: 8, color: Colors.white38)),
+      ]));
   }
 }
 
@@ -528,19 +615,5 @@ class _XoGraphPlaceholder extends StatelessWidget {
             style: proSubtitle(size: 9)),
       ]),
     ),
-  );
-}
-
-class _EmptyState extends StatelessWidget {
-  final String message;
-  const _EmptyState({required this.message});
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.device_hub_outlined, color: Colors.white12, size: 28),
-      const SizedBox(height: 12),
-      Text(message, style: proSubtitle(size: 11), textAlign: TextAlign.center),
-    ]),
   );
 }
