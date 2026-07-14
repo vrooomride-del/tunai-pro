@@ -16,10 +16,7 @@ class ProAdau1466OperationalMuteExecutor {
     required int previousConfirmedState,
     required bool deviceOpen,
   }) async {
-    if (!isRealExecutorAvailable ||
-        !deviceOpen ||
-        !ProAdau1466MuteChannelRegistry.channels.contains(channel) ||
-        (requestedState != 0 && requestedState != 1) ||
+    if (!_isAllowed(channel, requestedState, deviceOpen) ||
         (previousConfirmedState != 0 && previousConfirmedState != 1)) {
       return const OperationalMuteResult(blocked: true);
     }
@@ -32,6 +29,26 @@ class ProAdau1466OperationalMuteExecutor {
     return OperationalMuteResult(
         confirmedState: previousConfirmedState, restoreFailed: !restoreAck);
   }
+
+  Future<OperationalMuteResult> restoreOnce({
+    required Adau1466MappedMuteChannel channel,
+    required int confirmedState,
+    required bool deviceOpen,
+  }) async {
+    if (!_isAllowed(channel, confirmedState, deviceOpen)) {
+      return const OperationalMuteResult(blocked: true);
+    }
+    final ack = await _write(channel, confirmedState);
+    return OperationalMuteResult(
+        success: ack, confirmedState: ack ? confirmedState : null);
+  }
+
+  bool _isAllowed(Adau1466MappedMuteChannel channel, int state,
+          bool deviceOpen) =>
+      isRealExecutorAvailable &&
+      deviceOpen &&
+      ProAdau1466MuteChannelRegistry.channels.contains(channel) &&
+      (state == 0 || state == 1);
 
   Future<bool> _write(Adau1466MappedMuteChannel channel, int state) async {
     try {

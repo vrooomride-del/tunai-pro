@@ -90,22 +90,10 @@ class _GainTabState extends ConsumerState<GainTab> {
       dspWritesDisabled: widget.dspWritesDisabled,
       onDspWriteStop: widget.onDspWriteStop,
     );
-    final operationalMute = OperationalAdau1466MuteControls(
-      backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
-      isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
-      deviceOpen: widget.deviceOpen,
-      dspWritesDisabled: widget.dspWritesDisabled,
-      onDspWriteStop: widget.onDspWriteStop,
-    );
-
     if (drivers.isEmpty) {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
-        child: Column(children: [
-          operational,
-          const SizedBox(height: 16),
-          operationalMute
-        ]),
+        child: operational,
       );
     }
 
@@ -150,9 +138,6 @@ class _GainTabState extends ConsumerState<GainTab> {
             const SizedBox(height: 16),
             operational,
             const SizedBox(height: 16),
-            operationalMute,
-            const SizedBox(height: 16),
-
             // Channel header
             _GainChannelHeader(
               driver: selectedDriver,
@@ -872,10 +857,9 @@ class _OperationalAdau1466MuteControlsState
       if (leftOk) {
         final rightOk = await _writeOne(right, value);
         if (!rightOk) {
-          final rollback = await _executor.writeWithRollback(
+          final rollback = await _executor.restoreOnce(
             channel: left,
-            requestedState: leftPrevious,
-            previousConfirmedState: leftPrevious,
+            confirmedState: leftPrevious,
             deviceOpen: widget.deviceOpen,
           );
           _ack[left.channel] = rollback.success ? 'ROLLED_BACK' : 'FAIL';
@@ -891,10 +875,37 @@ class _OperationalAdau1466MuteControlsState
   }
 
   Future<void> _setAll(int value) async {
+    if (!_enabled) return;
+    setState(() => _writing = true);
+    final changed = <(Adau1466MappedMuteChannel, int)>[];
     for (final channel in ProAdau1466MuteChannelRegistry.channels) {
       if (_localStop || widget.dspWritesDisabled) break;
-      await _setStateFor(channel, value, honorLink: false);
+      final previous = _confirmed[channel.channel]!;
+      final success = await _writeOne(channel, value);
+      if (success) {
+        if (previous != value) changed.add((channel, previous));
+        continue;
+      }
+      for (final entry in changed.reversed) {
+        final channelToRestore = entry.$1;
+        final rollback = await _executor.restoreOnce(
+          channel: channelToRestore,
+          confirmedState: entry.$2,
+          deviceOpen: widget.deviceOpen,
+        );
+        _ack[channelToRestore.channel] =
+            rollback.success ? 'BATCH_ROLLED_BACK' : 'FAIL';
+        if (rollback.success) {
+          _confirmed[channelToRestore.channel] = entry.$2;
+        } else {
+          _stop('STOP — batch state rollback failed. '
+              'All DSP writes disabled for this session.');
+          break;
+        }
+      }
+      break;
     }
+    if (mounted) setState(() => _writing = false);
   }
 
   @override
@@ -906,7 +917,7 @@ class _OperationalAdau1466MuteControlsState
           border: Border.all(color: kProAccent.withValues(alpha: 0.4)),
           borderRadius: BorderRadius.circular(4)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Operational ADAU1466 Mute Controls', style: proTitle(size: 13)),
+        Text('ADAU1466 Operational Output States', style: proTitle(size: 13)),
         Text(
             'USBi device: ${widget.deviceOpen ? "open" : "closed"} · '
             'real executor: ${_executor.isRealExecutorAvailable ? "available" : "unavailable"} · '
@@ -915,6 +926,9 @@ class _OperationalAdau1466MuteControlsState
         const Text(
             'Mute polarity is not audibly confirmed. Controls use the '
             'Sigma block states: checked=1 and unchecked=0.',
+            style: TextStyle(fontSize: 9, color: Colors.amber)),
+        const Text(
+            'Physical output mapping is planned from the current export; audible verification remains pending.',
             style: TextStyle(fontSize: 9, color: Colors.amber)),
         const SizedBox(height: 8),
         Wrap(spacing: 12, runSpacing: 6, children: [

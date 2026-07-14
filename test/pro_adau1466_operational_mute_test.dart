@@ -5,7 +5,8 @@ import 'package:tunai_pro/core/pro_adau1466_gain_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_mute_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_operational_mute_executor.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
-import 'package:tunai_pro/features/workbench/tabs/gain_tab.dart';
+import 'package:tunai_pro/features/workbench/tabs/mute_tab.dart';
+import 'package:tunai_pro/features/workbench/workbench_shell.dart';
 
 class _RealQueueBackend implements ProUsbiNativeBackend {
   final List<List<int>?> responses;
@@ -38,7 +39,7 @@ Widget _harness(_RealQueueBackend backend, {void Function(String)? onStop}) =>
     ProviderScope(
       child: MaterialApp(
         home: Scaffold(
-          body: GainTab(
+          body: MuteTab(
             projectId: 'missing-project',
             usbiBackend: backend,
             isWindowsPlatform: () => true,
@@ -72,10 +73,20 @@ void main() {
     }
     final addresses =
         ProAdau1466MuteChannelRegistry.channels.map((c) => c.address).toSet();
-    expect(addresses.intersection({
-      0x061C, 0x061D, 0x061E, 0x061F, 0x0620,
-      0x0621, 0x0622, 0x0623, 0x0624, 0x0625,
-    }), isEmpty);
+    expect(
+        addresses.intersection({
+          0x061C,
+          0x061D,
+          0x061E,
+          0x061F,
+          0x0620,
+          0x0621,
+          0x0622,
+          0x0623,
+          0x0624,
+          0x0625,
+        }),
+        isEmpty);
   });
 
   test('executor emits exact direct-write 0 and 1 bodies without SafeLoad',
@@ -137,17 +148,26 @@ void main() {
       sigmaOutput: '',
       physicalOutput: '',
     );
-    expect((await executor.writeWithRollback(channel: arbitrary,
-      requestedState: 1, previousConfirmedState: 0,
-      deviceOpen: true)).blocked, isTrue);
-    expect((await executor.writeWithRollback(
-      channel: ProAdau1466MuteChannelRegistry.channels.first,
-      requestedState: 2, previousConfirmedState: 1,
-      deviceOpen: true)).blocked, isTrue);
+    expect(
+        (await executor.writeWithRollback(
+                channel: arbitrary,
+                requestedState: 1,
+                previousConfirmedState: 0,
+                deviceOpen: true))
+            .blocked,
+        isTrue);
+    expect(
+        (await executor.writeWithRollback(
+                channel: ProAdau1466MuteChannelRegistry.channels.first,
+                requestedState: 2,
+                previousConfirmedState: 1,
+                deviceOpen: true))
+            .blocked,
+        isTrue);
     expect(backend.bodies, isEmpty);
   });
 
-  testWidgets('visible Gain tab contains six neutral-polarity controls',
+  testWidgets('visible Mute tab contains six neutral-polarity controls',
       (tester) async {
     final backend = _RealQueueBackend([]);
     await tester.pumpWidget(_harness(backend));
@@ -202,6 +222,49 @@ void main() {
     expect(backend.bodies.skip(6).every((b) => b[5] == 0), isTrue);
   });
 
+  testWidgets('batch failure stops and rolls changed channels back in reverse',
+      (tester) async {
+    final backend = _RealQueueBackend([
+      [0x01], // WFL unchecked
+      [0x01], // MID_L unchecked
+      [0x00], // TWL write fails
+      [0x01], // TWL restores
+      [0x01], // MID_L batch rollback
+      [0x01], // WFL batch rollback
+    ]);
+    await tester.pumpWidget(_harness(backend));
+    await tester.ensureVisible(find.byKey(const Key('mute-all-unchecked')));
+    await tester.tap(find.byKey(const Key('mute-all-unchecked')));
+    await tester.pumpAndSettle();
+    expect(backend.bodies.map((b) => [b[0], b[1], b[5]]).toList(), [
+      [0x06, 0x0E, 0],
+      [0x06, 0x13, 0],
+      [0x06, 0x10, 0],
+      [0x06, 0x10, 0],
+      [0x06, 0x13, 1],
+      [0x06, 0x0E, 1],
+    ]);
+    expect(find.textContaining('BATCH_ROLLED_BACK'), findsNWidgets(2));
+  });
+
+  testWidgets('batch rollback failure activates shared STOP', (tester) async {
+    String? warning;
+    final backend = _RealQueueBackend([
+      [0x01],
+      [0x01],
+      [0x00],
+      [0x01],
+      [0x00],
+    ]);
+    await tester
+        .pumpWidget(_harness(backend, onStop: (value) => warning = value));
+    await tester.ensureVisible(find.byKey(const Key('mute-all-unchecked')));
+    await tester.tap(find.byKey(const Key('mute-all-unchecked')));
+    await tester.pumpAndSettle();
+    expect(warning, contains('STOP'));
+    expect(find.textContaining('DSP writes: STOPPED'), findsOneWidget);
+  });
+
   testWidgets('linked rollback failure triggers shared STOP interlock',
       (tester) async {
     String? warning;
@@ -210,7 +273,6 @@ void main() {
       [0x00],
       [0x01],
       [0x00],
-      [0x00]
     ]);
     await tester
         .pumpWidget(_harness(backend, onStop: (value) => warning = value));
@@ -228,5 +290,14 @@ void main() {
         [0x03B8, 0x03C4, 0x03C7, 0x03BB, 0x03CA, 0x03CD]);
     const masterVolumeAllowlist = [0x0067, 0x0064];
     expect(masterVolumeAllowlist, [0x0067, 0x0064]);
+  });
+
+  testWidgets('launched Workbench navigation exposes a Mute tab',
+      (tester) async {
+    await tester.pumpWidget(const ProviderScope(
+      child: MaterialApp(home: WorkbenchShell(projectId: 'missing-project')),
+    ));
+    await tester.pump();
+    expect(find.text('Mute'), findsOneWidget);
   });
 }

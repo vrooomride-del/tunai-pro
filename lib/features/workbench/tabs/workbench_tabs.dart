@@ -7,6 +7,7 @@ export 'report_tab.dart';
 export 'peq_tab.dart';
 export 'xo_tab.dart';
 export 'gain_tab.dart';
+export 'mute_tab.dart';
 export 'delay_tab.dart';
 export 'phase_tab.dart';
 export 'protection_tab.dart';
