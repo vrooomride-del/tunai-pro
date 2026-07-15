@@ -16,6 +16,7 @@ abstract final class Icp5FrameCodec {
   static const expectedProfile = 'DSP1701.100.00.01';
   static const masterVolumeParameterId = 0x00000010;
   static const masterMuteParameterId = 0x00000012;
+  static const outputDac1GainParameterId = 0x00000014;
 
   static int checksum(Iterable<int> bytes) =>
       bytes.fold<int>(0, (sum, byte) => (sum + byte) & 0xFF);
@@ -80,6 +81,31 @@ abstract final class Icp5FrameCodec {
 
   static bool parseMasterMuteAck(List<int> frame) {
     return _parseSuccessAck(frame, masterMuteParameterId);
+  }
+
+  static List<int> buildOutputDac1GainWrite(double value) {
+    if (value != -4.9 && value != -4.8) {
+      throw ArgumentError.value(value, 'value',
+          'Only capture-proven Output DAC 1 Gain values -4.9 and -4.8 are allowed.');
+    }
+    final data = ByteData(4)..setFloat32(0, value, Endian.little);
+    final frame = <int>[
+      0x55,
+      0x0C,
+      0x1C,
+      0,
+      0,
+      0,
+      0x14,
+      0x01,
+      0x00,
+      ...data.buffer.asUint8List(),
+    ];
+    return [...frame, checksum(frame)];
+  }
+
+  static bool parseOutputDac1GainAck(List<int> frame) {
+    return _parseSuccessAck(frame, outputDac1GainParameterId);
   }
 
   static bool _parseSuccessAck(List<int> frame, int expectedParameterId) {

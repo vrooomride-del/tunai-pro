@@ -33,6 +33,8 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   double _confirmedValue = 6.0;
   Icp5MasterMuteResult? _lastMuteCommand;
   int _confirmedMuteState = 0;
+  Icp5OutputDac1GainResult? _lastDacGainCommand;
+  double _confirmedDacGain = -4.8;
   String? _discoveryError;
 
   @override
@@ -286,6 +288,47 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                 style: proSubtitle(size: 9)),
           ]),
         ),
+        const SizedBox(height: 12),
+        Container(
+          key: const Key('icp5_output_dac_1_gain_panel'),
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+            border: Border.all(color: kProBorder),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Output DAC 1 Gain', style: proLabel(size: 9, spacing: 0.8)),
+            const SizedBox(height: 5),
+            _row('Parameter ID', '0x00000014'),
+            _row('Captured baseline', '-4.8'),
+            _row('Captured TEST', '-4.9'),
+            _row('Current confirmed state',
+                _confirmedDacGain.toStringAsFixed(1)),
+            _row('Last ACK', _lastDacGainCommand?.message ?? 'not run'),
+            const SizedBox(height: 6),
+            Wrap(spacing: 7, runSpacing: 7, children: [
+              FilledButton(
+                key: const Key('icp5_dac_gain_test_49_button'),
+                onPressed: blocked || !_icp5Usb.handshakeComplete
+                    ? null
+                    : _testDacGain49,
+                child: const Text('TEST -4.9'),
+              ),
+              OutlinedButton(
+                key: const Key('icp5_dac_gain_restore_48_button'),
+                onPressed: blocked || !_icp5Usb.handshakeComplete
+                    ? null
+                    : _restoreDacGain48,
+                child: const Text('RESTORE -4.8'),
+              ),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+                'PASS_ACK only, never VERIFIED · Complete range and audible verification pending.',
+                style: proSubtitle(size: 9)),
+          ]),
+        ),
       ]),
     );
   }
@@ -370,6 +413,31 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
       _working = false;
       _lastMuteCommand = result;
       if (result.success) _confirmedMuteState = 0;
+    });
+  }
+
+  Future<void> _testDacGain49() async {
+    setState(() => _working = true);
+    final outcome = await _icp5Usb.runOutputDac1GainTestWithGuardedRestore();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _lastDacGainCommand = outcome.restore ?? outcome.test;
+      if (outcome.test.success) _confirmedDacGain = -4.9;
+      if (!outcome.test.success && outcome.restore?.success == true) {
+        _confirmedDacGain = -4.8;
+      }
+    });
+  }
+
+  Future<void> _restoreDacGain48() async {
+    setState(() => _working = true);
+    final result = await _icp5Usb.restoreOutputDac1GainWithStop();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _lastDacGainCommand = result;
+      if (result.success) _confirmedDacGain = -4.8;
     });
   }
 

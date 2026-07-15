@@ -49,6 +49,28 @@ class Icp5MuteDiagnosticOutcome {
       {required this.test, this.restore, required this.stopActivated});
 }
 
+class Icp5OutputDac1GainResult {
+  final bool success;
+  final bool wasActualWrite;
+  final bool writeMayHaveReachedDevice;
+  final List<int>? rawAck;
+  final String message;
+  const Icp5OutputDac1GainResult(
+      {required this.success,
+      required this.wasActualWrite,
+      required this.writeMayHaveReachedDevice,
+      required this.message,
+      this.rawAck});
+}
+
+class Icp5OutputDac1GainDiagnosticOutcome {
+  final Icp5OutputDac1GainResult test;
+  final Icp5OutputDac1GainResult? restore;
+  final bool stopActivated;
+  const Icp5OutputDac1GainDiagnosticOutcome(
+      {required this.test, this.restore, required this.stopActivated});
+}
+
 class Icp5UsbTransport implements DspTransport {
   final Icp5SerialDriver driver;
   final Duration readTimeout;
@@ -312,6 +334,65 @@ class Icp5UsbTransport implements DspTransport {
     return restore;
   }
 
+  Future<Icp5OutputDac1GainResult> writeCapturedOutputDac1Gain(
+      double value) async {
+    if (_stopped) return _dacGainFailure('Shared DSP STOP is active.');
+    if (!_handshakeComplete ||
+        _state != DspConnectionState.connected ||
+        _profile != Icp5FrameCodec.expectedProfile) {
+      return _dacGainFailure(
+          'Successful ADAU1701 identity handshake is required.');
+    }
+    if (_busy) return _dacGainFailure('Another ICP5 transaction is active.');
+    _busy = true;
+    try {
+      final frame = Icp5FrameCodec.buildOutputDac1GainWrite(value);
+      final ack = await _exchange(frame, Icp5FrameCodec.parseOutputDac1GainAck);
+      if (ack == null) {
+        return _dacGainFailure('Malformed or mismatched ACK.',
+            actual: true, mayHaveReached: true);
+      }
+      return Icp5OutputDac1GainResult(
+          success: true,
+          wasActualWrite: true,
+          writeMayHaveReachedDevice: true,
+          rawAck: ack,
+          message: 'PASS_ACK');
+    } on TimeoutException {
+      return _dacGainFailure('ACK timeout.',
+          actual: true, mayHaveReached: true);
+    } catch (error) {
+      return _dacGainFailure('$error', actual: true, mayHaveReached: true);
+    } finally {
+      _busy = false;
+    }
+  }
+
+  Future<Icp5OutputDac1GainDiagnosticOutcome>
+      runOutputDac1GainTestWithGuardedRestore() async {
+    final test = await writeCapturedOutputDac1Gain(-4.9);
+    if (test.success || !test.writeMayHaveReachedDevice) {
+      return Icp5OutputDac1GainDiagnosticOutcome(
+          test: test, stopActivated: false);
+    }
+    final restore = await writeCapturedOutputDac1Gain(-4.8);
+    if (!restore.success) {
+      _activateStop(
+          'ICP5 Output DAC 1 Gain restore failed; shared DSP STOP activated.');
+    }
+    return Icp5OutputDac1GainDiagnosticOutcome(
+        test: test, restore: restore, stopActivated: !restore.success);
+  }
+
+  Future<Icp5OutputDac1GainResult> restoreOutputDac1GainWithStop() async {
+    final restore = await writeCapturedOutputDac1Gain(-4.8);
+    if (!restore.success && restore.writeMayHaveReachedDevice) {
+      _activateStop(
+          'ICP5 Output DAC 1 Gain restore failed; shared DSP STOP activated.');
+    }
+    return restore;
+  }
+
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
     final future = _frames.stream.firstWhere(accepts).timeout(readTimeout);
@@ -340,6 +421,13 @@ class Icp5UsbTransport implements DspTransport {
   Icp5MasterMuteResult _muteFailure(String message,
           {bool actual = false, bool mayHaveReached = false}) =>
       Icp5MasterMuteResult(
+          success: false,
+          wasActualWrite: actual,
+          writeMayHaveReachedDevice: mayHaveReached,
+          message: message);
+  Icp5OutputDac1GainResult _dacGainFailure(String message,
+          {bool actual = false, bool mayHaveReached = false}) =>
+      Icp5OutputDac1GainResult(
           success: false,
           wasActualWrite: actual,
           writeMayHaveReachedDevice: mayHaveReached,

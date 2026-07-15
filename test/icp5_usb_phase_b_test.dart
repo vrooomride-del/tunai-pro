@@ -38,6 +38,7 @@ const identityRx = <int>[
 ];
 const goodAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x10, 0, 0x4D];
 const goodMuteAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x12, 0, 0x4F];
+const goodDacGainAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x14, 0, 0x51];
 
 class FakeConnection implements Icp5SerialConnection {
   final _controller = StreamController<List<int>>.broadcast(sync: true);
@@ -126,6 +127,26 @@ void main() {
     expect(Icp5ProtocolEvidenceRegistry.usb.masterMuteAckParameterId, 0x12);
     expect(Icp5ProtocolEvidenceRegistry.usb.masterMuteSuccessStatus, 0);
     expect(Icp5ProtocolEvidenceRegistry.usb.masterMutePolarityProven, isFalse);
+  });
+
+  test('exact Output DAC 1 Gain frames and ACK are capture-locked', () {
+    expect(Icp5FrameCodec.buildOutputDac1GainWrite(-4.9),
+        [0x55, 0x0C, 0x1C, 0, 0, 0, 0x14, 1, 0, 0xCD, 0xCC, 0x9C, 0xC0, 0x87]);
+    expect(Icp5FrameCodec.buildOutputDac1GainWrite(-4.8),
+        [0x55, 0x0C, 0x1C, 0, 0, 0, 0x14, 1, 0, 0x9A, 0x99, 0x99, 0xC0, 0x1E]);
+    expect(() => Icp5FrameCodec.buildOutputDac1GainWrite(-4.7),
+        throwsArgumentError);
+    expect(Icp5FrameCodec.parseOutputDac1GainAck(goodDacGainAck), isTrue);
+    final badChecksum = [...goodDacGainAck]..[8] = 0;
+    expect(Icp5FrameCodec.parseOutputDac1GainAck(badChecksum), isFalse);
+    expect(Icp5FrameCodec.parseOutputDac1GainAck(goodMuteAck), isFalse);
+    const evidence = Icp5ProtocolEvidenceRegistry.usb;
+    expect(evidence.outputDac1GainParameterId, 0x14);
+    expect(evidence.outputDac1GainPayloadPrefix, [1, 0]);
+    expect(evidence.capturedOutputDac1GainValues, [-4.9, -4.8]);
+    expect(evidence.outputDac1GainAckParameterId, 0x14);
+    expect(evidence.outputDac1GainSuccessStatus, 0);
+    expect(evidence.outputDac1GainRangeProven, isFalse);
   });
 
   test('partial buffering extracts complete declared-length frames', () {
@@ -295,6 +316,63 @@ void main() {
     await stopped.close();
   });
 
+  test('Output DAC 1 Gain requires handshake and one action emits one frame',
+      () async {
+    late FakeConnection connection;
+    connection = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+      if (call == 2) connection.emit(goodDacGainAck);
+    });
+    final transport = Icp5UsbTransport(driver: FakeDriver(connection));
+    expect((await transport.writeCapturedOutputDac1Gain(-4.9)).success, isFalse);
+    expect(connection.writes, isEmpty);
+    expect((await transport.open()).success, isTrue);
+    final result = await transport.writeCapturedOutputDac1Gain(-4.9);
+    expect(result.success, isTrue);
+    expect(result.message, 'PASS_ACK');
+    expect(connection.writes, hasLength(2));
+    expect(connection.writes.last,
+        Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
+    await transport.close();
+  });
+
+  test('Output DAC 1 Gain TEST failure restores and failed restore stops',
+      () async {
+    late FakeConnection connection;
+    connection = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+      if (call == 3) connection.emit(goodDacGainAck);
+    });
+    final transport = Icp5UsbTransport(
+        driver: FakeDriver(connection),
+        readTimeout: const Duration(milliseconds: 10));
+    await transport.open();
+    final outcome = await transport.runOutputDac1GainTestWithGuardedRestore();
+    expect(outcome.test.success, isFalse);
+    expect(outcome.restore?.success, isTrue);
+    expect(connection.writes[1],
+        Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
+    expect(connection.writes[2],
+        Icp5FrameCodec.buildOutputDac1GainWrite(-4.8));
+    await transport.close();
+
+    final stops = <String>[];
+    late FakeConnection failing;
+    failing = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+    });
+    final stopped = Icp5UsbTransport(
+        driver: FakeDriver(failing),
+        readTimeout: const Duration(milliseconds: 10),
+        onDspWriteStop: stops.add);
+    await stopped.open();
+    final failed = await stopped.runOutputDac1GainTestWithGuardedRestore();
+    expect(failed.stopActivated, isTrue);
+    expect(stopped.stopped, isTrue);
+    expect(stops.single, contains('Output DAC 1 Gain restore failed'));
+    await stopped.close();
+  });
+
   testWidgets('discovery UI shows identity and enumerated-only manual ports',
       (tester) async {
     final connection = FakeConnection((_, __, ___) {});
@@ -332,6 +410,10 @@ void main() {
     expect(find.byKey(const Key('icp5_master_mute_panel')), findsOneWidget);
     expect(find.text('TEST State 1'), findsOneWidget);
     expect(find.text('RESTORE State 0'), findsOneWidget);
+    expect(find.byKey(const Key('icp5_output_dac_1_gain_panel')),
+        findsOneWidget);
+    expect(find.text('TEST -4.9'), findsOneWidget);
+    expect(find.text('RESTORE -4.8'), findsOneWidget);
   });
 
   testWidgets('failed discovery displays source and candidate count',
@@ -386,5 +468,33 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('State 1'), findsOneWidget);
     expect(connection.writes.last, Icp5FrameCodec.buildMasterMuteWrite(1));
+  });
+
+  testWidgets('Output DAC 1 Gain confirmed UI state is ACK-gated',
+      (tester) async {
+    late FakeConnection connection;
+    connection = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+      if (call == 2) connection.emit(goodDacGainAck);
+    });
+    final transport = Icp5UsbTransport(driver: FakeDriver(connection));
+    await transport.open();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: SingleChildScrollView(
+                child: TransportConnectionPanel(
+                    backend: const ProUsbiNativeBackendDisabled(),
+                    deviceOpen: false,
+                    icp5UsbTransport: transport)))));
+    await tester.tap(find.text('ICP5 USB'));
+    await tester.pump();
+    expect(find.text('-4.8'), findsNWidgets(2));
+    await tester.ensureVisible(
+        find.byKey(const Key('icp5_dac_gain_test_49_button')));
+    await tester.tap(find.byKey(const Key('icp5_dac_gain_test_49_button')));
+    await tester.pumpAndSettle();
+    expect(find.text('-4.9'), findsNWidgets(2));
+    expect(connection.writes.last,
+        Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
   });
 }

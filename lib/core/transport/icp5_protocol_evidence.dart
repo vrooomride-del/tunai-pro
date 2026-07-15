@@ -35,6 +35,13 @@ class Icp5ProtocolEvidence {
   final int? masterMuteAckParameterId;
   final int? masterMuteSuccessStatus;
   final bool? masterMutePolarityProven;
+  final int? outputDac1GainParameterId;
+  final List<int>? outputDac1GainPayloadPrefix;
+  final List<double>? capturedOutputDac1GainValues;
+  final String? outputDac1GainValueEncoding;
+  final int? outputDac1GainAckParameterId;
+  final int? outputDac1GainSuccessStatus;
+  final bool? outputDac1GainRangeProven;
 
   const Icp5ProtocolEvidence({
     this.usbVendorId,
@@ -73,6 +80,13 @@ class Icp5ProtocolEvidence {
     this.masterMuteAckParameterId,
     this.masterMuteSuccessStatus,
     this.masterMutePolarityProven,
+    this.outputDac1GainParameterId,
+    this.outputDac1GainPayloadPrefix,
+    this.capturedOutputDac1GainValues,
+    this.outputDac1GainValueEncoding,
+    this.outputDac1GainAckParameterId,
+    this.outputDac1GainSuccessStatus,
+    this.outputDac1GainRangeProven,
   });
 
   bool get isProtocolProven =>
@@ -111,6 +125,13 @@ abstract final class Icp5ProtocolEvidenceRegistry {
     masterMuteAckParameterId: 0x00000012,
     masterMuteSuccessStatus: 0x00,
     masterMutePolarityProven: false,
+    outputDac1GainParameterId: 0x00000014,
+    outputDac1GainPayloadPrefix: [0x01, 0x00],
+    capturedOutputDac1GainValues: [-4.9, -4.8],
+    outputDac1GainValueEncoding: 'IEEE-754 float32 little-endian',
+    outputDac1GainAckParameterId: 0x00000014,
+    outputDac1GainSuccessStatus: 0x00,
+    outputDac1GainRangeProven: false,
   );
   static const bluetooth = Icp5ProtocolEvidence();
 }
