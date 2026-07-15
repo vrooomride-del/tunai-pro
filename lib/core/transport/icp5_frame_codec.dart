@@ -91,12 +91,21 @@ abstract final class Icp5FrameCodec {
   }
 
   static List<int> buildOutputGainWrite(int channel, double value) {
-    // Only the index-0 pair is present in the checked-in capture evidence.
-    if (channel != 0 || (value != -4.9 && value != -4.8)) {
+    const capturedValueBytes = <String, List<int>>{
+      '0:-4.9': [0xCD, 0xCC, 0x9C, 0xC0],
+      '0:-4.8': [0x9A, 0x99, 0x99, 0xC0],
+      '1:-4.8': [0x9A, 0x99, 0x99, 0xC0],
+      '1:-4.7': [0x67, 0x66, 0x96, 0xC0],
+      '2:-0.16666946': [0x66, 0xAB, 0x2A, 0xBE],
+      '2:-0.06666946': [0x00, 0x8A, 0x88, 0xBD],
+      '3:-0.16666946': [0x66, 0xAB, 0x2A, 0xBE],
+      '3:-0.06666946': [0x00, 0x8A, 0x88, 0xBD],
+    };
+    final data = capturedValueBytes['$channel:$value'];
+    if (data == null) {
       throw ArgumentError(
-          'Only capture-proven DAC0 Output Gain values -4.9 and -4.8 are allowed.');
+          'Only capture-proven Output Gain channel/value pairs are allowed.');
     }
-    final data = ByteData(4)..setFloat32(0, value, Endian.little);
     final frame = <int>[
       0x55,
       0x0C,
@@ -107,7 +116,7 @@ abstract final class Icp5FrameCodec {
       0x14,
       0x01,
       channel,
-      ...data.buffer.asUint8List(),
+      ...data,
     ];
     return [...frame, checksum(frame)];
   }
@@ -133,11 +142,16 @@ abstract final class Icp5FrameCodec {
       _parseSuccessAck(frame, delayCandidateParameterId);
 
   static List<int> buildFilterCutoffWrite(int channel, int value) {
-    final allowed = (channel == 0 && (value == 2000 || value == 2001)) ||
-        (channel == 2 && (value == 20 || value == 21));
+    const pairs = <int, List<int>>{
+      0: [2001, 2000],
+      1: [2001, 2000],
+      2: [21, 20],
+      3: [21, 20],
+    };
+    final allowed = pairs[channel]?.contains(value) ?? false;
     if (!allowed) {
       throw ArgumentError(
-          'Only captured DAC0 2000/2001 and DAC2 20/21 cutoff vectors are allowed.');
+          'Only captured Filter Cutoff channel/value pairs are allowed.');
     }
     return _frame(0x0B, filterCutoffParameterId,
         [channel, 0x02, 0x00, value & 0xFF, (value >> 8) & 0xFF]);
@@ -147,11 +161,16 @@ abstract final class Icp5FrameCodec {
       _parseSuccessAck(frame, filterCutoffParameterId);
 
   static List<int> buildPeqBand1GainWrite(int channel, double value) {
-    final allowed = (channel == 0 && (value == -0.9 || value == -1.0)) ||
-        (channel == 2 && (value == -1.0 || value == -2.0));
+    const pairs = <int, List<double>>{
+      0: [-0.9, -1.0],
+      1: [4.2, 4.1],
+      2: [-1.0, -2.0],
+      3: [2.1, 2.0],
+    };
+    final allowed = pairs[channel]?.contains(value) ?? false;
     if (!allowed) {
       throw ArgumentError(
-          'Only captured DAC0 and DAC2 PEQ Band 1 gain pairs are allowed.');
+          'Only captured PEQ Band 1 channel/value pairs are allowed.');
     }
     final tenths = (value * 10).round() & 0xFF;
     return _frame(0x0A, peqBandGainParameterId, [channel, 0x01, 0x00, tenths]);

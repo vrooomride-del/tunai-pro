@@ -35,14 +35,23 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   int _confirmedMuteState = 0;
   Icp5OutputDac1GainResult? _lastDacGainCommand;
   double _confirmedDacGain = -4.8;
+  String _dacGainRollback = 'not required';
   final Map<String, num> _phaseCConfirmed = {
+    'gain1': -4.7,
+    'gain2': -0.06666946,
+    'gain3': -0.06666946,
     for (var channel = 0; channel < 4; channel++) 'delay$channel': 0.04,
     'cutoff0': 2000,
+    'cutoff1': 2000,
     'cutoff2': 20,
+    'cutoff3': 20,
     'peq0': -1.0,
+    'peq1': 4.1,
     'peq2': -2.0,
+    'peq3': 2.0,
   };
   final Map<String, Icp5PhaseCResult> _phaseCLast = {};
+  final Map<String, String> _phaseCRollback = {};
   String? _discoveryError;
 
   @override
@@ -306,14 +315,17 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           ),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Output Gain DAC0', style: proLabel(size: 9, spacing: 0.8)),
+            Text('Output Gain index 0', style: proLabel(size: 9, spacing: 0.8)),
             const SizedBox(height: 5),
             _row('Parameter ID', '0x00000014'),
+            _row('Protocol channel index', '0'),
             _row('Captured baseline', '-4.8'),
             _row('Captured TEST', '-4.9'),
             _row('Current confirmed state',
                 _confirmedDacGain.toStringAsFixed(1)),
             _row('Last ACK', _lastDacGainCommand?.message ?? 'not run'),
+            _row('Rollback status', _dacGainRollback),
+            _row('DSP STOP status', _icp5Usb.stopped ? 'STOPPED' : 'enabled'),
             const SizedBox(height: 6),
             Wrap(spacing: 7, runSpacing: 7, children: [
               FilledButton(
@@ -338,24 +350,31 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           ]),
         ),
         const SizedBox(height: 8),
-        for (var channel = 1; channel < 4; channel++)
-          Container(
-            key: Key('icp5_output_gain_dac${channel}_blocked'),
-            margin: const EdgeInsets.only(top: 7),
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-                border: Border.all(color: kProBorder),
-                borderRadius: BorderRadius.circular(3)),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Output Gain DAC$channel',
-                      style: proLabel(size: 9, spacing: 0.5)),
-                  Text(
-                      'WRITE BLOCKED — exact channel-specific TEST/RESTORE pair is absent from repository evidence.',
-                      style: proSubtitle(size: 9)),
-                ]),
-          ),
+        _phaseCCard(
+            blocked: blocked,
+            keyName: 'gain1',
+            title: 'Output Gain index 1',
+            parameter: '0x00000014',
+            channelIndex: 1,
+            testLabel: 'TEST -4.8',
+            restoreLabel: 'RESTORE -4.7',
+            onTest: () => _runPhaseCTest(
+                'gain1', -4.8, -4.7, () => _icp5Usb.runOutputGainTest(1)),
+            onRestore: () => _runPhaseCRestore(
+                'gain1', -4.7, () => _icp5Usb.restoreOutputGain(1))),
+        for (var channel = 2; channel < 4; channel++)
+          _phaseCCard(
+              blocked: blocked,
+              keyName: 'gain$channel',
+              title: 'Output Gain index $channel',
+              parameter: '0x00000014',
+              channelIndex: channel,
+              testLabel: 'TEST -0.16666946',
+              restoreLabel: 'RESTORE -0.06666946',
+              onTest: () => _runPhaseCTest('gain$channel', -0.16666946,
+                  -0.06666946, () => _icp5Usb.runOutputGainTest(channel)),
+              onRestore: () => _runPhaseCRestore('gain$channel', -0.06666946,
+                  () => _icp5Usb.restoreOutputGain(channel))),
         const SizedBox(height: 12),
         Text('Delay candidate DAC0–DAC3',
             style: proLabel(size: 9, spacing: 0.8)),
@@ -368,6 +387,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
               keyName: 'delay$channel',
               title: 'Delay candidate DAC$channel',
               parameter: '0x00000017',
+              channelIndex: channel,
               testLabel: 'TEST 1.0',
               restoreLabel: 'RESTORE 0.04',
               onTest: () => _runPhaseCTest('delay$channel', 1.0, 0.04,
@@ -380,8 +400,9 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         _phaseCCard(
             blocked: blocked,
             keyName: 'cutoff0',
-            title: 'DAC0 Filter Cutoff 2000/2001',
+            title: 'Filter Cutoff Diagnostic index 0 · 2000/2001',
             parameter: '0x00000015',
+            channelIndex: 0,
             testLabel: 'TEST 2001',
             restoreLabel: 'RESTORE 2000',
             onTest: () => _runPhaseCTest(
@@ -390,25 +411,49 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                 'cutoff0', 2000, () => _icp5Usb.restoreFilterCutoff(0))),
         _phaseCCard(
             blocked: blocked,
-            keyName: 'cutoff2',
-            title: 'DAC2 Filter Cutoff 20/21',
+            keyName: 'cutoff1',
+            title: 'Filter Cutoff Diagnostic index 1 · 2000/2001',
             parameter: '0x00000015',
+            channelIndex: 1,
+            testLabel: 'TEST 2001',
+            restoreLabel: 'RESTORE 2000',
+            onTest: () => _runPhaseCTest(
+                'cutoff1', 2001, 2000, () => _icp5Usb.runFilterCutoffTest(1)),
+            onRestore: () => _runPhaseCRestore(
+                'cutoff1', 2000, () => _icp5Usb.restoreFilterCutoff(1))),
+        _phaseCCard(
+            blocked: blocked,
+            keyName: 'cutoff2',
+            title: 'Filter Cutoff Diagnostic index 2 · 20/21',
+            parameter: '0x00000015',
+            channelIndex: 2,
             testLabel: 'TEST 21',
             restoreLabel: 'RESTORE 20',
             onTest: () => _runPhaseCTest(
                 'cutoff2', 21, 20, () => _icp5Usb.runFilterCutoffTest(2)),
             onRestore: () => _runPhaseCRestore(
                 'cutoff2', 20, () => _icp5Usb.restoreFilterCutoff(2))),
-        Text('DAC1 and DAC3 filter writes blocked; link behavior unproven.',
-            style: proSubtitle(size: 9)),
+        _phaseCCard(
+            blocked: blocked,
+            keyName: 'cutoff3',
+            title: 'Filter Cutoff Diagnostic index 3 · 20/21',
+            parameter: '0x00000015',
+            channelIndex: 3,
+            testLabel: 'TEST 21',
+            restoreLabel: 'RESTORE 20',
+            onTest: () => _runPhaseCTest(
+                'cutoff3', 21, 20, () => _icp5Usb.runFilterCutoffTest(3)),
+            onRestore: () => _runPhaseCRestore(
+                'cutoff3', 20, () => _icp5Usb.restoreFilterCutoff(3))),
         const SizedBox(height: 12),
         Text('PEQ Band 1 Gain diagnostics',
             style: proLabel(size: 9, spacing: 0.8)),
         _phaseCCard(
             blocked: blocked,
             keyName: 'peq0',
-            title: 'DAC0 PEQ Band 1 -1.0/-0.9',
+            title: 'PEQ Band 1 Gain index 0 · -1.0/-0.9 dB',
             parameter: '0x00000018',
+            channelIndex: 0,
             testLabel: 'TEST -0.9',
             restoreLabel: 'RESTORE -1.0',
             onTest: () => _runPhaseCTest(
@@ -417,17 +462,42 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                 'peq0', -1.0, () => _icp5Usb.restorePeqBand1Gain(0))),
         _phaseCCard(
             blocked: blocked,
-            keyName: 'peq2',
-            title: 'DAC2 PEQ Band 1 -2.0/-1.0',
+            keyName: 'peq1',
+            title: 'PEQ Band 1 Gain index 1 · 4.1/4.2 dB',
             parameter: '0x00000018',
+            channelIndex: 1,
+            testLabel: 'TEST 4.2 dB',
+            restoreLabel: 'RESTORE 4.1 dB',
+            onTest: () => _runPhaseCTest(
+                'peq1', 4.2, 4.1, () => _icp5Usb.runPeqBand1GainTest(1)),
+            onRestore: () => _runPhaseCRestore(
+                'peq1', 4.1, () => _icp5Usb.restorePeqBand1Gain(1))),
+        _phaseCCard(
+            blocked: blocked,
+            keyName: 'peq2',
+            title: 'PEQ Band 1 Gain index 2 · -2.0/-1.0 dB',
+            parameter: '0x00000018',
+            channelIndex: 2,
             testLabel: 'TEST -1.0',
             restoreLabel: 'RESTORE -2.0',
             onTest: () => _runPhaseCTest(
                 'peq2', -1.0, -2.0, () => _icp5Usb.runPeqBand1GainTest(2)),
             onRestore: () => _runPhaseCRestore(
                 'peq2', -2.0, () => _icp5Usb.restorePeqBand1Gain(2))),
+        _phaseCCard(
+            blocked: blocked,
+            keyName: 'peq3',
+            title: 'PEQ Band 1 Gain index 3 · 2.0/2.1 dB',
+            parameter: '0x00000018',
+            channelIndex: 3,
+            testLabel: 'TEST 2.1 dB',
+            restoreLabel: 'RESTORE 2.0 dB',
+            onTest: () => _runPhaseCTest(
+                'peq3', 2.1, 2.0, () => _icp5Usb.runPeqBand1GainTest(3)),
+            onRestore: () => _runPhaseCRestore(
+                'peq3', 2.0, () => _icp5Usb.restorePeqBand1Gain(3))),
         Text(
-            'DAC1 and DAC3 PEQ writes blocked; paired-channel behavior unproven. PASS_ACK only, never VERIFIED · audible and physical verification pending.',
+            'Exact diagnostics only — not production controls. PASS_ACK only, never VERIFIED · physical speaker/output mapping, full ranges, audible verification, Filter HPF/LPF roles, and PEQ Frequency/Q/Bands 2–10 remain unproven.',
             style: proSubtitle(size: 9)),
       ]),
     );
@@ -438,6 +508,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
       required String keyName,
       required String title,
       required String parameter,
+      required int channelIndex,
       required String testLabel,
       required String restoreLabel,
       required VoidCallback onTest,
@@ -452,13 +523,18 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title, style: proLabel(size: 9, spacing: 0.5)),
         _row('Parameter ID', parameter),
+        _row('Protocol channel index', '$channelIndex'),
         _row('Confirmed', '${_phaseCConfirmed[keyName]}'),
         _row('Last ACK', _phaseCLast[keyName]?.message ?? 'not run'),
+        _row('Rollback status', _phaseCRollback[keyName] ?? 'not required'),
+        _row('DSP STOP status', _icp5Usb.stopped ? 'STOPPED' : 'enabled'),
         Wrap(spacing: 7, runSpacing: 7, children: [
           FilledButton(
+              key: Key('icp5_phase_c_${keyName}_test'),
               onPressed: blocked || !_icp5Usb.handshakeComplete ? null : onTest,
               child: Text(testLabel)),
           OutlinedButton(
+              key: Key('icp5_phase_c_${keyName}_restore'),
               onPressed:
                   blocked || !_icp5Usb.handshakeComplete ? null : onRestore,
               child: Text(restoreLabel)),
@@ -557,6 +633,11 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     setState(() {
       _working = false;
       _lastDacGainCommand = outcome.restore ?? outcome.test;
+      _dacGainRollback = outcome.restore == null
+          ? 'not required'
+          : outcome.restore!.success
+              ? 'RESTORE PASS_ACK'
+              : 'RESTORE FAILED · STOP';
       if (outcome.test.success) _confirmedDacGain = -4.9;
       if (!outcome.test.success && outcome.restore?.success == true) {
         _confirmedDacGain = -4.8;
@@ -571,6 +652,11 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     setState(() {
       _working = false;
       _lastDacGainCommand = result;
+      _dacGainRollback = result.success
+          ? 'explicit RESTORE PASS_ACK'
+          : result.writeMayHaveReachedDevice
+              ? 'RESTORE FAILED · STOP'
+              : 'restore blocked before transmit';
       if (result.success) _confirmedDacGain = -4.8;
     });
   }
@@ -583,6 +669,11 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     setState(() {
       _working = false;
       _phaseCLast[key] = outcome.restore ?? outcome.test;
+      _phaseCRollback[key] = outcome.restore == null
+          ? 'not required'
+          : outcome.restore!.success
+              ? 'RESTORE PASS_ACK'
+              : 'RESTORE FAILED · STOP';
       if (outcome.test.success) _phaseCConfirmed[key] = testValue;
       if (!outcome.test.success && outcome.restore?.success == true) {
         _phaseCConfirmed[key] = restoreValue;
@@ -598,6 +689,11 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     setState(() {
       _working = false;
       _phaseCLast[key] = result;
+      _phaseCRollback[key] = result.success
+          ? 'explicit RESTORE PASS_ACK'
+          : result.writeMayHaveReachedDevice
+              ? 'RESTORE FAILED · STOP'
+              : 'restore blocked before transmit';
       if (result.success) _phaseCConfirmed[key] = restoreValue;
     });
   }

@@ -324,15 +324,16 @@ void main() {
       if (call == 2) connection.emit(goodDacGainAck);
     });
     final transport = Icp5UsbTransport(driver: FakeDriver(connection));
-    expect((await transport.writeCapturedOutputDac1Gain(-4.9)).success, isFalse);
+    expect(
+        (await transport.writeCapturedOutputDac1Gain(-4.9)).success, isFalse);
     expect(connection.writes, isEmpty);
     expect((await transport.open()).success, isTrue);
     final result = await transport.writeCapturedOutputDac1Gain(-4.9);
     expect(result.success, isTrue);
     expect(result.message, 'PASS_ACK');
     expect(connection.writes, hasLength(2));
-    expect(connection.writes.last,
-        Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
+    expect(
+        connection.writes.last, Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
     await transport.close();
   });
 
@@ -350,10 +351,8 @@ void main() {
     final outcome = await transport.runOutputDac1GainTestWithGuardedRestore();
     expect(outcome.test.success, isFalse);
     expect(outcome.restore?.success, isTrue);
-    expect(connection.writes[1],
-        Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
-    expect(connection.writes[2],
-        Icp5FrameCodec.buildOutputDac1GainWrite(-4.8));
+    expect(connection.writes[1], Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
+    expect(connection.writes[2], Icp5FrameCodec.buildOutputDac1GainWrite(-4.8));
     await transport.close();
 
     final stops = <String>[];
@@ -410,21 +409,30 @@ void main() {
     expect(find.byKey(const Key('icp5_master_mute_panel')), findsOneWidget);
     expect(find.text('TEST State 1'), findsOneWidget);
     expect(find.text('RESTORE State 0'), findsOneWidget);
-    expect(find.byKey(const Key('icp5_output_dac_1_gain_panel')),
-        findsOneWidget);
+    expect(
+        find.byKey(const Key('icp5_output_dac_1_gain_panel')), findsOneWidget);
     expect(find.text('TEST -4.9'), findsOneWidget);
     expect(find.text('RESTORE -4.8'), findsOneWidget);
-    expect(find.text('Output Gain DAC0'), findsOneWidget);
-    expect(find.text('Output Gain DAC1'), findsOneWidget);
-    expect(find.text('Output Gain DAC2'), findsOneWidget);
-    expect(find.text('Output Gain DAC3'), findsOneWidget);
+    expect(find.text('Output Gain index 0'), findsOneWidget);
+    expect(find.text('Output Gain index 1'), findsOneWidget);
+    expect(find.text('Output Gain index 2'), findsOneWidget);
+    expect(find.text('Output Gain index 3'), findsOneWidget);
     for (var channel = 0; channel < 4; channel++) {
       expect(find.text('Delay candidate DAC$channel'), findsOneWidget);
     }
-    expect(find.text('DAC0 Filter Cutoff 2000/2001'), findsOneWidget);
-    expect(find.text('DAC2 Filter Cutoff 20/21'), findsOneWidget);
-    expect(find.text('DAC0 PEQ Band 1 -1.0/-0.9'), findsOneWidget);
-    expect(find.text('DAC2 PEQ Band 1 -2.0/-1.0'), findsOneWidget);
+    expect(find.text('Filter Cutoff Diagnostic index 0 · 2000/2001'),
+        findsOneWidget);
+    expect(find.text('Filter Cutoff Diagnostic index 1 · 2000/2001'),
+        findsOneWidget);
+    expect(
+        find.text('Filter Cutoff Diagnostic index 2 · 20/21'), findsOneWidget);
+    expect(
+        find.text('Filter Cutoff Diagnostic index 3 · 20/21'), findsOneWidget);
+    expect(find.text('PEQ Band 1 Gain index 0 · -1.0/-0.9 dB'), findsOneWidget);
+    expect(find.text('PEQ Band 1 Gain index 1 · 4.1/4.2 dB'), findsOneWidget);
+    expect(find.text('PEQ Band 1 Gain index 2 · -2.0/-1.0 dB'), findsOneWidget);
+    expect(find.text('PEQ Band 1 Gain index 3 · 2.0/2.1 dB'), findsOneWidget);
+    expect(find.textContaining('WRITE BLOCKED'), findsNothing);
   });
 
   testWidgets('failed discovery displays source and candidate count',
@@ -500,12 +508,44 @@ void main() {
     await tester.tap(find.text('ICP5 USB'));
     await tester.pump();
     expect(find.text('-4.8'), findsNWidgets(2));
-    await tester.ensureVisible(
-        find.byKey(const Key('icp5_dac_gain_test_49_button')));
+    await tester
+        .ensureVisible(find.byKey(const Key('icp5_dac_gain_test_49_button')));
     await tester.tap(find.byKey(const Key('icp5_dac_gain_test_49_button')));
     await tester.pumpAndSettle();
     expect(find.text('-4.9'), findsNWidgets(2));
-    expect(connection.writes.last,
-        Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
+    expect(
+        connection.writes.last, Icp5FrameCodec.buildOutputDac1GainWrite(-4.9));
+  });
+
+  testWidgets('PEQ index 1 is operational and confirmed state is ACK-gated',
+      (tester) async {
+    const peqAck = [0x55, 7, 0xE1, 0, 0, 0, 0x18, 0, 0x55];
+    late FakeConnection connection;
+    connection = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+      if (call == 2) connection.emit(peqAck);
+    });
+    final transport = Icp5UsbTransport(driver: FakeDriver(connection));
+    await transport.open();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: SingleChildScrollView(
+                child: TransportConnectionPanel(
+                    backend: const ProUsbiNativeBackendDisabled(),
+                    deviceOpen: false,
+                    icp5UsbTransport: transport)))));
+    await tester.tap(find.text('ICP5 USB'));
+    await tester.pump();
+    final button = find.byKey(const Key('icp5_phase_c_peq1_test'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(
+        connection.writes.last, Icp5FrameCodec.buildPeqBand1GainWrite(1, 4.2));
+    final card = find.byKey(const Key('icp5_phase_c_peq1'));
+    expect(
+        find.descendant(of: card, matching: find.text('4.2')), findsOneWidget);
+    expect(find.descendant(of: card, matching: find.text('PASS_ACK')),
+        findsOneWidget);
   });
 }

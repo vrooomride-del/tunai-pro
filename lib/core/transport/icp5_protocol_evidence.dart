@@ -150,6 +150,9 @@ abstract final class Icp5ProtocolEvidenceRegistry {
     outputDac1GainRangeProven: false,
     outputGainPairsByChannel: {
       0: [-4.9, -4.8],
+      1: [-4.8, -4.7],
+      2: [-0.16666946, -0.06666946],
+      3: [-0.16666946, -0.06666946],
     },
     delayCandidateParameterId: 0x00000017,
     delayCandidateChannels: [0, 1, 2, 3],
@@ -157,12 +160,16 @@ abstract final class Icp5ProtocolEvidenceRegistry {
     filterCutoffParameterId: 0x00000015,
     filterCutoffPairsByChannel: {
       0: [2001, 2000],
+      1: [2001, 2000],
       2: [21, 20],
+      3: [21, 20],
     },
     peqBandGainParameterId: 0x00000018,
     peqBand1GainPairsByChannel: {
       0: [-0.9, -1.0],
+      1: [4.2, 4.1],
       2: [-1.0, -2.0],
+      3: [2.1, 2.0],
     },
   );
   static const bluetooth = Icp5ProtocolEvidence();

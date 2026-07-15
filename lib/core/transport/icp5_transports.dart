@@ -434,8 +434,8 @@ class Icp5UsbTransport implements DspTransport {
           Icp5FrameCodec.parsePeqBand1GainAck);
 
   Future<Icp5PhaseCOutcome> runOutputGainTest(int channel) => _runPhaseC(
-      () => writeCapturedOutputGain(channel, -4.9),
-      () => writeCapturedOutputGain(channel, -4.8),
+      () => writeCapturedOutputGain(channel, _outputGainPair(channel).$1),
+      () => writeCapturedOutputGain(channel, _outputGainPair(channel).$2),
       'Output Gain DAC$channel');
 
   Future<Icp5PhaseCOutcome> runDelayCandidateTest(int channel) => _runPhaseC(
@@ -444,26 +444,48 @@ class Icp5UsbTransport implements DspTransport {
       'Delay candidate DAC$channel');
 
   Future<Icp5PhaseCOutcome> runFilterCutoffTest(int channel) => _runPhaseC(
-      () => writeCapturedFilterCutoff(channel, channel == 0 ? 2001 : 21),
-      () => writeCapturedFilterCutoff(channel, channel == 0 ? 2000 : 20),
+      () => writeCapturedFilterCutoff(channel, _cutoffPair(channel).$1),
+      () => writeCapturedFilterCutoff(channel, _cutoffPair(channel).$2),
       'Filter Cutoff DAC$channel');
 
   Future<Icp5PhaseCOutcome> runPeqBand1GainTest(int channel) => _runPhaseC(
-      () => writeCapturedPeqBand1Gain(channel, channel == 0 ? -0.9 : -1.0),
-      () => writeCapturedPeqBand1Gain(channel, channel == 0 ? -1.0 : -2.0),
+      () => writeCapturedPeqBand1Gain(channel, _peqPair(channel).$1),
+      () => writeCapturedPeqBand1Gain(channel, _peqPair(channel).$2),
       'PEQ Band 1 DAC$channel');
 
   Future<Icp5PhaseCResult> restoreOutputGain(int channel) => _restorePhaseC(
-      () => writeCapturedOutputGain(channel, -4.8), 'Output Gain DAC$channel');
+      () => writeCapturedOutputGain(channel, _outputGainPair(channel).$2),
+      'Output Gain DAC$channel');
   Future<Icp5PhaseCResult> restoreDelayCandidate(int channel) => _restorePhaseC(
       () => writeCapturedDelayCandidate(channel, 0.04),
       'Delay candidate DAC$channel');
   Future<Icp5PhaseCResult> restoreFilterCutoff(int channel) => _restorePhaseC(
-      () => writeCapturedFilterCutoff(channel, channel == 0 ? 2000 : 20),
+      () => writeCapturedFilterCutoff(channel, _cutoffPair(channel).$2),
       'Filter Cutoff DAC$channel');
   Future<Icp5PhaseCResult> restorePeqBand1Gain(int channel) => _restorePhaseC(
-      () => writeCapturedPeqBand1Gain(channel, channel == 0 ? -1.0 : -2.0),
+      () => writeCapturedPeqBand1Gain(channel, _peqPair(channel).$2),
       'PEQ Band 1 DAC$channel');
+
+  (double, double) _outputGainPair(int channel) => switch (channel) {
+        0 => (-4.9, -4.8),
+        1 => (-4.8, -4.7),
+        2 || 3 => (-0.16666946, -0.06666946),
+        _ => throw ArgumentError.value(channel, 'channel'),
+      };
+
+  (int, int) _cutoffPair(int channel) => switch (channel) {
+        0 || 1 => (2001, 2000),
+        2 || 3 => (21, 20),
+        _ => throw ArgumentError.value(channel, 'channel'),
+      };
+
+  (double, double) _peqPair(int channel) => switch (channel) {
+        0 => (-0.9, -1.0),
+        1 => (4.2, 4.1),
+        2 => (-1.0, -2.0),
+        3 => (2.1, 2.0),
+        _ => throw ArgumentError.value(channel, 'channel'),
+      };
 
   Future<Icp5PhaseCResult> _writePhaseC(
       List<int> frame, bool Function(List<int>) parseAck) async {
