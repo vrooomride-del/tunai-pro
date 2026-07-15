@@ -15,6 +15,19 @@ class Icp5ProtocolEvidence {
   final String? dspTargetSelection;
   final String? directWriteSequence;
   final String? safeLoadSequence;
+  final String? usbProductIdentity;
+  final int? baudRate;
+  final int? dataBits;
+  final String? parity;
+  final int? stopBits;
+  final List<int>? identificationRequest;
+  final String? expectedProfile;
+  final int? framingStartByte;
+  final int? directWriteCommand;
+  final int? ackCommand;
+  final String? valueEncoding;
+  final int? masterVolumeParameterId;
+  final List<double>? capturedMasterVolumeValues;
 
   const Icp5ProtocolEvidence({
     this.usbVendorId,
@@ -33,12 +46,49 @@ class Icp5ProtocolEvidence {
     this.dspTargetSelection,
     this.directWriteSequence,
     this.safeLoadSequence,
+    this.usbProductIdentity,
+    this.baudRate,
+    this.dataBits,
+    this.parity,
+    this.stopBits,
+    this.identificationRequest,
+    this.expectedProfile,
+    this.framingStartByte,
+    this.directWriteCommand,
+    this.ackCommand,
+    this.valueEncoding,
+    this.masterVolumeParameterId,
+    this.capturedMasterVolumeValues,
   });
 
-  bool get isProtocolProven => false;
+  bool get isProtocolProven =>
+      usbVendorId != null &&
+      usbProductId != null &&
+      identificationRequest != null &&
+      expectedProfile != null;
 }
 
 abstract final class Icp5ProtocolEvidenceRegistry {
-  static const usb = Icp5ProtocolEvidence();
+  static const usb = Icp5ProtocolEvidence(
+    usbVendorId: 0x1A86,
+    usbProductId: 0x55D6,
+    usbProductIdentity: 'USB-BLE-SERIAL CH9143',
+    baudRate: 115200,
+    dataBits: 8,
+    parity: 'none',
+    stopBits: 1,
+    identificationRequest: [0x55, 0x07, 0x1A, 0, 0, 0, 0, 0, 0x76],
+    expectedProfile: 'DSP1701.100.00.01',
+    framingStartByte: 0x55,
+    framing: '0x55 + declared length + command + payload + modulo-256 checksum',
+    ackFormat: '0xE1 + echoed parameter ID + status 0x00',
+    checksum: 'sum of every preceding frame byte modulo 256',
+    directWriteSequence: '0x1C + parameter ID + little-endian float32',
+    directWriteCommand: 0x1C,
+    ackCommand: 0xE1,
+    valueEncoding: 'IEEE-754 float32 little-endian',
+    masterVolumeParameterId: 0x00000010,
+    capturedMasterVolumeValues: [5.9, 6.0],
+  );
   static const bluetooth = Icp5ProtocolEvidence();
 }

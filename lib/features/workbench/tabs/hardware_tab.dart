@@ -390,6 +390,15 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         TransportConnectionPanel(
           backend: _usbiNativeBackend,
           deviceOpen: _usbiDeviceOpen,
+          dspWritesStopped: _dspWritesDisabledForSession,
+          onDspWriteStop: (warning) {
+            if (!mounted) return;
+            setState(() {
+              _dspWritesDisabledForSession = true;
+              _dspWriteStopWarning = warning;
+              widget.onDspWritesDisabledChanged?.call(true);
+            });
+          },
         ),
         const SizedBox(height: 20),
 

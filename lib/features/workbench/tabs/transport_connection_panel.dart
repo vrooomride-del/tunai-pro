@@ -8,10 +8,16 @@ import '../../../shared/pro_widgets.dart';
 class TransportConnectionPanel extends StatefulWidget {
   final ProUsbiNativeBackend backend;
   final bool deviceOpen;
+  final bool dspWritesStopped;
+  final ValueChanged<String>? onDspWriteStop;
+  final Icp5UsbTransport? icp5UsbTransport;
   const TransportConnectionPanel({
     super.key,
     required this.backend,
     required this.deviceOpen,
+    this.dspWritesStopped = false,
+    this.onDspWriteStop,
+    this.icp5UsbTransport,
   });
 
   @override
@@ -21,11 +27,28 @@ class TransportConnectionPanel extends StatefulWidget {
 
 class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   DspTransportIdentity _selected = DspTransportIdentity.usbi;
+  late final Icp5UsbTransport _icp5Usb;
+  bool _working = false;
+  Icp5MasterVolumeResult? _lastCommand;
+  double _confirmedValue = 6.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _icp5Usb = widget.icp5UsbTransport ??
+        Icp5UsbTransport(onDspWriteStop: widget.onDspWriteStop);
+  }
+
+  @override
+  void dispose() {
+    _icp5Usb.close();
+    super.dispose();
+  }
 
   List<DspTransport> get _transports => [
         UsbiDspTransport(
             backend: widget.backend, deviceOpen: () => widget.deviceOpen),
-        const Icp5UsbTransport(),
+        _icp5Usb,
         const Icp5BluetoothTransport(),
       ];
 
@@ -63,12 +86,22 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         _row('Selected transport', _selectedLabel(active.identity)),
         _row('Availability', active.isAvailable ? 'available' : 'unavailable'),
         _row('Connection state', active.connectionState.name),
-        _row('Current board', 'ADAU1466'),
+        _row(
+            'Current board',
+            active.identity == DspTransportIdentity.usbi
+                ? 'ADAU1466'
+                : active.identity == DspTransportIdentity.icp5Usb
+                    ? (_icp5Usb.handshakeComplete
+                        ? 'ADAU1701'
+                        : 'pending identity handshake')
+                    : 'unproven'),
         _row(
             'Current executor',
             active.identity == DspTransportIdentity.usbi
                 ? 'real USBi engineering executor'
-                : 'unproven placeholder — writes rejected'),
+                : active.identity == DspTransportIdentity.icp5Usb
+                    ? 'guarded ICP5 Windows serial executor'
+                    : 'unproven placeholder — writes rejected'),
         _row('Direct parameter write', _yesNo(caps.directParameterWrite)),
         _row('One-word SafeLoad', _yesNo(caps.oneWordSafeLoad)),
         _row('Five-word SafeLoad', _yesNo(caps.fiveWordSafeLoad)),
@@ -91,8 +124,14 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                   fontWeight: FontWeight.w700)),
           const SizedBox(height: 3),
           Text(
-              'Missing: VID/PID, interface/endpoints, Bluetooth UUIDs, framing, payload limit, ACK, fragmentation, checksum, DSP target selection, direct-write and SafeLoad sequences.',
+              active.identity == DspTransportIdentity.icp5Usb
+                  ? 'Still missing: arbitrary parameters/range, dB conversion, SafeLoad, ADAU1466 commands, and Bluetooth protocol.'
+                  : 'Missing: Bluetooth UUIDs, framing, payload limit, ACK, fragmentation, checksum, DSP target selection, direct-write and SafeLoad sequences.',
               style: proSubtitle(size: 9)),
+        ],
+        if (active.identity == DspTransportIdentity.icp5Usb) ...[
+          const SizedBox(height: 10),
+          _icp5Controls(),
         ],
         const SizedBox(height: 8),
         Text('NO AUTOMATIC FALLBACK DURING ACTIVE WRITES',
@@ -102,6 +141,110 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   }
 
   String _yesNo(bool value) => value ? 'proven' : 'unproven';
+
+  Widget _icp5Controls() {
+    final device = _icp5Usb.discoveredDevices.firstOrNull;
+    final blocked = _working || widget.dspWritesStopped || _icp5Usb.stopped;
+    return Container(
+      key: const Key('icp5_usb_operational_panel'),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black12,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('ICP5 USB · CAPTURE-PROVEN ADAU1701 MASTER VOLUME',
+            style: proLabel(size: 9, spacing: 0.8)),
+        const SizedBox(height: 6),
+        _row('Discovered port', device?.portName ?? 'none'),
+        _row('VID/PID', device == null ? '1A86:55D6 required' : '1A86:55D6'),
+        _row('Serial', '115200 · 8-N-1'),
+        _row('Port state', _icp5Usb.connectionState.name),
+        _row('Handshake', _icp5Usb.handshakeComplete ? 'PASS' : 'required'),
+        _row('Profile',
+            _icp5Usb.detectedProfile ?? 'DSP1701.100.00.01 required'),
+        _row('Board',
+            _icp5Usb.handshakeComplete ? 'ADAU1701' : 'unproven this session'),
+        _row('Confirmed internal value', _confirmedValue.toStringAsFixed(1)),
+        _row('Last ACK', _lastCommand?.message ?? 'not run'),
+        const SizedBox(height: 7),
+        Wrap(spacing: 7, runSpacing: 7, children: [
+          OutlinedButton(
+            key: const Key('icp5_discover_button'),
+            onPressed: _working
+                ? null
+                : () => setState(() {
+                      _icp5Usb.discover();
+                    }),
+            child: const Text('Discover ICP5 USB'),
+          ),
+          OutlinedButton(
+            key: const Key('icp5_open_button'),
+            onPressed: _working ? null : _openIcp5,
+            child: Text(
+                _icp5Usb.handshakeComplete ? 'Connected' : 'Open + Handshake'),
+          ),
+          OutlinedButton(
+            onPressed: _working ? null : _closeIcp5,
+            child: const Text('Close'),
+          ),
+          FilledButton(
+            key: const Key('icp5_test_59_button'),
+            onPressed: blocked || !_icp5Usb.handshakeComplete ? null : _test59,
+            child: const Text('TEST internal value 5.9'),
+          ),
+          OutlinedButton(
+            key: const Key('icp5_restore_60_button'),
+            onPressed:
+                blocked || !_icp5Usb.handshakeComplete ? null : _restore60,
+            child: const Text('RESTORE internal value 6.0'),
+          ),
+        ]),
+        const SizedBox(height: 7),
+        Text(
+            'PASS_ACK only, never VERIFIED · Range, dB mapping, and audible effect pending.',
+            style: proSubtitle(size: 9)),
+      ]),
+    );
+  }
+
+  Future<void> _openIcp5() async {
+    setState(() => _working = true);
+    await _icp5Usb.open();
+    if (mounted) setState(() => _working = false);
+  }
+
+  Future<void> _closeIcp5() async {
+    setState(() => _working = true);
+    await _icp5Usb.close();
+    if (mounted) setState(() => _working = false);
+  }
+
+  Future<void> _test59() async {
+    setState(() => _working = true);
+    final outcome = await _icp5Usb.runTestWithGuardedRestore();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _lastCommand = outcome.restore ?? outcome.test;
+      if (outcome.test.success) _confirmedValue = 5.9;
+      if (!outcome.test.success && outcome.restore?.success == true) {
+        _confirmedValue = 6.0;
+      }
+    });
+  }
+
+  Future<void> _restore60() async {
+    setState(() => _working = true);
+    final result = await _icp5Usb.restoreBaselineWithStop();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _lastCommand = result;
+      if (result.success) _confirmedValue = 6.0;
+    });
+  }
 
   String _selectorLabel(DspTransportIdentity identity) => switch (identity) {
         DspTransportIdentity.usbi => 'USBi',
