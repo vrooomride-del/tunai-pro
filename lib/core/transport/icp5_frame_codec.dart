@@ -17,6 +17,9 @@ abstract final class Icp5FrameCodec {
   static const masterVolumeParameterId = 0x00000010;
   static const masterMuteParameterId = 0x00000012;
   static const outputDac1GainParameterId = 0x00000014;
+  static const filterCutoffParameterId = 0x00000015;
+  static const delayCandidateParameterId = 0x00000017;
+  static const peqBandGainParameterId = 0x00000018;
 
   static int checksum(Iterable<int> bytes) =>
       bytes.fold<int>(0, (sum, byte) => (sum + byte) & 0xFF);
@@ -84,9 +87,14 @@ abstract final class Icp5FrameCodec {
   }
 
   static List<int> buildOutputDac1GainWrite(double value) {
-    if (value != -4.9 && value != -4.8) {
-      throw ArgumentError.value(value, 'value',
-          'Only capture-proven Output DAC 1 Gain values -4.9 and -4.8 are allowed.');
+    return buildOutputGainWrite(0, value);
+  }
+
+  static List<int> buildOutputGainWrite(int channel, double value) {
+    // Only the index-0 pair is present in the checked-in capture evidence.
+    if (channel != 0 || (value != -4.9 && value != -4.8)) {
+      throw ArgumentError(
+          'Only capture-proven DAC0 Output Gain values -4.9 and -4.8 are allowed.');
     }
     final data = ByteData(4)..setFloat32(0, value, Endian.little);
     final frame = <int>[
@@ -98,7 +106,7 @@ abstract final class Icp5FrameCodec {
       0,
       0x14,
       0x01,
-      0x00,
+      channel,
       ...data.buffer.asUint8List(),
     ];
     return [...frame, checksum(frame)];
@@ -106,6 +114,65 @@ abstract final class Icp5FrameCodec {
 
   static bool parseOutputDac1GainAck(List<int> frame) {
     return _parseSuccessAck(frame, outputDac1GainParameterId);
+  }
+
+  static bool parseOutputGainAck(List<int> frame) =>
+      _parseSuccessAck(frame, outputDac1GainParameterId);
+
+  static List<int> buildDelayCandidateWrite(int channel, double value) {
+    if (channel < 0 || channel > 3 || (value != 1.0 && value != 0.04)) {
+      throw ArgumentError(
+          'Only channels 0-3 and captured Delay values 1.0/0.04 are allowed.');
+    }
+    final data = ByteData(4)..setFloat32(0, value, Endian.little);
+    return _frame(0x0B, delayCandidateParameterId,
+        [channel, ...data.buffer.asUint8List()]);
+  }
+
+  static bool parseDelayCandidateAck(List<int> frame) =>
+      _parseSuccessAck(frame, delayCandidateParameterId);
+
+  static List<int> buildFilterCutoffWrite(int channel, int value) {
+    final allowed = (channel == 0 && (value == 2000 || value == 2001)) ||
+        (channel == 2 && (value == 20 || value == 21));
+    if (!allowed) {
+      throw ArgumentError(
+          'Only captured DAC0 2000/2001 and DAC2 20/21 cutoff vectors are allowed.');
+    }
+    return _frame(0x0B, filterCutoffParameterId,
+        [channel, 0x02, 0x00, value & 0xFF, (value >> 8) & 0xFF]);
+  }
+
+  static bool parseFilterCutoffAck(List<int> frame) =>
+      _parseSuccessAck(frame, filterCutoffParameterId);
+
+  static List<int> buildPeqBand1GainWrite(int channel, double value) {
+    final allowed = (channel == 0 && (value == -0.9 || value == -1.0)) ||
+        (channel == 2 && (value == -1.0 || value == -2.0));
+    if (!allowed) {
+      throw ArgumentError(
+          'Only captured DAC0 and DAC2 PEQ Band 1 gain pairs are allowed.');
+    }
+    final tenths = (value * 10).round() & 0xFF;
+    return _frame(0x0A, peqBandGainParameterId, [channel, 0x01, 0x00, tenths]);
+  }
+
+  static bool parsePeqBand1GainAck(List<int> frame) =>
+      _parseSuccessAck(frame, peqBandGainParameterId);
+
+  static List<int> _frame(
+      int declaredLength, int parameterId, List<int> payload) {
+    final frame = <int>[
+      0x55,
+      declaredLength,
+      0x1C,
+      (parameterId >> 24) & 0xFF,
+      (parameterId >> 16) & 0xFF,
+      (parameterId >> 8) & 0xFF,
+      parameterId & 0xFF,
+      ...payload,
+    ];
+    return [...frame, checksum(frame)];
   }
 
   static bool _parseSuccessAck(List<int> frame, int expectedParameterId) {

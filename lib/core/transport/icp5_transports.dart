@@ -71,6 +71,28 @@ class Icp5OutputDac1GainDiagnosticOutcome {
       {required this.test, this.restore, required this.stopActivated});
 }
 
+class Icp5PhaseCResult {
+  final bool success;
+  final bool wasActualWrite;
+  final bool writeMayHaveReachedDevice;
+  final List<int>? rawAck;
+  final String message;
+  const Icp5PhaseCResult(
+      {required this.success,
+      required this.wasActualWrite,
+      required this.writeMayHaveReachedDevice,
+      required this.message,
+      this.rawAck});
+}
+
+class Icp5PhaseCOutcome {
+  final Icp5PhaseCResult test;
+  final Icp5PhaseCResult? restore;
+  final bool stopActivated;
+  const Icp5PhaseCOutcome(
+      {required this.test, this.restore, required this.stopActivated});
+}
+
 class Icp5UsbTransport implements DspTransport {
   final Icp5SerialDriver driver;
   final Duration readTimeout;
@@ -393,6 +415,113 @@ class Icp5UsbTransport implements DspTransport {
     return restore;
   }
 
+  Future<Icp5PhaseCResult> writeCapturedOutputGain(int channel, double value) =>
+      _writePhaseC(Icp5FrameCodec.buildOutputGainWrite(channel, value),
+          Icp5FrameCodec.parseOutputGainAck);
+
+  Future<Icp5PhaseCResult> writeCapturedDelayCandidate(
+          int channel, double value) =>
+      _writePhaseC(Icp5FrameCodec.buildDelayCandidateWrite(channel, value),
+          Icp5FrameCodec.parseDelayCandidateAck);
+
+  Future<Icp5PhaseCResult> writeCapturedFilterCutoff(int channel, int value) =>
+      _writePhaseC(Icp5FrameCodec.buildFilterCutoffWrite(channel, value),
+          Icp5FrameCodec.parseFilterCutoffAck);
+
+  Future<Icp5PhaseCResult> writeCapturedPeqBand1Gain(
+          int channel, double value) =>
+      _writePhaseC(Icp5FrameCodec.buildPeqBand1GainWrite(channel, value),
+          Icp5FrameCodec.parsePeqBand1GainAck);
+
+  Future<Icp5PhaseCOutcome> runOutputGainTest(int channel) => _runPhaseC(
+      () => writeCapturedOutputGain(channel, -4.9),
+      () => writeCapturedOutputGain(channel, -4.8),
+      'Output Gain DAC$channel');
+
+  Future<Icp5PhaseCOutcome> runDelayCandidateTest(int channel) => _runPhaseC(
+      () => writeCapturedDelayCandidate(channel, 1.0),
+      () => writeCapturedDelayCandidate(channel, 0.04),
+      'Delay candidate DAC$channel');
+
+  Future<Icp5PhaseCOutcome> runFilterCutoffTest(int channel) => _runPhaseC(
+      () => writeCapturedFilterCutoff(channel, channel == 0 ? 2001 : 21),
+      () => writeCapturedFilterCutoff(channel, channel == 0 ? 2000 : 20),
+      'Filter Cutoff DAC$channel');
+
+  Future<Icp5PhaseCOutcome> runPeqBand1GainTest(int channel) => _runPhaseC(
+      () => writeCapturedPeqBand1Gain(channel, channel == 0 ? -0.9 : -1.0),
+      () => writeCapturedPeqBand1Gain(channel, channel == 0 ? -1.0 : -2.0),
+      'PEQ Band 1 DAC$channel');
+
+  Future<Icp5PhaseCResult> restoreOutputGain(int channel) => _restorePhaseC(
+      () => writeCapturedOutputGain(channel, -4.8), 'Output Gain DAC$channel');
+  Future<Icp5PhaseCResult> restoreDelayCandidate(int channel) => _restorePhaseC(
+      () => writeCapturedDelayCandidate(channel, 0.04),
+      'Delay candidate DAC$channel');
+  Future<Icp5PhaseCResult> restoreFilterCutoff(int channel) => _restorePhaseC(
+      () => writeCapturedFilterCutoff(channel, channel == 0 ? 2000 : 20),
+      'Filter Cutoff DAC$channel');
+  Future<Icp5PhaseCResult> restorePeqBand1Gain(int channel) => _restorePhaseC(
+      () => writeCapturedPeqBand1Gain(channel, channel == 0 ? -1.0 : -2.0),
+      'PEQ Band 1 DAC$channel');
+
+  Future<Icp5PhaseCResult> _writePhaseC(
+      List<int> frame, bool Function(List<int>) parseAck) async {
+    if (_stopped) return _phaseCFailure('Shared DSP STOP is active.');
+    if (!_handshakeComplete ||
+        _state != DspConnectionState.connected ||
+        _profile != Icp5FrameCodec.expectedProfile) {
+      return _phaseCFailure(
+          'Successful ADAU1701 identity handshake is required.');
+    }
+    if (_busy) return _phaseCFailure('Another ICP5 transaction is active.');
+    _busy = true;
+    try {
+      final ack = await _exchange(frame, parseAck);
+      if (ack == null) {
+        return _phaseCFailure('Malformed or mismatched ACK.',
+            actual: true, mayHaveReached: true);
+      }
+      return Icp5PhaseCResult(
+          success: true,
+          wasActualWrite: true,
+          writeMayHaveReachedDevice: true,
+          rawAck: ack,
+          message: 'PASS_ACK');
+    } on TimeoutException {
+      return _phaseCFailure('ACK timeout.', actual: true, mayHaveReached: true);
+    } catch (error) {
+      return _phaseCFailure('$error', actual: true, mayHaveReached: true);
+    } finally {
+      _busy = false;
+    }
+  }
+
+  Future<Icp5PhaseCOutcome> _runPhaseC(
+      Future<Icp5PhaseCResult> Function() testWrite,
+      Future<Icp5PhaseCResult> Function() restoreWrite,
+      String label) async {
+    final test = await testWrite();
+    if (test.success || !test.writeMayHaveReachedDevice) {
+      return Icp5PhaseCOutcome(test: test, stopActivated: false);
+    }
+    final restore = await restoreWrite();
+    if (!restore.success) {
+      _activateStop('ICP5 $label restore failed; shared DSP STOP activated.');
+    }
+    return Icp5PhaseCOutcome(
+        test: test, restore: restore, stopActivated: !restore.success);
+  }
+
+  Future<Icp5PhaseCResult> _restorePhaseC(
+      Future<Icp5PhaseCResult> Function() restoreWrite, String label) async {
+    final restore = await restoreWrite();
+    if (!restore.success && restore.writeMayHaveReachedDevice) {
+      _activateStop('ICP5 $label restore failed; shared DSP STOP activated.');
+    }
+    return restore;
+  }
+
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
     final future = _frames.stream.firstWhere(accepts).timeout(readTimeout);
@@ -428,6 +557,13 @@ class Icp5UsbTransport implements DspTransport {
   Icp5OutputDac1GainResult _dacGainFailure(String message,
           {bool actual = false, bool mayHaveReached = false}) =>
       Icp5OutputDac1GainResult(
+          success: false,
+          wasActualWrite: actual,
+          writeMayHaveReachedDevice: mayHaveReached,
+          message: message);
+  Icp5PhaseCResult _phaseCFailure(String message,
+          {bool actual = false, bool mayHaveReached = false}) =>
+      Icp5PhaseCResult(
           success: false,
           wasActualWrite: actual,
           writeMayHaveReachedDevice: mayHaveReached,

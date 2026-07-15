@@ -42,6 +42,14 @@ class Icp5ProtocolEvidence {
   final int? outputDac1GainAckParameterId;
   final int? outputDac1GainSuccessStatus;
   final bool? outputDac1GainRangeProven;
+  final Map<int, List<double>>? outputGainPairsByChannel;
+  final int? delayCandidateParameterId;
+  final List<int>? delayCandidateChannels;
+  final List<double>? delayCandidateValues;
+  final int? filterCutoffParameterId;
+  final Map<int, List<int>>? filterCutoffPairsByChannel;
+  final int? peqBandGainParameterId;
+  final Map<int, List<double>>? peqBand1GainPairsByChannel;
 
   const Icp5ProtocolEvidence({
     this.usbVendorId,
@@ -87,6 +95,14 @@ class Icp5ProtocolEvidence {
     this.outputDac1GainAckParameterId,
     this.outputDac1GainSuccessStatus,
     this.outputDac1GainRangeProven,
+    this.outputGainPairsByChannel,
+    this.delayCandidateParameterId,
+    this.delayCandidateChannels,
+    this.delayCandidateValues,
+    this.filterCutoffParameterId,
+    this.filterCutoffPairsByChannel,
+    this.peqBandGainParameterId,
+    this.peqBand1GainPairsByChannel,
   });
 
   bool get isProtocolProven =>
@@ -132,6 +148,22 @@ abstract final class Icp5ProtocolEvidenceRegistry {
     outputDac1GainAckParameterId: 0x00000014,
     outputDac1GainSuccessStatus: 0x00,
     outputDac1GainRangeProven: false,
+    outputGainPairsByChannel: {
+      0: [-4.9, -4.8],
+    },
+    delayCandidateParameterId: 0x00000017,
+    delayCandidateChannels: [0, 1, 2, 3],
+    delayCandidateValues: [1.0, 0.04],
+    filterCutoffParameterId: 0x00000015,
+    filterCutoffPairsByChannel: {
+      0: [2001, 2000],
+      2: [21, 20],
+    },
+    peqBandGainParameterId: 0x00000018,
+    peqBand1GainPairsByChannel: {
+      0: [-0.9, -1.0],
+      2: [-1.0, -2.0],
+    },
   );
   static const bluetooth = Icp5ProtocolEvidence();
 }

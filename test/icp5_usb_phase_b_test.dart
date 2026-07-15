@@ -414,6 +414,17 @@ void main() {
         findsOneWidget);
     expect(find.text('TEST -4.9'), findsOneWidget);
     expect(find.text('RESTORE -4.8'), findsOneWidget);
+    expect(find.text('Output Gain DAC0'), findsOneWidget);
+    expect(find.text('Output Gain DAC1'), findsOneWidget);
+    expect(find.text('Output Gain DAC2'), findsOneWidget);
+    expect(find.text('Output Gain DAC3'), findsOneWidget);
+    for (var channel = 0; channel < 4; channel++) {
+      expect(find.text('Delay candidate DAC$channel'), findsOneWidget);
+    }
+    expect(find.text('DAC0 Filter Cutoff 2000/2001'), findsOneWidget);
+    expect(find.text('DAC2 Filter Cutoff 20/21'), findsOneWidget);
+    expect(find.text('DAC0 PEQ Band 1 -1.0/-0.9'), findsOneWidget);
+    expect(find.text('DAC2 PEQ Band 1 -2.0/-1.0'), findsOneWidget);
   });
 
   testWidgets('failed discovery displays source and candidate count',
