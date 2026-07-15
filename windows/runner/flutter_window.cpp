@@ -4,6 +4,7 @@
 
 #include "flutter/generated_plugin_registrant.h"
 #include "usbi_channel.h"
+#include "icp5_serial_channel.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -29,6 +30,8 @@ bool FlutterWindow::OnCreate() {
 
   // Register USBi WinUSB MethodChannel ("tunai/usbi")
   UsbiChannel::Register(
+      flutter_controller_->engine()->messenger());
+  Icp5SerialChannel::Register(
       flutter_controller_->engine()->messenger());
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());

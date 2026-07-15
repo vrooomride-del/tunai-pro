@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'dsp_command.dart';
 import 'dsp_transport.dart';
 import 'icp5_frame_codec.dart';
@@ -37,6 +38,9 @@ class Icp5UsbTransport implements DspTransport {
   final StreamController<List<int>> _frames =
       StreamController<List<int>>.broadcast();
   List<Icp5SerialDevice> _devices = const [];
+  List<Icp5SerialDevice> _enumeratedPorts = const [];
+  String _discoverySource = 'Windows SetupAPI Ports class';
+  String? _discoveryError;
   DspConnectionState _state = DspConnectionState.disconnected;
   bool _handshakeComplete = false;
   bool _busy = false;
@@ -51,17 +55,40 @@ class Icp5UsbTransport implements DspTransport {
       this.onDspWriteStop})
       : driver = driver ?? WindowsIcp5SerialDriver();
 
-  List<Icp5SerialDevice> discover() {
-    _devices = driver.discover();
-    return List.unmodifiable(_devices);
+  Future<Icp5DiscoveryResult> discover() async {
+    _discoveryError = null;
+    final result = await driver.discover();
+    _devices = result.matches;
+    _enumeratedPorts = result.allPorts;
+    _discoverySource = result.source;
+    _discoveryError = result.error;
+    if (!_enumeratedPorts.any((device) => device.portName == _selectedPort)) {
+      _selectedPort = _devices.firstOrNull?.portName;
+    }
+    debugPrint('[ICP5 Discovery] final selected port=${_selectedPort ?? 'none'}');
+    return result;
   }
 
   List<Icp5SerialDevice> get discoveredDevices => List.unmodifiable(_devices);
+  List<Icp5SerialDevice> get enumeratedPorts =>
+      List.unmodifiable(_enumeratedPorts);
+  String get discoverySource => _discoverySource;
+  String? get discoveryError => _discoveryError;
   String? get selectedPort => _selectedPort;
   bool get handshakeComplete => _handshakeComplete;
   String? get detectedProfile => _profile;
   bool get stopped => _stopped;
   bool get busy => _busy;
+
+  bool selectEnumeratedPort(String portName) {
+    if (_busy ||
+        !_enumeratedPorts.any((device) => device.portName == portName)) {
+      return false;
+    }
+    _selectedPort = portName;
+    debugPrint('[ICP5 Discovery] manual enumerated-port selection=$portName');
+    return true;
+  }
 
   @override
   DspTransportIdentity get identity => DspTransportIdentity.icp5Usb;
@@ -95,14 +122,13 @@ class Icp5UsbTransport implements DspTransport {
       return _fail(
           DspTransportFailure.unavailable, 'Transaction already active.');
     }
-    final devices = discover();
-    if (devices.isEmpty) {
+    final discovery = await discover();
+    if (discovery.allPorts.isEmpty || _selectedPort == null) {
       return _fail(DspTransportFailure.unavailable,
-          'No capture-proven ICP5 USB serial device found.');
+          discovery.error ?? 'No enumerated ICP5 USB serial port found.');
     }
     _state = DspConnectionState.connecting;
     try {
-      _selectedPort = devices.first.portName;
       _connection = await driver.open(_selectedPort!);
       _subscription = _connection!.bytes.listen((chunk) {
         for (final frame in _buffer.add(chunk)) {

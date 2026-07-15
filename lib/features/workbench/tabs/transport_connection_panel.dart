@@ -31,6 +31,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   bool _working = false;
   Icp5MasterVolumeResult? _lastCommand;
   double _confirmedValue = 6.0;
+  String? _discoveryError;
 
   @override
   void initState() {
@@ -143,7 +144,9 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   String _yesNo(bool value) => value ? 'proven' : 'unproven';
 
   Widget _icp5Controls() {
-    final device = _icp5Usb.discoveredDevices.firstOrNull;
+    final device = _icp5Usb.enumeratedPorts
+        .where((candidate) => candidate.portName == _icp5Usb.selectedPort)
+        .firstOrNull;
     final blocked = _working || widget.dspWritesStopped || _icp5Usb.stopped;
     return Container(
       key: const Key('icp5_usb_operational_panel'),
@@ -157,8 +160,17 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         Text('ICP5 USB · CAPTURE-PROVEN ADAU1701 MASTER VOLUME',
             style: proLabel(size: 9, spacing: 0.8)),
         const SizedBox(height: 6),
-        _row('Discovered port', device?.portName ?? 'none'),
-        _row('VID/PID', device == null ? '1A86:55D6 required' : '1A86:55D6'),
+        _row('Discovered port', _icp5Usb.selectedPort ?? 'none'),
+        _row(
+            'Availability', _icp5Usb.isAvailable ? 'available' : 'unavailable'),
+        _row(
+            'Device identity',
+            device?.isCaptureProvenIcp5 == true
+                ? 'VID 1A86 / PID 55D6'
+                : 'VID 1A86 / PID 55D6 required'),
+        _row('Friendly name', device?.friendlyName ?? 'none'),
+        _row('InstanceId', device?.instanceId ?? 'none'),
+        _row('Enumeration source', _icp5Usb.discoverySource),
         _row('Serial', '115200 · 8-N-1'),
         _row('Port state', _icp5Usb.connectionState.name),
         _row('Handshake', _icp5Usb.handshakeComplete ? 'PASS' : 'required'),
@@ -168,16 +180,42 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             _icp5Usb.handshakeComplete ? 'ADAU1701' : 'unproven this session'),
         _row('Confirmed internal value', _confirmedValue.toStringAsFixed(1)),
         _row('Last ACK', _lastCommand?.message ?? 'not run'),
+        if (_discoveryError != null) ...[
+          const SizedBox(height: 5),
+          Text(_discoveryError!,
+              key: const Key('icp5_discovery_error'),
+              style: const TextStyle(color: Colors.redAccent, fontSize: 10)),
+        ],
+        if (_icp5Usb.enumeratedPorts.isNotEmpty) ...[
+          const SizedBox(height: 7),
+          DropdownButton<String>(
+            key: const Key('icp5_manual_port_selector'),
+            value: _icp5Usb.enumeratedPorts
+                    .any((entry) => entry.portName == _icp5Usb.selectedPort)
+                ? _icp5Usb.selectedPort
+                : null,
+            hint: const Text('Select enumerated COM port'),
+            items: [
+              for (final entry in _icp5Usb.enumeratedPorts)
+                DropdownMenuItem(
+                    value: entry.portName, child: Text(entry.portName)),
+            ],
+            onChanged: blocked
+                ? null
+                : (port) {
+                    if (port != null) {
+                      setState(() => _icp5Usb.selectEnumeratedPort(port));
+                    }
+                  },
+          ),
+        ],
         const SizedBox(height: 7),
         Wrap(spacing: 7, runSpacing: 7, children: [
           OutlinedButton(
             key: const Key('icp5_discover_button'),
-            onPressed: _working
-                ? null
-                : () => setState(() {
-                      _icp5Usb.discover();
-                    }),
-            child: const Text('Discover ICP5 USB'),
+            onPressed: _working ? null : _discoverIcp5,
+            child:
+                Text(_working ? 'Discovering ICP5 USB…' : 'Discover ICP5 USB'),
           ),
           OutlinedButton(
             key: const Key('icp5_open_button'),
@@ -210,9 +248,30 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   }
 
   Future<void> _openIcp5() async {
-    setState(() => _working = true);
-    await _icp5Usb.open();
-    if (mounted) setState(() => _working = false);
+    setState(() {
+      _working = true;
+      _discoveryError = null;
+    });
+    final result = await _icp5Usb.open();
+    if (mounted) {
+      setState(() {
+        _working = false;
+        if (!result.success) _discoveryError = result.message;
+      });
+    }
+  }
+
+  Future<void> _discoverIcp5() async {
+    setState(() {
+      _working = true;
+      _discoveryError = null;
+    });
+    final result = await _icp5Usb.discover();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _discoveryError = result.error;
+    });
   }
 
   Future<void> _closeIcp5() async {
