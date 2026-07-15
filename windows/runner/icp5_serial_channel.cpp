@@ -1,12 +1,24 @@
 #include "icp5_serial_channel.h"
 
-#include <devguid.h>
-#include <setupapi.h>
 #include <windows.h>
+#include <initguid.h>
+#include <setupapi.h>
+#include <devpkey.h>
+#include <cfgmgr32.h>
 #include <algorithm>
 #include <iterator>
 #include <string>
 #include <vector>
+
+// Official Ports device setup-class GUID. Keep this local definition instead
+// of importing devguid.h, which declares every Windows device-class GUID and
+// is sensitive to GUID header ordering in some Windows SDK versions.
+#ifndef TUNAI_GUID_DEVCLASS_PORTS_DEFINED
+#define TUNAI_GUID_DEVCLASS_PORTS_DEFINED
+DEFINE_GUID(GUID_DEVCLASS_PORTS,
+            0x4d36e978, 0xe325, 0x11ce,
+            0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18);
+#endif
 
 namespace {
 std::string WideToUtf8(const wchar_t* value) {
