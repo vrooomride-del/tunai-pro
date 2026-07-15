@@ -28,6 +28,13 @@ class Icp5ProtocolEvidence {
   final String? valueEncoding;
   final int? masterVolumeParameterId;
   final List<double>? capturedMasterVolumeValues;
+  final int? masterMuteParameterId;
+  final List<int>? masterMutePayloadPrefix;
+  final List<int>? capturedMasterMuteStates;
+  final String? masterMuteValueEncoding;
+  final int? masterMuteAckParameterId;
+  final int? masterMuteSuccessStatus;
+  final bool? masterMutePolarityProven;
 
   const Icp5ProtocolEvidence({
     this.usbVendorId,
@@ -59,6 +66,13 @@ class Icp5ProtocolEvidence {
     this.valueEncoding,
     this.masterVolumeParameterId,
     this.capturedMasterVolumeValues,
+    this.masterMuteParameterId,
+    this.masterMutePayloadPrefix,
+    this.capturedMasterMuteStates,
+    this.masterMuteValueEncoding,
+    this.masterMuteAckParameterId,
+    this.masterMuteSuccessStatus,
+    this.masterMutePolarityProven,
   });
 
   bool get isProtocolProven =>
@@ -89,6 +103,14 @@ abstract final class Icp5ProtocolEvidenceRegistry {
     valueEncoding: 'IEEE-754 float32 little-endian',
     masterVolumeParameterId: 0x00000010,
     capturedMasterVolumeValues: [5.9, 6.0],
+    masterMuteParameterId: 0x00000012,
+    masterMutePayloadPrefix: [0x01, 0x00],
+    capturedMasterMuteStates: [0x00, 0x01],
+    masterMuteValueEncoding:
+        'three-byte payload 01 00 + state byte 00/01; polarity unproven',
+    masterMuteAckParameterId: 0x00000012,
+    masterMuteSuccessStatus: 0x00,
+    masterMutePolarityProven: false,
   );
   static const bluetooth = Icp5ProtocolEvidence();
 }

@@ -15,6 +15,7 @@ abstract final class Icp5FrameCodec {
   ];
   static const expectedProfile = 'DSP1701.100.00.01';
   static const masterVolumeParameterId = 0x00000010;
+  static const masterMuteParameterId = 0x00000012;
 
   static int checksum(Iterable<int> bytes) =>
       bytes.fold<int>(0, (sum, byte) => (sum + byte) & 0xFF);
@@ -54,12 +55,40 @@ abstract final class Icp5FrameCodec {
   }
 
   static bool parseMasterVolumeAck(List<int> frame) {
+    return _parseSuccessAck(frame, masterVolumeParameterId);
+  }
+
+  static List<int> buildMasterMuteWrite(int state) {
+    if (state != 0 && state != 1) {
+      throw ArgumentError.value(state, 'state',
+          'Only capture-proven State 0 and State 1 are allowed.');
+    }
+    final frame = <int>[
+      0x55,
+      0x09,
+      0x1C,
+      0,
+      0,
+      0,
+      0x12,
+      0x01,
+      0x00,
+      state,
+    ];
+    return [...frame, checksum(frame)];
+  }
+
+  static bool parseMasterMuteAck(List<int> frame) {
+    return _parseSuccessAck(frame, masterMuteParameterId);
+  }
+
+  static bool _parseSuccessAck(List<int> frame, int expectedParameterId) {
     if (!hasValidEnvelope(frame) || frame.length != 9 || frame[2] != 0xE1) {
       return false;
     }
     final parameter = ByteData.sublistView(Uint8List.fromList(frame), 3, 7)
         .getUint32(0, Endian.big);
-    return parameter == masterVolumeParameterId && frame[7] == 0x00;
+    return parameter == expectedParameterId && frame[7] == 0x00;
   }
 }
 

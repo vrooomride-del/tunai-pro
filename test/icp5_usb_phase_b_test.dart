@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
 import 'package:tunai_pro/core/transport/icp5_frame_codec.dart';
+import 'package:tunai_pro/core/transport/icp5_protocol_evidence.dart';
 import 'package:tunai_pro/core/transport/icp5_serial_driver.dart';
 import 'package:tunai_pro/core/transport/icp5_transports.dart';
 import 'package:tunai_pro/features/workbench/tabs/transport_connection_panel.dart';
@@ -36,6 +37,7 @@ const identityRx = <int>[
   0xD9,
 ];
 const goodAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x10, 0, 0x4D];
+const goodMuteAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x12, 0, 0x4F];
 
 class FakeConnection implements Icp5SerialConnection {
   final _controller = StreamController<List<int>>.broadcast(sync: true);
@@ -106,6 +108,24 @@ void main() {
     final wrongParameter = [...goodAck]..[6] = 0x11;
     wrongParameter[8] = Icp5FrameCodec.checksum(wrongParameter.take(8));
     expect(Icp5FrameCodec.parseMasterVolumeAck(wrongParameter), isFalse);
+  });
+
+  test('exact Master Mute State 0/1 frames and ACK are capture-locked', () {
+    expect(Icp5FrameCodec.buildMasterMuteWrite(0),
+        [0x55, 0x09, 0x1C, 0, 0, 0, 0x12, 0x01, 0, 0, 0x8D]);
+    expect(Icp5FrameCodec.buildMasterMuteWrite(1),
+        [0x55, 0x09, 0x1C, 0, 0, 0, 0x12, 0x01, 0, 1, 0x8E]);
+    expect(() => Icp5FrameCodec.buildMasterMuteWrite(2), throwsArgumentError);
+    expect(Icp5FrameCodec.parseMasterMuteAck(goodMuteAck), isTrue);
+    final badChecksum = [...goodMuteAck]..[8] = 0;
+    expect(Icp5FrameCodec.parseMasterMuteAck(badChecksum), isFalse);
+    expect(Icp5FrameCodec.parseMasterMuteAck(goodAck), isFalse);
+    expect(Icp5ProtocolEvidenceRegistry.usb.masterMuteParameterId, 0x12);
+    expect(Icp5ProtocolEvidenceRegistry.usb.masterMutePayloadPrefix, [1, 0]);
+    expect(Icp5ProtocolEvidenceRegistry.usb.capturedMasterMuteStates, [0, 1]);
+    expect(Icp5ProtocolEvidenceRegistry.usb.masterMuteAckParameterId, 0x12);
+    expect(Icp5ProtocolEvidenceRegistry.usb.masterMuteSuccessStatus, 0);
+    expect(Icp5ProtocolEvidenceRegistry.usb.masterMutePolarityProven, isFalse);
   });
 
   test('partial buffering extracts complete declared-length frames', () {
@@ -221,6 +241,60 @@ void main() {
     await stopped.close();
   });
 
+  test('Master Mute requires handshake and one action emits one frame',
+      () async {
+    late FakeConnection connection;
+    connection = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+      if (call == 2) connection.emit(goodMuteAck);
+    });
+    final transport = Icp5UsbTransport(driver: FakeDriver(connection));
+    expect((await transport.writeCapturedMasterMuteState(1)).success, isFalse);
+    expect(connection.writes, isEmpty);
+    expect((await transport.open()).success, isTrue);
+    final result = await transport.writeCapturedMasterMuteState(1);
+    expect(result.success, isTrue);
+    expect(result.message, 'PASS_ACK');
+    expect(connection.writes, hasLength(2));
+    expect(connection.writes.last, Icp5FrameCodec.buildMasterMuteWrite(1));
+    await transport.close();
+  });
+
+  test('Master Mute TEST failure restores State 0 and failure activates STOP',
+      () async {
+    late FakeConnection connection;
+    connection = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+      if (call == 3) connection.emit(goodMuteAck);
+    });
+    final transport = Icp5UsbTransport(
+        driver: FakeDriver(connection),
+        readTimeout: const Duration(milliseconds: 10));
+    await transport.open();
+    final outcome = await transport.runMuteTestWithGuardedRestore();
+    expect(outcome.test.success, isFalse);
+    expect(outcome.restore?.success, isTrue);
+    expect(connection.writes[1], Icp5FrameCodec.buildMasterMuteWrite(1));
+    expect(connection.writes[2], Icp5FrameCodec.buildMasterMuteWrite(0));
+    await transport.close();
+
+    final stops = <String>[];
+    late FakeConnection failing;
+    failing = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+    });
+    final stopped = Icp5UsbTransport(
+        driver: FakeDriver(failing),
+        readTimeout: const Duration(milliseconds: 10),
+        onDspWriteStop: stops.add);
+    await stopped.open();
+    final failed = await stopped.runMuteTestWithGuardedRestore();
+    expect(failed.stopActivated, isTrue);
+    expect(stopped.stopped, isTrue);
+    expect(stops.single, contains('Master Mute restore failed'));
+    await stopped.close();
+  });
+
   testWidgets('discovery UI shows identity and enumerated-only manual ports',
       (tester) async {
     final connection = FakeConnection((_, __, ___) {});
@@ -255,6 +329,9 @@ void main() {
     final selector = tester.widget<DropdownButton<String>>(
         find.byKey(const Key('icp5_manual_port_selector')));
     expect(selector.items!.map((item) => item.value), ['COM10', 'COM8']);
+    expect(find.byKey(const Key('icp5_master_mute_panel')), findsOneWidget);
+    expect(find.text('TEST State 1'), findsOneWidget);
+    expect(find.text('RESTORE State 0'), findsOneWidget);
   });
 
   testWidgets('failed discovery displays source and candidate count',
@@ -283,5 +360,31 @@ void main() {
     expect(find.byKey(const Key('icp5_discovery_error')), findsOneWidget);
     expect(find.textContaining('Fake SetupAPI'), findsWidgets);
     expect(find.textContaining('1 candidate'), findsOneWidget);
+  });
+
+  testWidgets('Master Mute confirmed UI state is ACK-gated', (tester) async {
+    late FakeConnection connection;
+    connection = FakeConnection((connection, call, bytes) {
+      if (call == 1) connection.emit(identityRx);
+      if (call == 2) connection.emit(goodMuteAck);
+    });
+    final transport = Icp5UsbTransport(driver: FakeDriver(connection));
+    await transport.open();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: SingleChildScrollView(
+                child: TransportConnectionPanel(
+                    backend: const ProUsbiNativeBackendDisabled(),
+                    deviceOpen: false,
+                    icp5UsbTransport: transport)))));
+    await tester.tap(find.text('ICP5 USB'));
+    await tester.pump();
+    expect(find.text('State 0'), findsOneWidget);
+    await tester
+        .ensureVisible(find.byKey(const Key('icp5_mute_test_state_1_button')));
+    await tester.tap(find.byKey(const Key('icp5_mute_test_state_1_button')));
+    await tester.pumpAndSettle();
+    expect(find.text('State 1'), findsOneWidget);
+    expect(connection.writes.last, Icp5FrameCodec.buildMasterMuteWrite(1));
   });
 }

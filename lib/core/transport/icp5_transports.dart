@@ -27,6 +27,28 @@ class Icp5DiagnosticOutcome {
       {required this.test, this.restore, required this.stopActivated});
 }
 
+class Icp5MasterMuteResult {
+  final bool success;
+  final bool wasActualWrite;
+  final bool writeMayHaveReachedDevice;
+  final List<int>? rawAck;
+  final String message;
+  const Icp5MasterMuteResult(
+      {required this.success,
+      required this.wasActualWrite,
+      required this.writeMayHaveReachedDevice,
+      required this.message,
+      this.rawAck});
+}
+
+class Icp5MuteDiagnosticOutcome {
+  final Icp5MasterMuteResult test;
+  final Icp5MasterMuteResult? restore;
+  final bool stopActivated;
+  const Icp5MuteDiagnosticOutcome(
+      {required this.test, this.restore, required this.stopActivated});
+}
+
 class Icp5UsbTransport implements DspTransport {
   final Icp5SerialDriver driver;
   final Duration readTimeout;
@@ -65,7 +87,8 @@ class Icp5UsbTransport implements DspTransport {
     if (!_enumeratedPorts.any((device) => device.portName == _selectedPort)) {
       _selectedPort = _devices.firstOrNull?.portName;
     }
-    debugPrint('[ICP5 Discovery] final selected port=${_selectedPort ?? 'none'}');
+    debugPrint(
+        '[ICP5 Discovery] final selected port=${_selectedPort ?? 'none'}');
     return result;
   }
 
@@ -234,6 +257,61 @@ class Icp5UsbTransport implements DspTransport {
     return restore;
   }
 
+  Future<Icp5MasterMuteResult> writeCapturedMasterMuteState(int state) async {
+    if (_stopped) return _muteFailure('Shared DSP STOP is active.');
+    if (!_handshakeComplete ||
+        _state != DspConnectionState.connected ||
+        _profile != Icp5FrameCodec.expectedProfile) {
+      return _muteFailure(
+          'Successful ADAU1701 identity handshake is required.');
+    }
+    if (_busy) return _muteFailure('Another ICP5 transaction is active.');
+    _busy = true;
+    try {
+      final frame = Icp5FrameCodec.buildMasterMuteWrite(state);
+      final ack = await _exchange(frame, Icp5FrameCodec.parseMasterMuteAck);
+      if (ack == null) {
+        return _muteFailure('Malformed or mismatched ACK.',
+            actual: true, mayHaveReached: true);
+      }
+      return Icp5MasterMuteResult(
+          success: true,
+          wasActualWrite: true,
+          writeMayHaveReachedDevice: true,
+          rawAck: ack,
+          message: 'PASS_ACK');
+    } on TimeoutException {
+      return _muteFailure('ACK timeout.', actual: true, mayHaveReached: true);
+    } catch (error) {
+      return _muteFailure('$error', actual: true, mayHaveReached: true);
+    } finally {
+      _busy = false;
+    }
+  }
+
+  Future<Icp5MuteDiagnosticOutcome> runMuteTestWithGuardedRestore() async {
+    final test = await writeCapturedMasterMuteState(1);
+    if (test.success || !test.writeMayHaveReachedDevice) {
+      return Icp5MuteDiagnosticOutcome(test: test, stopActivated: false);
+    }
+    final restore = await writeCapturedMasterMuteState(0);
+    if (!restore.success) {
+      _activateStop(
+          'ICP5 Master Mute restore failed; shared DSP STOP activated.');
+    }
+    return Icp5MuteDiagnosticOutcome(
+        test: test, restore: restore, stopActivated: !restore.success);
+  }
+
+  Future<Icp5MasterMuteResult> restoreMuteStateZeroWithStop() async {
+    final restore = await writeCapturedMasterMuteState(0);
+    if (!restore.success && restore.writeMayHaveReachedDevice) {
+      _activateStop(
+          'ICP5 Master Mute restore failed; shared DSP STOP activated.');
+    }
+    return restore;
+  }
+
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
     final future = _frames.stream.firstWhere(accepts).timeout(readTimeout);
@@ -255,6 +333,13 @@ class Icp5UsbTransport implements DspTransport {
   Icp5MasterVolumeResult _volumeFailure(String message,
           {bool actual = false, bool mayHaveReached = false}) =>
       Icp5MasterVolumeResult(
+          success: false,
+          wasActualWrite: actual,
+          writeMayHaveReachedDevice: mayHaveReached,
+          message: message);
+  Icp5MasterMuteResult _muteFailure(String message,
+          {bool actual = false, bool mayHaveReached = false}) =>
+      Icp5MasterMuteResult(
           success: false,
           wasActualWrite: actual,
           writeMayHaveReachedDevice: mayHaveReached,

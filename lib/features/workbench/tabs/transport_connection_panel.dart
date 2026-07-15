@@ -31,6 +31,8 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   bool _working = false;
   Icp5MasterVolumeResult? _lastCommand;
   double _confirmedValue = 6.0;
+  Icp5MasterMuteResult? _lastMuteCommand;
+  int _confirmedMuteState = 0;
   String? _discoveryError;
 
   @override
@@ -243,6 +245,47 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         Text(
             'PASS_ACK only, never VERIFIED · Range, dB mapping, and audible effect pending.',
             style: proSubtitle(size: 9)),
+        const SizedBox(height: 12),
+        Container(
+          key: const Key('icp5_master_mute_panel'),
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+            border: Border.all(color: kProBorder),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('ADAU1701 Master Mute',
+                style: proLabel(size: 9, spacing: 0.8)),
+            const SizedBox(height: 5),
+            _row('Parameter ID', '0x00000012'),
+            _row('Captured State 0 payload', '01 00 00'),
+            _row('Captured State 1 payload', '01 00 01'),
+            _row('Current confirmed state', 'State $_confirmedMuteState'),
+            _row('Last ACK', _lastMuteCommand?.message ?? 'not run'),
+            const SizedBox(height: 6),
+            Wrap(spacing: 7, runSpacing: 7, children: [
+              FilledButton(
+                key: const Key('icp5_mute_test_state_1_button'),
+                onPressed: blocked || !_icp5Usb.handshakeComplete
+                    ? null
+                    : _testMuteState1,
+                child: const Text('TEST State 1'),
+              ),
+              OutlinedButton(
+                key: const Key('icp5_mute_restore_state_0_button'),
+                onPressed: blocked || !_icp5Usb.handshakeComplete
+                    ? null
+                    : _restoreMuteState0,
+                child: const Text('RESTORE State 0'),
+              ),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+                'PASS_ACK only, never VERIFIED · Audible mute polarity pending.',
+                style: proSubtitle(size: 9)),
+          ]),
+        ),
       ]),
     );
   }
@@ -302,6 +345,31 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
       _working = false;
       _lastCommand = result;
       if (result.success) _confirmedValue = 6.0;
+    });
+  }
+
+  Future<void> _testMuteState1() async {
+    setState(() => _working = true);
+    final outcome = await _icp5Usb.runMuteTestWithGuardedRestore();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _lastMuteCommand = outcome.restore ?? outcome.test;
+      if (outcome.test.success) _confirmedMuteState = 1;
+      if (!outcome.test.success && outcome.restore?.success == true) {
+        _confirmedMuteState = 0;
+      }
+    });
+  }
+
+  Future<void> _restoreMuteState0() async {
+    setState(() => _working = true);
+    final result = await _icp5Usb.restoreMuteStateZeroWithStop();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _lastMuteCommand = result;
+      if (result.success) _confirmedMuteState = 0;
     });
   }
 
