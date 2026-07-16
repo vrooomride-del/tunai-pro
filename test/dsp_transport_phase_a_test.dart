@@ -131,6 +131,7 @@ void main() {
             child: TransportConnectionPanel(
               backend: ProUsbiNativeBackendDisabled(),
               deviceOpen: false,
+              isMacOS: true,
             ),
           ),
         ),

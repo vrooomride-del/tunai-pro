@@ -19,7 +19,7 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
 
   Icp5BluetoothGattDriver({this.scanTimeout = const Duration(seconds: 10)});
 
-  BluetoothDevice? _discoveredDevice;
+  final Map<String, BluetoothDevice> _discoveredDevices = {};
 
   @override
   bool get platformSupported =>
@@ -32,7 +32,7 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
   @override
   Future<Icp5DiscoveryResult> discover() async {
     const source = 'BLE GATT advertised service FFF0';
-    _discoveredDevice = null;
+    _discoveredDevices.clear();
     if (!platformSupported) {
       return const Icp5DiscoveryResult(
           source: source,
@@ -51,20 +51,23 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
       }
       await FlutterBluePlus.startScan(
           withServices: [Guid(serviceUuid)], timeout: scanTimeout);
-      final result = await FlutterBluePlus.scanResults
-          .map((results) => results.where(_advertisesIcp5Service).firstOrNull)
-          .firstWhere((candidate) => candidate != null)
+      final results = await FlutterBluePlus.scanResults
+          .where((results) => results.any(_advertisesIcp5Service))
+          .first
           .timeout(scanTimeout);
-      _discoveredDevice = result!.device;
-      final id = result.device.remoteId.str;
-      final device = Icp5SerialDevice(
-          portName: id,
-          productName: result.device.advName,
-          friendlyName: result.device.advName,
-          instanceId: id,
-          enumerationSource: source);
+      final matches = results.where(_advertisesIcp5Service).map((result) {
+        final id = result.device.remoteId.str;
+        _discoveredDevices[id] = result.device;
+        final name = result.device.advName.trim();
+        return Icp5SerialDevice(
+            portName: id,
+            productName: name.isEmpty ? null : name,
+            friendlyName: name.isEmpty ? 'Unnamed BLE device' : name,
+            instanceId: id,
+            enumerationSource: source);
+      }).toList(growable: false);
       return Icp5DiscoveryResult(
-          source: source, allPorts: [device], matches: [device]);
+          source: source, allPorts: matches, matches: matches);
     } on TimeoutException {
       return const Icp5DiscoveryResult(
           source: source,
@@ -88,31 +91,44 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
 
   @override
   Future<Icp5SerialConnection> open(String portName) async {
-    final device = _discoveredDevice;
-    if (device == null || device.remoteId.str != portName) {
+    final device = _discoveredDevices[portName];
+    if (device == null) {
       throw StateError('Selected ICP5 BLE device was not discovered.');
     }
     await device.connect(timeout: const Duration(seconds: 10));
     final services = await device.discoverServices();
+    final service = services
+        .where((candidate) =>
+            candidate.uuid.str128.toLowerCase().contains(serviceUuid))
+        .firstOrNull;
+    if (service == null) {
+      await device.disconnect();
+      throw StateError('Service discovery failed: FFF0 was not found.');
+    }
     BluetoothCharacteristic? tx;
     BluetoothCharacteristic? rx;
-    for (final service in services) {
-      if (!service.uuid.str128.toLowerCase().contains(serviceUuid)) continue;
-      for (final characteristic in service.characteristics) {
-        final uuid = characteristic.uuid.str128.toLowerCase();
-        if (uuid.contains(txCharacteristicUuid)) tx = characteristic;
-        if (uuid.contains(rxCharacteristicUuid)) rx = characteristic;
-      }
+    for (final characteristic in service.characteristics) {
+      final uuid = characteristic.uuid.str128.toLowerCase();
+      if (uuid.contains(txCharacteristicUuid)) tx = characteristic;
+      if (uuid.contains(rxCharacteristicUuid)) rx = characteristic;
     }
     if (tx == null ||
-        rx == null ||
-        !(tx.properties.write || tx.properties.writeWithoutResponse) ||
-        !rx.properties.notify) {
+        !(tx.properties.write || tx.properties.writeWithoutResponse)) {
       await device.disconnect();
       throw StateError(
-          'Capture-proven FFF2 TX and FFF1 Notify characteristics are required.');
+          'Service discovery failed: writable FFF2 was not found.');
     }
-    await rx.setNotifyValue(true);
+    if (rx == null || !rx.properties.notify) {
+      await device.disconnect();
+      throw StateError(
+          'Notify subscription failed: notifiable FFF1 was not found.');
+    }
+    try {
+      await rx.setNotifyValue(true);
+    } catch (error) {
+      await device.disconnect();
+      throw StateError('Notify subscription failed for FFF1: $error');
+    }
     return _Icp5BluetoothGattConnection(device: device, tx: tx, rx: rx);
   }
 }

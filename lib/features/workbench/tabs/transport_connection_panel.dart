@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/transport/dsp_transport.dart';
@@ -5,12 +7,46 @@ import '../../../core/transport/icp5_transports.dart';
 import '../../../core/transport/usbi_dsp_transport.dart';
 import '../../../shared/pro_widgets.dart';
 
+enum Icp5BluetoothUiState {
+  bluetoothUnavailable,
+  permissionDenied,
+  scanning,
+  deviceFound,
+  connecting,
+  connected,
+  serviceDiscoveryFailed,
+  notifySubscriptionFailed,
+  handshakePending,
+  passHandshake,
+  disconnected,
+  timeout,
+  error;
+
+  String get label => switch (this) {
+        bluetoothUnavailable => 'Bluetooth unavailable',
+        permissionDenied => 'Permission denied',
+        scanning => 'Scanning',
+        deviceFound => 'Device found',
+        connecting => 'Connecting',
+        connected => 'Connected',
+        serviceDiscoveryFailed => 'Service discovery failed',
+        notifySubscriptionFailed => 'Notify subscription failed',
+        handshakePending => 'Handshake pending',
+        passHandshake => 'PASS_HANDSHAKE',
+        disconnected => 'Disconnected',
+        timeout => 'Timeout',
+        error => 'Error',
+      };
+}
+
 class TransportConnectionPanel extends StatefulWidget {
   final ProUsbiNativeBackend backend;
   final bool deviceOpen;
   final bool dspWritesStopped;
   final ValueChanged<String>? onDspWriteStop;
   final Icp5UsbTransport? icp5UsbTransport;
+  final Icp5BluetoothTransport? icp5BluetoothTransport;
+  final bool? isMacOS;
   const TransportConnectionPanel({
     super.key,
     required this.backend,
@@ -18,6 +54,8 @@ class TransportConnectionPanel extends StatefulWidget {
     this.dspWritesStopped = false,
     this.onDspWriteStop,
     this.icp5UsbTransport,
+    this.icp5BluetoothTransport,
+    this.isMacOS,
   });
 
   @override
@@ -28,6 +66,7 @@ class TransportConnectionPanel extends StatefulWidget {
 class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   DspTransportIdentity _selected = DspTransportIdentity.usbi;
   late final Icp5UsbTransport _icp5Usb;
+  late final Icp5BluetoothTransport _icp5Bluetooth;
   bool _working = false;
   Icp5MasterVolumeResult? _lastCommand;
   double _confirmedValue = 6.0;
@@ -53,25 +92,32 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   final Map<String, Icp5PhaseCResult> _phaseCLast = {};
   final Map<String, String> _phaseCRollback = {};
   String? _discoveryError;
+  Icp5BluetoothUiState _bluetoothState = Icp5BluetoothUiState.disconnected;
+  String? _bluetoothError;
 
   @override
   void initState() {
     super.initState();
     _icp5Usb = widget.icp5UsbTransport ??
         Icp5UsbTransport(onDspWriteStop: widget.onDspWriteStop);
+    _icp5Bluetooth = widget.icp5BluetoothTransport ??
+        Icp5BluetoothTransport(onDspWriteStop: widget.onDspWriteStop);
   }
 
   @override
   void dispose() {
     _icp5Usb.close();
+    _icp5Bluetooth.close();
     super.dispose();
   }
+
+  bool get _showBluetooth => widget.isMacOS ?? Platform.isMacOS;
 
   List<DspTransport> get _transports => [
         UsbiDspTransport(
             backend: widget.backend, deviceOpen: () => widget.deviceOpen),
         _icp5Usb,
-        Icp5BluetoothTransport(),
+        if (_showBluetooth) _icp5Bluetooth,
       ];
 
   @override
@@ -112,8 +158,12 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             'Current board',
             active.identity == DspTransportIdentity.usbi
                 ? 'ADAU1466'
-                : active.identity == DspTransportIdentity.icp5Usb
-                    ? (_icp5Usb.handshakeComplete
+                : active.identity == DspTransportIdentity.icp5Usb ||
+                        active.identity == DspTransportIdentity.icp5Bluetooth
+                    ? ((active.identity == DspTransportIdentity.icp5Usb
+                                ? _icp5Usb
+                                : _icp5Bluetooth)
+                            .handshakeComplete
                         ? 'ADAU1701'
                         : 'pending identity handshake')
                     : 'unproven'),
@@ -123,7 +173,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                 ? 'real USBi engineering executor'
                 : active.identity == DspTransportIdentity.icp5Usb
                     ? 'guarded ICP5 Windows serial executor'
-                    : 'unproven placeholder — writes rejected'),
+                    : 'guarded ICP5 BLE GATT transport'),
         _row('Direct parameter write', _yesNo(caps.directParameterWrite)),
         _row('One-word SafeLoad', _yesNo(caps.oneWordSafeLoad)),
         _row('Five-word SafeLoad', _yesNo(caps.fiveWordSafeLoad)),
@@ -148,12 +198,18 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           Text(
               active.identity == DspTransportIdentity.icp5Usb
                   ? 'Still missing: arbitrary parameters/range, dB conversion, SafeLoad, ADAU1466 commands, and Bluetooth protocol.'
-                  : 'Missing: Bluetooth UUIDs, framing, payload limit, ACK, fragmentation, checksum, DSP target selection, direct-write and SafeLoad sequences.',
+                  : active.identity == DspTransportIdentity.icp5Bluetooth
+                      ? 'Still pending: physical command QA, audible effects, output mapping, and complete operating ranges.'
+                      : 'Missing transport evidence.',
               style: proSubtitle(size: 9)),
         ],
         if (active.identity == DspTransportIdentity.icp5Usb) ...[
           const SizedBox(height: 10),
           _icp5Controls(),
+        ],
+        if (active.identity == DspTransportIdentity.icp5Bluetooth) ...[
+          const SizedBox(height: 10),
+          _icp5BluetoothControls(),
         ],
         const SizedBox(height: 8),
         Text('NO AUTOMATIC FALLBACK DURING ACTIVE WRITES',
@@ -163,6 +219,117 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   }
 
   String _yesNo(bool value) => value ? 'proven' : 'unproven';
+
+  Widget _icp5BluetoothControls() {
+    final selected = _icp5Bluetooth.enumeratedPorts
+        .where((device) => device.portName == _icp5Bluetooth.selectedPort)
+        .firstOrNull;
+    return Container(
+      key: const Key('icp5_bluetooth_connection_panel'),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black12,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('ICP5 BLUETOOTH · ADAU1701 HANDSHAKE',
+            style: proLabel(size: 9, spacing: 0.8)),
+        const SizedBox(height: 6),
+        _row('UI status', _bluetoothState.label),
+        _row(
+            'Bluetooth availability',
+            _icp5Bluetooth.driver.platformSupported
+                ? 'available'
+                : 'unavailable'),
+        _row('Selected device', selected?.friendlyName ?? 'none'),
+        _row('Service', 'FFF0'),
+        _row('TX', 'FFF2 · Write / Write Without Response'),
+        _row('RX', 'FFF1 · Notify'),
+        _row('Connection state', _icp5Bluetooth.connectionState.name),
+        _row(
+            'Handshake',
+            _icp5Bluetooth.handshakeComplete
+                ? 'PASS_HANDSHAKE'
+                : _bluetoothState == Icp5BluetoothUiState.handshakePending
+                    ? 'pending'
+                    : 'not passed'),
+        _row(
+            'Profile',
+            _icp5Bluetooth.handshakeComplete
+                ? (_icp5Bluetooth.detectedProfile ?? 'not received')
+                : 'not received'),
+        _row(
+            'DSP STOP status',
+            widget.dspWritesStopped || _icp5Bluetooth.stopped
+                ? 'STOPPED'
+                : 'enabled'),
+        if (_bluetoothError != null) ...[
+          const SizedBox(height: 5),
+          Text(_bluetoothError!,
+              key: const Key('icp5_bluetooth_error'),
+              style: const TextStyle(color: Colors.redAccent, fontSize: 10)),
+        ],
+        if (_icp5Bluetooth.enumeratedPorts.isNotEmpty) ...[
+          const SizedBox(height: 7),
+          DropdownButton<String>(
+            key: const Key('icp5_bluetooth_device_selector'),
+            value: _icp5Bluetooth.selectedPort,
+            isExpanded: true,
+            hint: const Text('Select WONDOM ICP5'),
+            items: [
+              for (final device in _icp5Bluetooth.enumeratedPorts)
+                DropdownMenuItem(
+                  value: device.portName,
+                  child: Text(device.friendlyName ?? device.portName),
+                ),
+            ],
+            onChanged: _working
+                ? null
+                : (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _icp5Bluetooth.selectEnumeratedPort(value);
+                      _bluetoothState = Icp5BluetoothUiState.deviceFound;
+                    });
+                  },
+          ),
+        ],
+        const SizedBox(height: 7),
+        Wrap(spacing: 7, runSpacing: 7, children: [
+          OutlinedButton(
+            key: const Key('icp5_bluetooth_scan_button'),
+            onPressed: _working ? null : _scanBluetooth,
+            child: Text(_bluetoothState == Icp5BluetoothUiState.scanning
+                ? 'Scanning…'
+                : 'Scan for BLE devices'),
+          ),
+          FilledButton(
+            key: const Key('icp5_bluetooth_connect_button'),
+            onPressed: _working || _icp5Bluetooth.selectedPort == null
+                ? null
+                : _connectBluetooth,
+            child: const Text('Connect + Handshake'),
+          ),
+          OutlinedButton(
+            key: const Key('icp5_bluetooth_disconnect_button'),
+            onPressed: _working ? null : _disconnectBluetooth,
+            child: const Text('Disconnect'),
+          ),
+        ]),
+        const SizedBox(height: 7),
+        Text(
+          'PASS_HANDSHAKE confirms only the exact DSP1701.100.00.01 profile response. '
+          'No diagnostic command is sent automatically. No automatic USB fallback or retry.',
+          style: proSubtitle(size: 9),
+        ),
+        Text(
+          'Audible verification, physical output mapping, and real-device QA remain pending.',
+          style: proSubtitle(size: 9),
+        ),
+      ]),
+    );
+  }
 
   Widget _icp5Controls() {
     final device = _icp5Usb.enumeratedPorts
@@ -555,6 +722,86 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         if (!result.success) _discoveryError = result.message;
       });
     }
+  }
+
+  Future<void> _scanBluetooth() async {
+    setState(() {
+      _working = true;
+      _bluetoothError = null;
+      _bluetoothState = Icp5BluetoothUiState.scanning;
+    });
+    final result = await _icp5Bluetooth.discover();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _bluetoothError = result.error;
+      if (result.matches.isNotEmpty) {
+        _bluetoothState = Icp5BluetoothUiState.deviceFound;
+      } else {
+        _bluetoothState = _classifyBluetoothFailure(result.error);
+      }
+    });
+  }
+
+  Future<void> _connectBluetooth() async {
+    setState(() {
+      _working = true;
+      _bluetoothError = null;
+      _bluetoothState = Icp5BluetoothUiState.connecting;
+    });
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    setState(() => _bluetoothState = Icp5BluetoothUiState.handshakePending);
+    final result = await _icp5Bluetooth.open();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      if (result.success &&
+          _icp5Bluetooth.handshakeComplete &&
+          _icp5Bluetooth.detectedProfile == 'DSP1701.100.00.01') {
+        _bluetoothState = Icp5BluetoothUiState.passHandshake;
+      } else {
+        _bluetoothError = result.message;
+        _bluetoothState = _classifyBluetoothFailure(result.message);
+      }
+    });
+  }
+
+  Future<void> _disconnectBluetooth() async {
+    setState(() => _working = true);
+    await _icp5Bluetooth.close();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _bluetoothState = Icp5BluetoothUiState.disconnected;
+      _bluetoothError = null;
+    });
+  }
+
+  Icp5BluetoothUiState _classifyBluetoothFailure(String? message) {
+    final normalized = (message ?? '').toLowerCase();
+    if (normalized.contains('permission') ||
+        normalized.contains('unauthorized') ||
+        normalized.contains('denied')) {
+      return Icp5BluetoothUiState.permissionDenied;
+    }
+    if (normalized.contains('bluetooth adapter is not on') ||
+        normalized.contains('unavailable on this platform')) {
+      return Icp5BluetoothUiState.bluetoothUnavailable;
+    }
+    if (normalized.contains('service discovery failed')) {
+      return Icp5BluetoothUiState.serviceDiscoveryFailed;
+    }
+    if (normalized.contains('notify subscription failed')) {
+      return Icp5BluetoothUiState.notifySubscriptionFailed;
+    }
+    if (normalized.contains('disconnect')) {
+      return Icp5BluetoothUiState.disconnected;
+    }
+    if (normalized.contains('timed out') || normalized.contains('timeout')) {
+      return Icp5BluetoothUiState.timeout;
+    }
+    return Icp5BluetoothUiState.error;
   }
 
   Future<void> _discoverIcp5() async {
