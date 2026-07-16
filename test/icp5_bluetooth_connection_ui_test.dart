@@ -43,9 +43,12 @@ class _Connection implements Icp5SerialConnection {
   final List<List<int>> writes = [];
   final List<int>? identity;
   final bool disconnectDuringHandshake;
+  final bool ackDiagnostics;
 
   _Connection(
-      {this.identity = _identityRx, this.disconnectDuringHandshake = false});
+      {this.identity = _identityRx,
+      this.disconnectDuringHandshake = false,
+      this.ackDiagnostics = false});
 
   @override
   Stream<List<int>> get bytes => _bytes.stream;
@@ -59,6 +62,10 @@ class _Connection implements Icp5SerialConnection {
       } else if (identity != null) {
         _bytes.add(identity!);
       }
+    } else if (ackDiagnostics && bytes.length > 6) {
+      final ack = <int>[0x55, 0x07, 0xE1, 0, 0, 0, bytes[6], 0];
+      ack.add(Icp5FrameCodec.checksum(ack));
+      _bytes.add(ack);
     }
     return bytes.length;
   }
@@ -193,6 +200,8 @@ void main() {
     expect(find.text('FFF0'), findsOneWidget);
     expect(find.textContaining('FFF2 · Write'), findsOneWidget);
     expect(find.text('FFF1 · Notify'), findsOneWidget);
+    expect(find.byKey(const Key('icp5_bluetooth_operational_diagnostics')),
+        findsNothing);
 
     final selector = find.byKey(const Key('icp5_bluetooth_device_selector'));
     await tester.ensureVisible(selector);
@@ -220,6 +229,15 @@ void main() {
 
     expect(find.text('PASS_HANDSHAKE'), findsWidgets);
     expect(find.text(Icp5FrameCodec.expectedProfile), findsOneWidget);
+    expect(find.byKey(const Key('icp5_bluetooth_operational_diagnostics')),
+        findsOneWidget);
+    expect(find.text('ICP5 Bluetooth'), findsWidgets);
+    for (var channel = 0; channel < 4; channel++) {
+      expect(find.byKey(Key('icp5_phase_c_ble_gain$channel')), findsOneWidget);
+      expect(
+          find.byKey(Key('icp5_phase_c_ble_cutoff$channel')), findsOneWidget);
+      expect(find.byKey(Key('icp5_phase_c_ble_peq$channel')), findsOneWidget);
+    }
     expect(connection.writes, [Icp5FrameCodec.identificationRequest]);
     expect(driver.openCalls, 1);
     expect(driver.discoverCalls, 1);
@@ -227,6 +245,31 @@ void main() {
     expect(find.text('ble-wondom'), findsWidgets);
     expect(find.textContaining('No diagnostic command is sent automatically'),
         findsOneWidget);
+  });
+
+  testWidgets('BLE Master Volume action writes only through BLE transport',
+      (tester) async {
+    final connection = _Connection(ackDiagnostics: true);
+    final transport = Icp5BluetoothTransport(
+        driver: _Driver(connection),
+        readTimeout: const Duration(milliseconds: 50));
+    await tester.pumpWidget(_app(transport));
+    await _selectBluetooth(tester);
+    await _tapKey(tester, 'icp5_bluetooth_scan_button');
+    await tester.pumpAndSettle();
+    await _tapKey(tester, 'icp5_bluetooth_connect_button');
+    await tester.pumpAndSettle();
+
+    expect(connection.writes, [Icp5FrameCodec.identificationRequest]);
+    await _tapKey(tester, 'ble_master_volume_test');
+    await tester.pumpAndSettle();
+
+    expect(connection.writes, [
+      Icp5FrameCodec.identificationRequest,
+      Icp5FrameCodec.buildMasterVolumeWrite(5.9),
+    ]);
+    expect(find.text('PASS_ACK'), findsWidgets);
+    expect(find.text('VERIFIED'), findsNothing);
   });
 
   testWidgets('wrong profile is rejected and never reports PASS_HANDSHAKE',

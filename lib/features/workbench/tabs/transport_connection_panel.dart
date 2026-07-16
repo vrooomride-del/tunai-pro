@@ -351,9 +351,216 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           'Audible verification, physical output mapping, and real-device QA remain pending.',
           style: proSubtitle(size: 9),
         ),
+        if (_icp5Bluetooth.handshakeComplete) ...[
+          const SizedBox(height: 12),
+          _bluetoothDiagnosticControls(),
+        ],
       ]),
     );
   }
+
+  Widget _bluetoothDiagnosticControls() {
+    final transport = _icp5Bluetooth;
+    final blocked = _working ||
+        widget.dspWritesStopped ||
+        transport.stopped ||
+        !transport.handshakeComplete;
+    return Container(
+      key: const Key('icp5_bluetooth_operational_diagnostics'),
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('ADAU1701 CAPTURE-PROVEN DIAGNOSTICS',
+            style: proLabel(size: 9, spacing: 0.8)),
+        _row('Active transport', 'ICP5 Bluetooth'),
+        _row('Handshake', 'PASS_HANDSHAKE'),
+        _row('Shared DSP STOP', transport.stopped ? 'STOPPED' : 'enabled'),
+        const SizedBox(height: 8),
+        _diagnosticActionCard(
+          keyName: 'ble_master_volume',
+          title: 'Master Volume diagnostic',
+          transport: transport,
+          parameter: '0x00000010',
+          channel: 'shared master',
+          testLabel: 'TEST internal value 5.9',
+          restoreLabel: 'RESTORE internal value 6.0',
+          confirmed: _confirmedValue.toStringAsFixed(1),
+          lastAck: _lastCommand?.message ?? 'not run',
+          rollback: 'guarded exact RESTORE once on ambiguous TEST failure',
+          evidence: 'Range, dB mapping, and audible effect pending.',
+          blocked: blocked,
+          onTest: () => _test59(transport),
+          onRestore: () => _restore60(transport),
+        ),
+        _diagnosticActionCard(
+          keyName: 'ble_master_mute',
+          title: 'Master Mute diagnostic',
+          transport: transport,
+          parameter: '0x00000012',
+          channel: 'shared master',
+          testLabel: 'TEST State 1',
+          restoreLabel: 'RESTORE State 0',
+          confirmed: 'State $_confirmedMuteState',
+          lastAck: _lastMuteCommand?.message ?? 'not run',
+          rollback: 'guarded exact RESTORE once on ambiguous TEST failure',
+          evidence: 'Audible mute polarity pending.',
+          blocked: blocked,
+          onTest: () => _testMuteState1(transport),
+          onRestore: () => _restoreMuteState0(transport),
+        ),
+        for (var channel = 0; channel < 4; channel++)
+          _phaseCCard(
+            blocked: blocked,
+            transport: transport,
+            keyPrefix: 'ble_',
+            keyName: 'gain$channel',
+            title: 'Output Gain index $channel',
+            parameter: '0x00000014',
+            channelIndex: channel,
+            testLabel: channel == 0
+                ? 'TEST -4.9'
+                : channel == 1
+                    ? 'TEST -4.8'
+                    : 'TEST -0.16666946',
+            restoreLabel: channel == 0
+                ? 'RESTORE -4.8'
+                : channel == 1
+                    ? 'RESTORE -4.7'
+                    : 'RESTORE -0.06666946',
+            onTest: () => _runPhaseCTest(
+                'gain$channel',
+                channel == 0
+                    ? -4.9
+                    : channel == 1
+                        ? -4.8
+                        : -0.16666946,
+                channel == 0
+                    ? -4.8
+                    : channel == 1
+                        ? -4.7
+                        : -0.06666946,
+                () => transport.runOutputGainTest(channel)),
+            onRestore: () => _runPhaseCRestore(
+                'gain$channel',
+                channel == 0
+                    ? -4.8
+                    : channel == 1
+                        ? -4.7
+                        : -0.06666946,
+                () => transport.restoreOutputGain(channel)),
+          ),
+        for (var channel = 0; channel < 4; channel++)
+          _phaseCCard(
+            blocked: blocked,
+            transport: transport,
+            keyPrefix: 'ble_',
+            keyName: 'cutoff$channel',
+            title: 'Filter Cutoff Diagnostic index $channel',
+            parameter: '0x00000015',
+            channelIndex: channel,
+            testLabel: channel < 2 ? 'TEST 2001' : 'TEST 21',
+            restoreLabel: channel < 2 ? 'RESTORE 2000' : 'RESTORE 20',
+            onTest: () => _runPhaseCTest(
+                'cutoff$channel',
+                channel < 2 ? 2001 : 21,
+                channel < 2 ? 2000 : 20,
+                () => transport.runFilterCutoffTest(channel)),
+            onRestore: () => _runPhaseCRestore(
+                'cutoff$channel',
+                channel < 2 ? 2000 : 20,
+                () => transport.restoreFilterCutoff(channel)),
+          ),
+        for (var channel = 0; channel < 4; channel++)
+          _phaseCCard(
+            blocked: blocked,
+            transport: transport,
+            keyPrefix: 'ble_',
+            keyName: 'peq$channel',
+            title: 'PEQ Band 1 Gain index $channel',
+            parameter: '0x00000018',
+            channelIndex: channel,
+            testLabel: switch (channel) {
+              0 => 'TEST -0.9',
+              1 => 'TEST 4.2 dB',
+              2 => 'TEST -1.0',
+              _ => 'TEST 2.1 dB',
+            },
+            restoreLabel: switch (channel) {
+              0 => 'RESTORE -1.0',
+              1 => 'RESTORE 4.1 dB',
+              2 => 'RESTORE -2.0',
+              _ => 'RESTORE 2.0 dB',
+            },
+            onTest: () => _runPhaseCTest(
+                'peq$channel',
+                switch (channel) { 0 => -0.9, 1 => 4.2, 2 => -1.0, _ => 2.1 },
+                switch (channel) { 0 => -1.0, 1 => 4.1, 2 => -2.0, _ => 2.0 },
+                () => transport.runPeqBand1GainTest(channel)),
+            onRestore: () => _runPhaseCRestore(
+                'peq$channel',
+                switch (channel) { 0 => -1.0, 1 => 4.1, 2 => -2.0, _ => 2.0 },
+                () => transport.restorePeqBand1Gain(channel)),
+          ),
+        Text(
+          'Exact diagnostics only — never VERIFIED. Physical mapping, full ranges, audible verification, Filter HPF/LPF roles, and PEQ Frequency/Q/Bands 2–10 remain unproven.',
+          style: proSubtitle(size: 9),
+        ),
+      ]),
+    );
+  }
+
+  Widget _diagnosticActionCard({
+    required String keyName,
+    required String title,
+    required Icp5UsbTransport transport,
+    required String parameter,
+    required String channel,
+    required String testLabel,
+    required String restoreLabel,
+    required String confirmed,
+    required String lastAck,
+    required String rollback,
+    required String evidence,
+    required bool blocked,
+    required VoidCallback onTest,
+    required VoidCallback onRestore,
+  }) =>
+      Container(
+        key: Key(keyName),
+        margin: const EdgeInsets.only(top: 7),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+            border: Border.all(color: kProBorder),
+            borderRadius: BorderRadius.circular(3)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: proLabel(size: 9, spacing: 0.5)),
+          _row('Active transport', transport.displayName),
+          _row('Protocol parameter', parameter),
+          _row('Channel/index', channel),
+          _row('Exact TEST value', testLabel.replaceFirst('TEST ', '')),
+          _row(
+              'Exact RESTORE value', restoreLabel.replaceFirst('RESTORE ', '')),
+          _row('Confirmed state', confirmed),
+          _row('Last ACK', lastAck),
+          _row('Rollback status', rollback),
+          _row('Shared DSP STOP', transport.stopped ? 'STOPPED' : 'enabled'),
+          Text('PASS_ACK only, never VERIFIED · $evidence',
+              style: proSubtitle(size: 9)),
+          Wrap(spacing: 7, runSpacing: 7, children: [
+            FilledButton(
+                key: Key('${keyName}_test'),
+                onPressed: blocked ? null : onTest,
+                child: Text(testLabel)),
+            OutlinedButton(
+                key: Key('${keyName}_restore'),
+                onPressed: blocked ? null : onRestore,
+                child: Text(restoreLabel)),
+          ]),
+        ]),
+      );
 
   Widget _icp5Controls() {
     final device = _icp5Usb.enumeratedPorts
@@ -696,6 +903,8 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
 
   Widget _phaseCCard(
       {required bool blocked,
+      Icp5UsbTransport? transport,
+      String keyPrefix = '',
       required String keyName,
       required String title,
       required String parameter,
@@ -704,8 +913,9 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
       required String restoreLabel,
       required VoidCallback onTest,
       required VoidCallback onRestore}) {
+    final activeTransport = transport ?? _icp5Usb;
     return Container(
-      key: Key('icp5_phase_c_$keyName'),
+      key: Key('icp5_phase_c_$keyPrefix$keyName'),
       margin: const EdgeInsets.only(top: 7),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
@@ -713,21 +923,30 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           borderRadius: BorderRadius.circular(3)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title, style: proLabel(size: 9, spacing: 0.5)),
+        _row('Active transport', activeTransport.displayName),
         _row('Parameter ID', parameter),
         _row('Protocol channel index', '$channelIndex'),
+        if (transport != null) ...[
+          _row('Exact TEST value', testLabel.replaceFirst('TEST ', '')),
+          _row(
+              'Exact RESTORE value', restoreLabel.replaceFirst('RESTORE ', '')),
+        ],
         _row('Confirmed', '${_phaseCConfirmed[keyName]}'),
         _row('Last ACK', _phaseCLast[keyName]?.message ?? 'not run'),
         _row('Rollback status', _phaseCRollback[keyName] ?? 'not required'),
-        _row('DSP STOP status', _icp5Usb.stopped ? 'STOPPED' : 'enabled'),
+        _row(
+            'DSP STOP status', activeTransport.stopped ? 'STOPPED' : 'enabled'),
         Wrap(spacing: 7, runSpacing: 7, children: [
           FilledButton(
-              key: Key('icp5_phase_c_${keyName}_test'),
-              onPressed: blocked || !_icp5Usb.handshakeComplete ? null : onTest,
+              key: Key('icp5_phase_c_$keyPrefix${keyName}_test'),
+              onPressed:
+                  blocked || !activeTransport.handshakeComplete ? null : onTest,
               child: Text(testLabel)),
           OutlinedButton(
-              key: Key('icp5_phase_c_${keyName}_restore'),
-              onPressed:
-                  blocked || !_icp5Usb.handshakeComplete ? null : onRestore,
+              key: Key('icp5_phase_c_$keyPrefix${keyName}_restore'),
+              onPressed: blocked || !activeTransport.handshakeComplete
+                  ? null
+                  : onRestore,
               child: Text(restoreLabel)),
         ]),
       ]),
@@ -847,9 +1066,10 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     if (mounted) setState(() => _working = false);
   }
 
-  Future<void> _test59() async {
+  Future<void> _test59([Icp5UsbTransport? selectedTransport]) async {
+    final transport = selectedTransport ?? _icp5Usb;
     setState(() => _working = true);
-    final outcome = await _icp5Usb.runTestWithGuardedRestore();
+    final outcome = await transport.runTestWithGuardedRestore();
     if (!mounted) return;
     setState(() {
       _working = false;
@@ -861,9 +1081,10 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     });
   }
 
-  Future<void> _restore60() async {
+  Future<void> _restore60([Icp5UsbTransport? selectedTransport]) async {
+    final transport = selectedTransport ?? _icp5Usb;
     setState(() => _working = true);
-    final result = await _icp5Usb.restoreBaselineWithStop();
+    final result = await transport.restoreBaselineWithStop();
     if (!mounted) return;
     setState(() {
       _working = false;
@@ -872,9 +1093,10 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     });
   }
 
-  Future<void> _testMuteState1() async {
+  Future<void> _testMuteState1([Icp5UsbTransport? selectedTransport]) async {
+    final transport = selectedTransport ?? _icp5Usb;
     setState(() => _working = true);
-    final outcome = await _icp5Usb.runMuteTestWithGuardedRestore();
+    final outcome = await transport.runMuteTestWithGuardedRestore();
     if (!mounted) return;
     setState(() {
       _working = false;
@@ -886,9 +1108,10 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     });
   }
 
-  Future<void> _restoreMuteState0() async {
+  Future<void> _restoreMuteState0([Icp5UsbTransport? selectedTransport]) async {
+    final transport = selectedTransport ?? _icp5Usb;
     setState(() => _working = true);
-    final result = await _icp5Usb.restoreMuteStateZeroWithStop();
+    final result = await transport.restoreMuteStateZeroWithStop();
     if (!mounted) return;
     setState(() {
       _working = false;

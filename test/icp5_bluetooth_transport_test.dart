@@ -203,6 +203,85 @@ void main() {
     await transport.close();
   });
 
+  test('all approved diagnostics use exact frames through BLE only', () async {
+    late _FakeGattConnection connection;
+    connection = _FakeGattConnection((connection, call, bytes) {
+      if (call == 1) {
+        connection.notify(identityRx);
+      } else {
+        final ack = <int>[0x55, 0x07, 0xE1, 0, 0, 0, bytes[6], 0];
+        ack.add(Icp5FrameCodec.checksum(ack));
+        connection.notify(ack);
+      }
+    });
+    final driver = _FakeGattDriver(connection);
+    final transport = Icp5BluetoothTransport(
+        driver: driver, readTimeout: const Duration(milliseconds: 50));
+    await transport.discover();
+    expect((await transport.open()).success, isTrue);
+
+    expect((await transport.writeCapturedMasterVolume(5.9)).success, isTrue);
+    expect((await transport.writeCapturedMasterVolume(6.0)).success, isTrue);
+    expect((await transport.writeCapturedMasterMuteState(1)).success, isTrue);
+    expect((await transport.writeCapturedMasterMuteState(0)).success, isTrue);
+    for (var channel = 0; channel < 4; channel++) {
+      expect((await transport.runOutputGainTest(channel)).test.success, isTrue);
+      expect((await transport.restoreOutputGain(channel)).success, isTrue);
+      expect(
+          (await transport.runFilterCutoffTest(channel)).test.success, isTrue);
+      expect((await transport.restoreFilterCutoff(channel)).success, isTrue);
+      expect(
+          (await transport.runPeqBand1GainTest(channel)).test.success, isTrue);
+      expect((await transport.restorePeqBand1Gain(channel)).success, isTrue);
+    }
+
+    final expected = <List<int>>[
+      Icp5FrameCodec.identificationRequest,
+      Icp5FrameCodec.buildMasterVolumeWrite(5.9),
+      Icp5FrameCodec.buildMasterVolumeWrite(6.0),
+      Icp5FrameCodec.buildMasterMuteWrite(1),
+      Icp5FrameCodec.buildMasterMuteWrite(0),
+      for (var channel = 0; channel < 4; channel++) ...[
+        Icp5FrameCodec.buildOutputGainWrite(
+            channel,
+            switch (channel) {
+              0 => -4.9,
+              1 => -4.8,
+              _ => -0.16666946,
+            }),
+        Icp5FrameCodec.buildOutputGainWrite(
+            channel,
+            switch (channel) {
+              0 => -4.8,
+              1 => -4.7,
+              _ => -0.06666946,
+            }),
+        Icp5FrameCodec.buildFilterCutoffWrite(channel, channel < 2 ? 2001 : 21),
+        Icp5FrameCodec.buildFilterCutoffWrite(channel, channel < 2 ? 2000 : 20),
+        Icp5FrameCodec.buildPeqBand1GainWrite(
+            channel,
+            switch (channel) {
+              0 => -0.9,
+              1 => 4.2,
+              2 => -1.0,
+              _ => 2.1,
+            }),
+        Icp5FrameCodec.buildPeqBand1GainWrite(
+            channel,
+            switch (channel) {
+              0 => -1.0,
+              1 => 4.1,
+              2 => -2.0,
+              _ => 2.0,
+            }),
+      ],
+    ];
+    expect(connection.writes, expected);
+    expect(driver.openedPort, 'ble-device');
+    expect(driver.discoverCalls, 1);
+    await transport.close();
+  });
+
   test('BLE Notify disconnect fails closed and subsequent write times out',
       () async {
     late _FakeGattConnection connection;
