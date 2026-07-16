@@ -243,6 +243,9 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                 ? 'available'
                 : 'unavailable'),
         _row('Selected device', selected?.friendlyName ?? 'none'),
+        _row('Identifier', selected?.instanceId ?? 'none'),
+        _row('RSSI',
+            selected?.rssi == null ? 'unknown' : '${selected!.rssi} dBm'),
         _row('Service', 'FFF0'),
         _row('TX', 'FFF2 · Write / Write Without Response'),
         _row('RX', 'FFF1 · Notify'),
@@ -281,7 +284,11 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
               for (final device in _icp5Bluetooth.enumeratedPorts)
                 DropdownMenuItem(
                   value: device.portName,
-                  child: Text(device.friendlyName ?? device.portName),
+                  child: Text(
+                    '${device.friendlyName ?? 'Unnamed BLE device'} · '
+                    '${device.instanceId ?? device.portName} · '
+                    '${device.rssi == null ? 'RSSI unknown' : '${device.rssi} dBm'}',
+                  ),
                 ),
             ],
             onChanged: _working

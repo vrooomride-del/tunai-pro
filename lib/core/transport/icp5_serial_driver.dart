@@ -12,6 +12,7 @@ class Icp5SerialDevice {
   final String? friendlyName;
   final String? instanceId;
   final String? serialNumber;
+  final int? rssi;
   final String enumerationSource;
 
   const Icp5SerialDevice(
@@ -22,6 +23,7 @@ class Icp5SerialDevice {
       this.friendlyName,
       this.instanceId,
       this.serialNumber,
+      this.rssi,
       this.enumerationSource = 'unknown'});
 
   static final RegExp _comPattern =

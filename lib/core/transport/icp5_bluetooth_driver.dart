@@ -15,6 +15,8 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
   static const serviceUuid = 'fff0';
   static const txCharacteristicUuid = 'fff2';
   static const rxCharacteristicUuid = 'fff1';
+  static const discoverySource =
+      'BLE connectable-device scan; FFF0 verified after connect';
   final Duration scanTimeout;
 
   Icp5BluetoothGattDriver({this.scanTimeout = const Duration(seconds: 10)});
@@ -31,7 +33,7 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
 
   @override
   Future<Icp5DiscoveryResult> discover() async {
-    const source = 'BLE GATT advertised service FFF0';
+    const source = discoverySource;
     _discoveredDevices.clear();
     if (!platformSupported) {
       return const Icp5DiscoveryResult(
@@ -49,13 +51,15 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
             matches: [],
             error: 'Bluetooth adapter is not on.');
       }
-      await FlutterBluePlus.startScan(
-          withServices: [Guid(serviceUuid)], timeout: scanTimeout);
-      final results = await FlutterBluePlus.scanResults
-          .where((results) => results.any(_advertisesIcp5Service))
+      await FlutterBluePlus.startScan(timeout: scanTimeout);
+      await FlutterBluePlus.isScanning
+          .where((scanning) => !scanning)
           .first
-          .timeout(scanTimeout);
-      final matches = results.where(_advertisesIcp5Service).map((result) {
+          .timeout(scanTimeout + const Duration(seconds: 1));
+      final results = await FlutterBluePlus.scanResults.first;
+      final matches = results
+          .where((result) => result.advertisementData.connectable)
+          .map((result) {
         final id = result.device.remoteId.str;
         _discoveredDevices[id] = result.device;
         final name = result.device.advName.trim();
@@ -64,8 +68,10 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
             productName: name.isEmpty ? null : name,
             friendlyName: name.isEmpty ? 'Unnamed BLE device' : name,
             instanceId: id,
+            rssi: result.rssi,
             enumerationSource: source);
-      }).toList(growable: false);
+      }).toList(growable: true)
+        ..sort(_compareCandidates);
       return Icp5DiscoveryResult(
           source: source, allPorts: matches, matches: matches);
     } on TimeoutException {
@@ -73,7 +79,7 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
           source: source,
           allPorts: [],
           matches: [],
-          error: 'No device advertising BLE service FFF0 was found.');
+          error: 'BLE scan timed out before connectable devices were listed.');
     } catch (error) {
       return Icp5DiscoveryResult(
           source: source,
@@ -85,9 +91,15 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
     }
   }
 
-  bool _advertisesIcp5Service(ScanResult result) =>
-      result.advertisementData.serviceUuids
-          .any((uuid) => uuid.str128.toLowerCase().contains(serviceUuid));
+  static int _compareCandidates(Icp5SerialDevice left, Icp5SerialDevice right) {
+    final leftPreferred = _isWondomIcp5(left.friendlyName);
+    final rightPreferred = _isWondomIcp5(right.friendlyName);
+    if (leftPreferred != rightPreferred) return leftPreferred ? -1 : 1;
+    return (right.rssi ?? -999).compareTo(left.rssi ?? -999);
+  }
+
+  static bool _isWondomIcp5(String? name) =>
+      (name ?? '').trim().toUpperCase() == 'WONDOM ICP5';
 
   @override
   Future<Icp5SerialConnection> open(String portName) async {

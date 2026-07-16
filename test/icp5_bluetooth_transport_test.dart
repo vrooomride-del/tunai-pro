@@ -87,6 +87,12 @@ void main() {
     expect(Icp5BluetoothGattDriver.rxCharacteristicUuid, 'fff1');
   });
 
+  test('BLE scan source does not claim FFF0 advertisement filtering', () {
+    const source = Icp5BluetoothGattDriver.discoverySource;
+    expect(source, isNot(contains('advertised service FFF0')));
+    expect(source, contains('verified after connect'));
+  });
+
   test('BLE uses unchanged handshake codec and reassembles Notify chunks',
       () async {
     late _FakeGattConnection connection;

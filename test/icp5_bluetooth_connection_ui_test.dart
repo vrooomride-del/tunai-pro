@@ -82,7 +82,15 @@ class _Driver implements Icp5SerialDriver {
     friendlyName: 'WONDOM ICP5',
     productName: 'WONDOM ICP5',
     instanceId: 'ble-wondom',
-    enumerationSource: 'fake FFF0',
+    rssi: -42,
+    enumerationSource: 'fake unfiltered BLE scan',
+  );
+  static const otherDevice = Icp5SerialDevice(
+    portName: 'ble-other',
+    friendlyName: 'Other Speaker',
+    instanceId: 'ble-other',
+    rssi: -20,
+    enumerationSource: 'fake unfiltered BLE scan',
   );
 
   @override
@@ -101,9 +109,9 @@ class _Driver implements Icp5SerialDriver {
       );
     }
     return const Icp5DiscoveryResult(
-      source: 'fake FFF0',
-      allPorts: [device],
-      matches: [device],
+      source: 'fake unfiltered BLE scan',
+      allPorts: [device, otherDevice],
+      matches: [device, otherDevice],
     );
   }
 
@@ -158,10 +166,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('WONDOM ICP5'), findsWidgets);
+    expect(find.text('ble-wondom'), findsOneWidget);
+    expect(find.text('-42 dBm'), findsOneWidget);
     expect(find.text('Device found'), findsOneWidget);
     expect(find.text('FFF0'), findsOneWidget);
     expect(find.textContaining('FFF2 · Write'), findsOneWidget);
     expect(find.text('FFF1 · Notify'), findsOneWidget);
+
+    final selector = find.byKey(const Key('icp5_bluetooth_device_selector'));
+    await tester.ensureVisible(selector);
+    await tester.tap(selector);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Other Speaker'), findsOneWidget);
+    await tester.tap(find.textContaining('Other Speaker'));
+    await tester.pumpAndSettle();
+    expect(transport.selectedPort, _Driver.otherDevice.portName);
   });
 
   testWidgets(
