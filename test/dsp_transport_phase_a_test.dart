@@ -45,7 +45,7 @@ void main() {
     });
 
     for (final entry in <String, DspTransport>{
-      'ICP5 Bluetooth': const Icp5BluetoothTransport(),
+      'ICP5 Bluetooth': Icp5BluetoothTransport(),
     }.entries) {
       test('${entry.key} rejects commands with zero hardware writes', () async {
         final command = DspCommand(
@@ -59,9 +59,9 @@ void main() {
         final result = await entry.value.execute(command);
         expect(result.success, isFalse);
         expect(result.wasActualWrite, isFalse);
-        expect(result.failure, DspTransportFailure.protocolEvidenceMissing);
-        expect(
-            entry.value.capabilities, same(DspTransportCapabilities.unproven));
+        expect(result.failure, DspTransportFailure.unsupportedCapability);
+        expect(entry.value.capabilities.directParameterWrite, isTrue);
+        expect(entry.value.capabilities.ackSupport, isTrue);
       });
     }
 
@@ -82,7 +82,7 @@ void main() {
       final unusedUsbi =
           UsbiDspTransport(backend: usbiBackend, deviceOpen: () => true);
       expect(unusedUsbi.identity, DspTransportIdentity.usbi);
-      const router = DspTransportRouter(Icp5BluetoothTransport());
+      final router = DspTransportRouter(Icp5BluetoothTransport());
       final result = await router.execute(DspCommand(
         boardId: 'ADAU1466',
         label: 'no fallback',
@@ -91,7 +91,7 @@ void main() {
           DspWriteBody(startAddress: 2, dataBytes: [0, 0, 0, 0])
         ],
       ));
-      expect(result.failure, DspTransportFailure.protocolEvidenceMissing);
+      expect(result.failure, DspTransportFailure.unsupportedCapability);
       expect(usbiBackend.callCount, 0);
     });
 
@@ -114,12 +114,12 @@ void main() {
       );
       final icp5Executor = DspBoardExecutor(
         registry: registry,
-        router: const DspTransportRouter(Icp5BluetoothTransport()),
+        router: DspTransportRouter(Icp5BluetoothTransport()),
       );
 
       expect((await usbiExecutor.execute(command)).success, isTrue);
       expect((await icp5Executor.execute(command)).failure,
-          DspTransportFailure.protocolEvidenceMissing);
+          DspTransportFailure.unsupportedCapability);
       expect(backend.callCount, 1);
     });
 
@@ -142,12 +142,13 @@ void main() {
       expect(find.text('ICP5 Bluetooth'), findsOneWidget);
       await tester.tap(find.text('ICP5 USB'));
       await tester.pump();
-      expect(find.byKey(const Key('icp5_usb_operational_panel')), findsOneWidget);
+      expect(
+          find.byKey(const Key('icp5_usb_operational_panel')), findsOneWidget);
       expect(find.text('TEST internal value 5.9'), findsOneWidget);
       expect(find.text('RESTORE internal value 6.0'), findsOneWidget);
       await tester.tap(find.text('ICP5 Bluetooth'));
       await tester.pump();
-      expect(find.text('PROTOCOL EVIDENCE REQUIRED — WRITES BLOCKED'),
+      expect(find.textContaining('physical command QA remains pending'),
           findsOneWidget);
       expect(find.text('NO AUTOMATIC FALLBACK DURING ACTIVE WRITES'),
           findsOneWidget);

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'dsp_command.dart';
 import 'dsp_transport.dart';
 import 'icp5_frame_codec.dart';
+import 'icp5_bluetooth_driver.dart';
 import 'icp5_serial_driver.dart';
 
 class Icp5MasterVolumeResult {
@@ -592,29 +593,19 @@ class Icp5UsbTransport implements DspTransport {
           message: message);
 }
 
-class Icp5BluetoothTransport implements DspTransport {
-  const Icp5BluetoothTransport();
+class Icp5BluetoothTransport extends Icp5UsbTransport {
+  Icp5BluetoothTransport(
+      {Icp5SerialDriver? driver,
+      super.readTimeout,
+      super.writeTimeout,
+      super.onDspWriteStop})
+      : super(driver: driver ?? Icp5BluetoothGattDriver());
+
   @override
   DspTransportIdentity get identity => DspTransportIdentity.icp5Bluetooth;
   @override
   String get displayName => 'ICP5 Bluetooth';
   @override
-  bool get isAvailable => false;
-  @override
-  DspConnectionState get connectionState => DspConnectionState.unavailable;
-  @override
-  DspTransportCapabilities get capabilities =>
-      DspTransportCapabilities.unproven;
-  @override
-  String get missingEvidence => 'PROTOCOL EVIDENCE REQUIRED — WRITES BLOCKED';
-  DspTransportResult get _blocked => const DspTransportResult(
-      success: false,
-      failure: DspTransportFailure.protocolEvidenceMissing,
-      message: 'PROTOCOL EVIDENCE REQUIRED — WRITES BLOCKED');
-  @override
-  Future<DspTransportResult> open() async => _blocked;
-  @override
-  Future<void> close() async {}
-  @override
-  Future<DspTransportResult> execute(DspCommand command) async => _blocked;
+  String? get missingEvidence =>
+      'BLE GATT FFF2 TX / FFF1 Notify and raw ICP5 framing are proven; physical command QA remains pending.';
 }

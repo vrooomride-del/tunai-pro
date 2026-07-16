@@ -71,7 +71,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         UsbiDspTransport(
             backend: widget.backend, deviceOpen: () => widget.deviceOpen),
         _icp5Usb,
-        const Icp5BluetoothTransport(),
+        Icp5BluetoothTransport(),
       ];
 
   @override
