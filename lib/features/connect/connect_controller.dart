@@ -1,28 +1,29 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/profiles/system_profile.dart';
+import 'consumer_ble_service.dart';
 import 'usbi_detector.dart';
 import 'usbi_transport.dart';
 
-// ICP5(WONDOM) BLE GATT UUID — GATT 덤프로 확인된 실제 값
-class _ICP5UUID {
-  static const String service  = 'fff0';
-  static const String dspWrite = 'fff2'; // WRITE|WRITE_NO_RSP
-}
-
 enum ConnectMode { uart, ble, usbi }
 
-enum ConnectionStatus { disconnected, scanning, connecting, connected, error, bluetoothOff }
+enum ConnectionStatus {
+  disconnected,
+  scanning,
+  connecting,
+  connected,
+  error,
+  bluetoothOff
+}
 
 /// 연결 후 보드 자동탐지 결과
 enum DetectedBoard {
   icp5Adau1701, // ICP5 + fff0 서비스 → ADAU1701(JAB4)
-  adau1466,     // 파란보드 패턴 → ADAU1466 (미지원)
-  unknown,      // 식별 불가 → 수동 선택 유지
+  adau1466, // 파란보드 패턴 → ADAU1466 (미지원)
+  unknown, // 식별 불가 → 수동 선택 유지
 }
 
 class ConnectState {
@@ -35,6 +36,9 @@ class ConnectState {
   final DetectedBoard? detectedBoard;
   final List<UsbiDeviceInfo> usbiDevices;
   final String? selectedUsbiInstanceId;
+  final List<ConsumerBleDevice> bleDevices;
+  final String? selectedBleIdentifier;
+  final ConsumerBleStatus bleStatus;
 
   const ConnectState({
     this.mode = ConnectMode.uart,
@@ -46,6 +50,9 @@ class ConnectState {
     this.detectedBoard,
     this.usbiDevices = const [],
     this.selectedUsbiInstanceId,
+    this.bleDevices = const [],
+    this.selectedBleIdentifier,
+    this.bleStatus = ConsumerBleStatus.disconnected,
   });
 
   bool get connected => connection == ConnectionStatus.connected;
@@ -60,18 +67,39 @@ class ConnectState {
     DetectedBoard? detectedBoard,
     List<UsbiDeviceInfo>? usbiDevices,
     String? selectedUsbiInstanceId,
-  }) => ConnectState(
-    mode: mode ?? this.mode,
-    ports: ports ?? this.ports,
-    selectedPort: selectedPort ?? this.selectedPort,
-    connection: connection ?? this.connection,
-    status: status ?? this.status,
-    deviceName: deviceName ?? this.deviceName,
-    detectedBoard: detectedBoard ?? this.detectedBoard,
-    usbiDevices: usbiDevices ?? this.usbiDevices,
-    selectedUsbiInstanceId: selectedUsbiInstanceId ?? this.selectedUsbiInstanceId,
-  );
+    List<ConsumerBleDevice>? bleDevices,
+    String? selectedBleIdentifier,
+    ConsumerBleStatus? bleStatus,
+    bool clearConnectionIdentity = false,
+    bool clearBleSelection = false,
+  }) =>
+      ConnectState(
+        mode: mode ?? this.mode,
+        ports: ports ?? this.ports,
+        selectedPort: selectedPort ?? this.selectedPort,
+        connection: connection ?? this.connection,
+        status: status ?? this.status,
+        deviceName:
+            clearConnectionIdentity ? null : (deviceName ?? this.deviceName),
+        detectedBoard: clearConnectionIdentity
+            ? null
+            : (detectedBoard ?? this.detectedBoard),
+        usbiDevices: usbiDevices ?? this.usbiDevices,
+        selectedUsbiInstanceId:
+            selectedUsbiInstanceId ?? this.selectedUsbiInstanceId,
+        bleDevices: bleDevices ?? this.bleDevices,
+        selectedBleIdentifier: clearBleSelection
+            ? null
+            : (selectedBleIdentifier ?? this.selectedBleIdentifier),
+        bleStatus: bleStatus ?? this.bleStatus,
+      );
 }
+
+final consumerBleServiceProvider = Provider<ConsumerBleService>((ref) {
+  final service = ConsumerBleService();
+  ref.onDispose(service.dispose);
+  return service;
+});
 
 final connectProvider = StateNotifierProvider<ConnectController, ConnectState>(
   (ref) => ConnectController(ref),
@@ -79,8 +107,12 @@ final connectProvider = StateNotifierProvider<ConnectController, ConnectState>(
 
 class ConnectController extends StateNotifier<ConnectState> {
   final Ref _ref;
+  late final ConsumerBleService _consumerBle;
   ConnectController(this._ref)
-      : super(ConnectState(mode: Platform.isMacOS ? ConnectMode.ble : ConnectMode.uart)) {
+      : super(ConnectState(
+            mode: Platform.isMacOS ? ConnectMode.ble : ConnectMode.uart)) {
+    _consumerBle = _ref.read(consumerBleServiceProvider);
+    _consumerBle.addListener(_onConsumerBleChanged);
     if (!Platform.isMacOS) scanPorts();
     if (Platform.isWindows) scanUsbi();
   }
@@ -88,16 +120,13 @@ class ConnectController extends StateNotifier<ConnectState> {
   // UART
   SerialPort? _port;
 
-  // BLE
-  BluetoothDevice? _bleDevice;
-  BluetoothCharacteristic? _bleWriteChar;
-
-  static const List<String> _bleTargetNames = [
-    'ICP5', 'icp5', 'TUNAI', 'tunai', 'BT_AUDIO', 'WONDOM',
-  ];
-
   // 파란보드(ADAU1466) advName 패턴
-  static const List<String> _adau1466Names = ['REFERENCE', 'TUNAI-REF', 'QCC5125', 'CS42448'];
+  static const List<String> _adau1466Names = [
+    'REFERENCE',
+    'TUNAI-REF',
+    'QCC5125',
+    'CS42448'
+  ];
 
   // ── 모드 전환 ────────────────────────────────────────────────────────────
 
@@ -127,7 +156,8 @@ class ConnectController extends StateNotifier<ConnectState> {
     final devices = detectUsbiDevices();
     state = state.copyWith(
       usbiDevices: devices,
-      selectedUsbiInstanceId: devices.isNotEmpty ? devices.first.instanceId : null,
+      selectedUsbiInstanceId:
+          devices.isNotEmpty ? devices.first.instanceId : null,
     );
   }
 
@@ -217,13 +247,13 @@ class ConnectController extends StateNotifier<ConnectState> {
 
   // ICP5/CH34x 실제 디바이스 포트 패턴 (우선 자동 선택)
   static const _kPreferredPatterns = [
-    'usbserial',    // CH340/CH341/FTDI macOS 드라이버
+    'usbserial', // CH340/CH341/FTDI macOS 드라이버
     'wchusbserial', // CH34x 공식 드라이버
-    'usbmodem',     // CDC ACM
+    'usbmodem', // CDC ACM
     'cu.ICP',
     'cu.TUNAI',
     'cu.WONDOM',
-    'COM',          // Windows COM 포트 (CH9143/CH34x → COM3, COM4 등)
+    'COM', // Windows COM 포트 (CH9143/CH34x → COM3, COM4 등)
   ];
 
   // USB 시리얼 칩 VID 목록 — ICP5(WONDOM)은 CH34x 탑재
@@ -239,8 +269,8 @@ class ConnectController extends StateNotifier<ConnectState> {
   static bool _isSystemPort(String port) =>
       _kSystemPortPatterns.any((p) => port.contains(p));
 
-  static bool _isPreferredPort(String port) =>
-      _kPreferredPatterns.any((p) => port.toLowerCase().contains(p.toLowerCase()));
+  static bool _isPreferredPort(String port) => _kPreferredPatterns
+      .any((p) => port.toLowerCase().contains(p.toLowerCase()));
 
   void scanPorts() {
     final all = SerialPort.availablePorts;
@@ -249,8 +279,10 @@ class ConnectController extends StateNotifier<ConnectState> {
     final filtered = all.where((p) => !_isSystemPort(p)).toList();
 
     // 현재 선택 포트 유지 (필터된 목록에 있으면)
-    String? selected = state.selectedPort != null && filtered.contains(state.selectedPort)
-        ? state.selectedPort : null;
+    String? selected =
+        state.selectedPort != null && filtered.contains(state.selectedPort)
+            ? state.selectedPort
+            : null;
 
     // 자동 선택: 선호 패턴이 정확히 1개 → 자동 선택, 여러 개면 null 유지(수동 선택)
     if (selected == null) {
@@ -291,13 +323,15 @@ class ConnectController extends StateNotifier<ConnectState> {
       final vid = _port!.vendorId;
       final pid = _port!.productId;
       final board = _detectBoardFromUart(_port!, port);
-      debugPrint('[UART] 보드 탐지: $board  VID=0x${vid?.toRadixString(16) ?? '?'}  PID=0x${pid?.toRadixString(16) ?? '?'}  port=$port');
+      debugPrint(
+          '[UART] 보드 탐지: $board  VID=0x${vid?.toRadixString(16) ?? '?'}  PID=0x${pid?.toRadixString(16) ?? '?'}  port=$port');
 
       debugPrint('[UART] openReadWrite() 시도...');
       final opened = _port!.openReadWrite();
       if (!opened) {
         final err = SerialPort.lastError;
-        final errMsg = err != null ? '${err.message} (code ${err.errorCode})' : '이유 불명';
+        final errMsg =
+            err != null ? '${err.message} (code ${err.errorCode})' : '이유 불명';
         debugPrint('[UART] openReadWrite() 실패 — $errMsg');
         throw Exception('포트 열기 실패: $errMsg');
       }
@@ -314,7 +348,8 @@ class ConnectController extends StateNotifier<ConnectState> {
       String connStatus;
       switch (board) {
         case DetectedBoard.icp5Adau1701:
-          _ref.read(systemProfileProvider.notifier).state = kTunaiOneSystemProfile;
+          _ref.read(systemProfileProvider.notifier).state =
+              kTunaiOneSystemProfile;
           connStatus = 'CONNECTED (UART · ADAU1701 자동 선택됨)';
         case DetectedBoard.adau1466:
           connStatus = 'CONNECTED (UART · ADAU1466 감지됨)';
@@ -333,8 +368,10 @@ class ConnectController extends StateNotifier<ConnectState> {
       debugPrint('[UART] 연결 오류: $e\n$st');
       final msg = e.toString();
       // SigmaStudio 등 다른 프로그램이 포트를 열고 있으면 Access Denied 류 에러가 남
-      final hint = (msg.contains('Access') || msg.contains('access') ||
-              msg.contains('denied') || msg.contains('5)'))
+      final hint = (msg.contains('Access') ||
+              msg.contains('access') ||
+              msg.contains('denied') ||
+              msg.contains('5)'))
           ? ' — 다른 프로그램(SigmaStudio 등)이 포트를 점유 중일 수 있습니다. 닫고 재시도하세요.'
           : '';
       state = state.copyWith(
@@ -389,147 +426,58 @@ class ConnectController extends StateNotifier<ConnectState> {
 
   // ── BLE ──────────────────────────────────────────────────────────────────
 
-  Future<void> scanAndConnectBle() async {
-    state = state.copyWith(
-      connection: ConnectionStatus.scanning,
-      status: 'ICP5 스캔 중...',
-    );
+  Future<void> scanBle() => _consumerBle.scan();
 
-    try {
-      // ── Bluetooth 어댑터 상태 확인 ────────────────────────────
-      // adapterState는 BehaviorSubject → .first로 현재값 즉시 수신
-      final adapterState = await FlutterBluePlus.adapterState.first;
-      if (adapterState != BluetoothAdapterState.on) {
-        state = state.copyWith(
-          connection: ConnectionStatus.bluetoothOff,
-          status: '블루투스가 꺼져 있습니다. 설정에서 켜주세요.',
-        );
-        return;
-      }
-      // ──────────────────────────────────────────────────────────
+  bool selectBleDevice(String identifier) =>
+      _consumerBle.selectDevice(identifier);
 
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
-
-      BluetoothDevice? found;
-      await for (final results in FlutterBluePlus.scanResults) {
-        for (final r in results) {
-          if (_bleTargetNames.any((n) => r.device.advName.contains(n))) {
-            found = r.device;
-            break;
-          }
-        }
-        if (found != null) break;
-        if (!FlutterBluePlus.isScanningNow) break;
-      }
-      await FlutterBluePlus.stopScan();
-
-      if (found == null) {
-        state = state.copyWith(
-          connection: ConnectionStatus.error,
-          status: 'ICP5를 찾을 수 없습니다',
-        );
-        return;
-      }
-
-      state = state.copyWith(
-        connection: ConnectionStatus.connecting,
-        status: '${found.advName} 연결 중...',
-      );
-
-      await found.connect(timeout: const Duration(seconds: 10));
-      _bleDevice = found;
-
-      final services = await found.discoverServices();
-
-      // DEBUG
-      debugPrint('══ GATT dump: ${found.advName} ══');
-      for (final s in services) {
-        debugPrint('  SERVICE: ${s.uuid}');
-        for (final c in s.characteristics) {
-          debugPrint('    CHAR: ${c.uuid}  [${_propStr(c)}]');
-        }
-      }
-      debugPrint('══════════════════════════════════════');
-
-      for (final s in services) {
-        if (s.uuid.str128.contains(_ICP5UUID.service)) {
-          for (final c in s.characteristics) {
-            if (c.uuid.str128.contains(_ICP5UUID.dspWrite)) {
-              _bleWriteChar = c;
-            }
-          }
-        }
-      }
-
-      if (_bleWriteChar == null) {
-        throw Exception('DSP Write 캐릭터리스틱을 찾을 수 없습니다 (fff2)');
-      }
-
-      // ── 보드 자동탐지 ──────────────────────────────────────────────────────
-      final board = _detectBoard(found.advName, services);
-      debugPrint('[BOARD] 탐지 결과: $board (advName=${found.advName})');
-
-      String connStatus;
-      switch (board) {
-        case DetectedBoard.icp5Adau1701:
-          _ref.read(systemProfileProvider.notifier).state = kTunaiOneSystemProfile;
-          connStatus = 'CONNECTED (BLE · ADAU1701 자동 선택됨)';
-        case DetectedBoard.adau1466:
-          connStatus = 'CONNECTED (BLE · ADAU1466 — 지원 준비 중)';
-        case DetectedBoard.unknown:
-          connStatus = 'CONNECTED (BLE · 보드 미식별 — 수동 선택 필요)';
-      }
-      // ────────────────────────────────────────────────────────────────────────
-
-      state = state.copyWith(
-        connection: ConnectionStatus.connected,
-        status: connStatus,
-        deviceName: found.advName,
-        detectedBoard: board,
-      );
-
-      found.connectionState.listen((s) {
-        if (s == BluetoothConnectionState.disconnected) {
-          _bleDevice = null;
-          _bleWriteChar = null;
-          state = state.copyWith(
-            connection: ConnectionStatus.disconnected,
-            status: 'READY',
-            deviceName: null,
-            detectedBoard: null,
-          );
-        }
-      });
-    } catch (e) {
-      debugPrint('BLE connect error: $e');
-      state = state.copyWith(
-        connection: ConnectionStatus.error,
-        status: 'ERROR: $e',
-      );
-    }
-  }
-
-  DetectedBoard _detectBoard(String advName, List<BluetoothService> services) {
-    final name = advName.toUpperCase();
-    final hasFff0 = services.any((s) => s.uuid.str128.contains(_ICP5UUID.service));
-    final isIcp5Name = _bleTargetNames.any((n) => name.contains(n.toUpperCase()));
-    if (isIcp5Name && hasFff0) return DetectedBoard.icp5Adau1701;
-    if (isIcp5Name) return DetectedBoard.icp5Adau1701;
-    if (_adau1466Names.any((n) => name.contains(n.toUpperCase()))) return DetectedBoard.adau1466;
-    return DetectedBoard.unknown;
-  }
+  Future<void> connectSelectedBle() => _consumerBle.connect();
 
   Future<void> disconnectBle() async {
-    await _bleDevice?.disconnect();
-    _bleDevice = null;
-    _bleWriteChar = null;
+    await _consumerBle.disconnect();
+  }
+
+  void _onConsumerBleChanged() {
+    final ble = _consumerBle.state;
+    final connection = switch (ble.status) {
+      ConsumerBleStatus.scanning => ConnectionStatus.scanning,
+      ConsumerBleStatus.connecting => ConnectionStatus.connecting,
+      ConsumerBleStatus.connected => ConnectionStatus.connected,
+      ConsumerBleStatus.bluetoothUnavailable ||
+      ConsumerBleStatus.permissionRequired =>
+        ConnectionStatus.bluetoothOff,
+      ConsumerBleStatus.connectionFailed ||
+      ConsumerBleStatus.deviceNotSupported =>
+        ConnectionStatus.error,
+      _ => ConnectionStatus.disconnected,
+    };
+    if (ble.connected) {
+      _ref.read(systemProfileProvider.notifier).state = kTunaiOneSystemProfile;
+    }
     state = state.copyWith(
-      connection: ConnectionStatus.disconnected,
-      status: 'READY',
-      deviceName: null,
-      detectedBoard: null,
+      connection: connection,
+      status: ble.message ?? _consumerStatusLabel(ble.status),
+      deviceName: ble.connected ? ble.connectedDeviceName : null,
+      detectedBoard: ble.connected ? DetectedBoard.icp5Adau1701 : null,
+      bleDevices: ble.devices,
+      selectedBleIdentifier: ble.selectedIdentifier,
+      bleStatus: ble.status,
+      clearConnectionIdentity: !ble.connected,
+      clearBleSelection: ble.selectedIdentifier == null && ble.devices.isEmpty,
     );
   }
+
+  String _consumerStatusLabel(ConsumerBleStatus status) => switch (status) {
+        ConsumerBleStatus.disconnected => 'Disconnected',
+        ConsumerBleStatus.bluetoothUnavailable => 'Bluetooth unavailable',
+        ConsumerBleStatus.permissionRequired => 'Permission required',
+        ConsumerBleStatus.scanning => 'Scanning',
+        ConsumerBleStatus.deviceFound => 'Device found',
+        ConsumerBleStatus.connecting => 'Connecting',
+        ConsumerBleStatus.connected => 'Connected',
+        ConsumerBleStatus.connectionFailed => 'Connection failed',
+        ConsumerBleStatus.deviceNotSupported => 'Device not supported',
+      };
 
   // ── 공통 인터페이스 (dsp_controller가 사용) ───────────────────────────────
 
@@ -537,7 +485,7 @@ class ConnectController extends StateNotifier<ConnectState> {
     if (state.mode == ConnectMode.usbi) {
       await connectUsbi();
     } else if (state.mode == ConnectMode.ble && !Platform.isWindows) {
-      await scanAndConnectBle();
+      await connectSelectedBle();
     } else {
       await connectUart();
     }
@@ -564,18 +512,13 @@ class ConnectController extends StateNotifier<ConnectState> {
       // (writeVolumeUsbi 등)를 직접 호출해야 한다 — 아래 testUsbiVolumeWrite
       // 참고. 따라서 DspAdapter를 통한 실시간 슬라이더 조작은 USBi 모드에서
       // 아직 지원하지 않으며, 이는 미구현이 아니라 설계상 별도 경로다.
-      debugPrint('[USBi] 공용 sendBytes 경로 미지원(설계상 별도 경로) — ${bytes.length}바이트 전송 안 됨');
+      debugPrint(
+          '[USBi] 공용 sendBytes 경로 미지원(설계상 별도 경로) — ${bytes.length}바이트 전송 안 됨');
       return false;
     }
     try {
-      if (state.mode == ConnectMode.ble && _bleWriteChar != null) {
-        await _bleWriteChar!.write(
-          Uint8List.fromList(bytes),
-          withoutResponse: true,
-        );
-        await Future.delayed(const Duration(milliseconds: 50));
-        return true;
-      } else if (_port != null) {
+      if (state.mode == ConnectMode.ble) return false;
+      if (_port != null) {
         final written = _port!.write(Uint8List.fromList(bytes), timeout: 500);
         return written == bytes.length;
       }
@@ -585,18 +528,10 @@ class ConnectController extends StateNotifier<ConnectState> {
     return false;
   }
 
-  String _propStr(BluetoothCharacteristic c) => [
-    if (c.properties.read) 'READ',
-    if (c.properties.write) 'WRITE',
-    if (c.properties.writeWithoutResponse) 'WRITE_NO_RSP',
-    if (c.properties.notify) 'NOTIFY',
-    if (c.properties.indicate) 'INDICATE',
-  ].join('|');
-
   @override
   void dispose() {
     _port?.close();
-    _bleDevice?.disconnect();
+    _consumerBle.removeListener(_onConsumerBleChanged);
     _usbiTransport?.close();
     super.dispose();
   }
