@@ -6,12 +6,23 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import 'icp5_serial_driver.dart';
 
+abstract interface class Icp5BluetoothConnectionDiagnostics {
+  String? get selectedUiIdentifier;
+  String? get connectingIdentifier;
+  String? get platformName;
+  String? get advertisedName;
+  int? get lastKnownRssi;
+  List<String> get discoveredServiceUuids;
+  String? get failureStage;
+}
+
 /// Capture-proven ICP5 BLE GATT byte channel.
 ///
 /// This adapter knows only how to move bytes through FFF2/FFF1. ICP5 framing,
 /// handshake, ACK parsing, diagnostics, rollback, and STOP remain owned by the
 /// shared ICP5 session transport.
-class Icp5BluetoothGattDriver implements Icp5SerialDriver {
+class Icp5BluetoothGattDriver
+    implements Icp5SerialDriver, Icp5BluetoothConnectionDiagnostics {
   static const serviceUuid = 'fff0';
   static const txCharacteristicUuid = 'fff2';
   static const rxCharacteristicUuid = 'fff1';
@@ -22,6 +33,29 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
   Icp5BluetoothGattDriver({this.scanTimeout = const Duration(seconds: 10)});
 
   final Map<String, BluetoothDevice> _discoveredDevices = {};
+  final Map<String, Icp5SerialDevice> _discoveredMetadata = {};
+  String? _selectedUiIdentifier;
+  String? _connectingIdentifier;
+  String? _platformName;
+  String? _advertisedName;
+  int? _lastKnownRssi;
+  List<String> _discoveredServiceUuids = const [];
+  String? _failureStage;
+
+  @override
+  String? get selectedUiIdentifier => _selectedUiIdentifier;
+  @override
+  String? get connectingIdentifier => _connectingIdentifier;
+  @override
+  String? get platformName => _platformName;
+  @override
+  String? get advertisedName => _advertisedName;
+  @override
+  int? get lastKnownRssi => _lastKnownRssi;
+  @override
+  List<String> get discoveredServiceUuids => _discoveredServiceUuids;
+  @override
+  String? get failureStage => _failureStage;
 
   @override
   bool get platformSupported =>
@@ -35,6 +69,7 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
   Future<Icp5DiscoveryResult> discover() async {
     const source = discoverySource;
     _discoveredDevices.clear();
+    _discoveredMetadata.clear();
     if (!platformSupported) {
       return const Icp5DiscoveryResult(
           source: source,
@@ -63,13 +98,15 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
         final id = result.device.remoteId.str;
         _discoveredDevices[id] = result.device;
         final name = result.device.advName.trim();
-        return Icp5SerialDevice(
+        final metadata = Icp5SerialDevice(
             portName: id,
             productName: name.isEmpty ? null : name,
             friendlyName: name.isEmpty ? 'Unnamed BLE device' : name,
             instanceId: id,
             rssi: result.rssi,
             enumerationSource: source);
+        _discoveredMetadata[id] = metadata;
+        return metadata;
       }).toList(growable: true)
         ..sort(_compareCandidates);
       return Icp5DiscoveryResult(
@@ -103,15 +140,41 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
 
   @override
   Future<Icp5SerialConnection> open(String portName) async {
+    _selectedUiIdentifier = portName;
+    _connectingIdentifier = null;
+    _platformName = null;
+    _advertisedName = null;
+    _lastKnownRssi = null;
+    _discoveredServiceUuids = const [];
+    _failureStage = 'selected device lookup';
     final device = _discoveredDevices[portName];
     if (device == null) {
-      throw StateError('Selected ICP5 BLE device was not discovered.');
+      throw StateError(
+          'Selected ICP5 BLE identifier is no longer available: $portName.');
     }
+    final connectingId = device.remoteId.str;
+    final metadata = _discoveredMetadata[portName];
+    _connectingIdentifier = connectingId;
+    _platformName = device.platformName;
+    _advertisedName = device.advName;
+    _lastKnownRssi = metadata?.rssi;
+    debugPrint('[ICP5 BLE Connect] selectedUiIdentifier=$portName '
+        'connectingIdentifier=$connectingId platformName=${device.platformName} '
+        'advertisedName=${device.advName} rssi=${metadata?.rssi ?? 'unknown'}');
+    if (!identifiersMatch(portName, connectingId)) {
+      _failureStage = 'identifier validation';
+      throw StateError('BLE identifier mismatch before connect: selected '
+          '$portName, connecting $connectingId. Connection aborted.');
+    }
+    _failureStage = 'connect';
     await device.connect(timeout: const Duration(seconds: 10));
+    _failureStage = 'service discovery';
     final services = await device.discoverServices();
+    _discoveredServiceUuids = List.unmodifiable(
+        services.map((service) => service.uuid.str128.toLowerCase()));
+    debugPrint('[ICP5 BLE Services] ${_discoveredServiceUuids.join(', ')}');
     final service = services
-        .where((candidate) =>
-            candidate.uuid.str128.toLowerCase().contains(serviceUuid))
+        .where((candidate) => isExpectedUuid(candidate.uuid, serviceUuid))
         .firstOrNull;
     if (service == null) {
       await device.disconnect();
@@ -120,9 +183,12 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
     BluetoothCharacteristic? tx;
     BluetoothCharacteristic? rx;
     for (final characteristic in service.characteristics) {
-      final uuid = characteristic.uuid.str128.toLowerCase();
-      if (uuid.contains(txCharacteristicUuid)) tx = characteristic;
-      if (uuid.contains(rxCharacteristicUuid)) rx = characteristic;
+      if (isExpectedUuid(characteristic.uuid, txCharacteristicUuid)) {
+        tx = characteristic;
+      }
+      if (isExpectedUuid(characteristic.uuid, rxCharacteristicUuid)) {
+        rx = characteristic;
+      }
     }
     if (tx == null ||
         !(tx.properties.write || tx.properties.writeWithoutResponse)) {
@@ -136,13 +202,28 @@ class Icp5BluetoothGattDriver implements Icp5SerialDriver {
           'Notify subscription failed: notifiable FFF1 was not found.');
     }
     try {
+      _failureStage = 'notify subscription';
       await rx.setNotifyValue(true);
     } catch (error) {
       await device.disconnect();
       throw StateError('Notify subscription failed for FFF1: $error');
     }
+    _failureStage = null;
     return _Icp5BluetoothGattConnection(device: device, tx: tx, rx: rx);
   }
+
+  @visibleForTesting
+  static bool isExpectedUuid(Guid uuid, String shortUuid) {
+    final normalizedShort = shortUuid.toLowerCase();
+    final normalizedFull = '0000$normalizedShort-0000-1000-8000-00805f9b34fb';
+    final shortest = uuid.str.toLowerCase();
+    final full = uuid.str128.toLowerCase();
+    return shortest == normalizedShort || full == normalizedFull;
+  }
+
+  @visibleForTesting
+  static bool identifiersMatch(String selected, String connecting) =>
+      selected == connecting;
 }
 
 class _Icp5BluetoothGattConnection implements Icp5SerialConnection {

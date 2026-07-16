@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/transport/dsp_transport.dart';
+import '../../../core/transport/icp5_bluetooth_driver.dart';
 import '../../../core/transport/icp5_transports.dart';
 import '../../../core/transport/usbi_dsp_transport.dart';
 import '../../../shared/pro_widgets.dart';
@@ -224,6 +225,10 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     final selected = _icp5Bluetooth.enumeratedPorts
         .where((device) => device.portName == _icp5Bluetooth.selectedPort)
         .firstOrNull;
+    final bleDriver =
+        _icp5Bluetooth.driver is Icp5BluetoothConnectionDiagnostics
+            ? _icp5Bluetooth.driver as Icp5BluetoothConnectionDiagnostics
+            : null;
     return Container(
       key: const Key('icp5_bluetooth_connection_panel'),
       padding: const EdgeInsets.all(10),
@@ -243,12 +248,24 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                 ? 'available'
                 : 'unavailable'),
         _row('Selected device', selected?.friendlyName ?? 'none'),
-        _row('Identifier', selected?.instanceId ?? 'none'),
+        _row('Selected UI identifier',
+            bleDriver?.selectedUiIdentifier ?? selected?.instanceId ?? 'none'),
+        _row('Connecting identifier',
+            bleDriver?.connectingIdentifier ?? 'not connected'),
+        _row('Platform name', bleDriver?.platformName ?? 'not connected'),
+        _row('Advertised name',
+            bleDriver?.advertisedName ?? selected?.friendlyName ?? 'none'),
         _row('RSSI',
             selected?.rssi == null ? 'unknown' : '${selected!.rssi} dBm'),
         _row('Service', 'FFF0'),
         _row('TX', 'FFF2 · Write / Write Without Response'),
         _row('RX', 'FFF1 · Notify'),
+        _row(
+            'Discovered service UUIDs',
+            bleDriver == null || bleDriver.discoveredServiceUuids.isEmpty
+                ? 'none'
+                : bleDriver.discoveredServiceUuids.join(', ')),
+        _row('Exact failure stage', bleDriver?.failureStage ?? 'none'),
         _row('Connection state', _icp5Bluetooth.connectionState.name),
         _row(
             'Handshake',

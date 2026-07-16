@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
+import 'package:tunai_pro/core/transport/icp5_bluetooth_driver.dart';
 import 'package:tunai_pro/core/transport/icp5_frame_codec.dart';
 import 'package:tunai_pro/core/transport/icp5_serial_driver.dart';
 import 'package:tunai_pro/core/transport/icp5_transports.dart';
@@ -68,12 +69,26 @@ class _Connection implements Icp5SerialConnection {
   }
 }
 
-class _Driver implements Icp5SerialDriver {
+class _Driver implements Icp5SerialDriver, Icp5BluetoothConnectionDiagnostics {
   final _Connection connection;
   final String? discoveryError;
   final Completer<void>? discoveryGate;
   int discoverCalls = 0;
   int openCalls = 0;
+  @override
+  String? selectedUiIdentifier;
+  @override
+  String? connectingIdentifier;
+  @override
+  String? platformName;
+  @override
+  String? advertisedName;
+  @override
+  int? lastKnownRssi;
+  @override
+  List<String> discoveredServiceUuids = const [];
+  @override
+  String? failureStage;
 
   _Driver(this.connection, {this.discoveryError, this.discoveryGate});
 
@@ -119,6 +134,12 @@ class _Driver implements Icp5SerialDriver {
   Future<Icp5SerialConnection> open(String portName) async {
     openCalls++;
     expect(portName, device.portName);
+    selectedUiIdentifier = portName;
+    connectingIdentifier = portName;
+    platformName = 'WONDOM ICP5';
+    advertisedName = 'WONDOM ICP5';
+    lastKnownRssi = -42;
+    discoveredServiceUuids = const ['0000fff0-0000-1000-8000-00805f9b34fb'];
     return connection;
   }
 }
@@ -201,6 +222,9 @@ void main() {
     expect(find.text(Icp5FrameCodec.expectedProfile), findsOneWidget);
     expect(connection.writes, [Icp5FrameCodec.identificationRequest]);
     expect(driver.openCalls, 1);
+    expect(driver.discoverCalls, 1);
+    expect(find.text('0000fff0-0000-1000-8000-00805f9b34fb'), findsOneWidget);
+    expect(find.text('ble-wondom'), findsWidgets);
     expect(find.textContaining('No diagnostic command is sent automatically'),
         findsOneWidget);
   });

@@ -181,7 +181,9 @@ class Icp5UsbTransport implements DspTransport {
       'SafeLoad, arbitrary parameters/range, dB mapping, ADAU1466, and Bluetooth remain unproven.';
 
   @override
-  Future<DspTransportResult> open() async {
+  Future<DspTransportResult> open() => _open(discoverFirst: true);
+
+  Future<DspTransportResult> _open({required bool discoverFirst}) async {
     if (_connection != null || _state == DspConnectionState.connected) {
       return _fail(DspTransportFailure.unavailable,
           'ICP5 port is already exclusively owned by this session.');
@@ -190,10 +192,12 @@ class Icp5UsbTransport implements DspTransport {
       return _fail(
           DspTransportFailure.unavailable, 'Transaction already active.');
     }
-    final discovery = await discover();
-    if (discovery.allPorts.isEmpty || _selectedPort == null) {
+    Icp5DiscoveryResult? discovery;
+    if (discoverFirst) discovery = await discover();
+    if (_selectedPort == null ||
+        (discoverFirst && discovery!.allPorts.isEmpty)) {
       return _fail(DspTransportFailure.unavailable,
-          discovery.error ?? 'No enumerated ICP5 USB serial port found.');
+          discovery?.error ?? 'No selected ICP5 device is available.');
     }
     _state = DspConnectionState.connecting;
     try {
@@ -608,4 +612,9 @@ class Icp5BluetoothTransport extends Icp5UsbTransport {
   @override
   String? get missingEvidence =>
       'BLE GATT FFF2 TX / FFF1 Notify and raw ICP5 framing are proven; physical command QA remains pending.';
+
+  /// The BLE scan owns the exact CoreBluetooth object selected by the UI.
+  /// Connecting must never rescan or silently substitute a different device.
+  @override
+  Future<DspTransportResult> open() => _open(discoverFirst: false);
 }

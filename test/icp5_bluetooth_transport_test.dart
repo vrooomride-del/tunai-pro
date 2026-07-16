@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:tunai_pro/core/transport/dsp_transport.dart';
 import 'package:tunai_pro/core/transport/icp5_bluetooth_driver.dart';
 import 'package:tunai_pro/core/transport/icp5_frame_codec.dart';
@@ -65,19 +66,30 @@ class _FakeGattConnection implements Icp5SerialConnection {
 
 class _FakeGattDriver implements Icp5SerialDriver {
   final _FakeGattConnection connection;
+  int discoverCalls = 0;
+  String? openedPort;
   _FakeGattDriver(this.connection);
 
   @override
   bool get platformSupported => true;
 
   @override
-  Future<Icp5DiscoveryResult> discover() async => const Icp5DiscoveryResult(
-      source: 'fake FFF0',
-      allPorts: [Icp5SerialDevice(portName: 'ble-device')],
-      matches: [Icp5SerialDevice(portName: 'ble-device')]);
+  Future<Icp5DiscoveryResult> discover() async {
+    discoverCalls++;
+    return const Icp5DiscoveryResult(source: 'fake FFF0', allPorts: [
+      Icp5SerialDevice(portName: 'ble-device'),
+      Icp5SerialDevice(portName: 'ble-selected')
+    ], matches: [
+      Icp5SerialDevice(portName: 'ble-device'),
+      Icp5SerialDevice(portName: 'ble-selected')
+    ]);
+  }
 
   @override
-  Future<Icp5SerialConnection> open(String portName) async => connection;
+  Future<Icp5SerialConnection> open(String portName) async {
+    openedPort = portName;
+    return connection;
+  }
 }
 
 void main() {
@@ -93,6 +105,60 @@ void main() {
     expect(source, contains('verified after connect'));
   });
 
+  test('short and Bluetooth Base FFF0 UUIDs match exactly', () {
+    expect(
+        Icp5BluetoothGattDriver.isExpectedUuid(Guid('fff0'), 'fff0'), isTrue);
+    expect(
+        Icp5BluetoothGattDriver.isExpectedUuid(
+            Guid('0000fff0-0000-1000-8000-00805f9b34fb'), 'fff0'),
+        isTrue);
+    expect(
+        Icp5BluetoothGattDriver.isExpectedUuid(Guid('fff1'), 'fff0'), isFalse);
+    expect(
+        Icp5BluetoothGattDriver.isExpectedUuid(
+            Guid('1234fff0-1111-2222-3333-444455556666'), 'fff0'),
+        isFalse);
+  });
+
+  test('selected and connecting identifiers must match exactly', () {
+    expect(
+        Icp5BluetoothGattDriver.identifiersMatch('ABC-123', 'ABC-123'), isTrue);
+    expect(Icp5BluetoothGattDriver.identifiersMatch('ABC-123', 'DEF-456'),
+        isFalse);
+    expect(Icp5BluetoothGattDriver.identifiersMatch('ABC-123', 'abc-123'),
+        isFalse);
+  });
+
+  test('BLE open preserves selection and does not rescan', () async {
+    late _FakeGattConnection connection;
+    connection = _FakeGattConnection((connection, call, bytes) {
+      if (call == 1) connection.notify(identityRx);
+    });
+    final driver = _FakeGattDriver(connection);
+    final transport = Icp5BluetoothTransport(
+        driver: driver, readTimeout: const Duration(milliseconds: 50));
+
+    await transport.discover();
+    expect(transport.selectEnumeratedPort('ble-selected'), isTrue);
+    final result = await transport.open();
+
+    expect(result.success, isTrue);
+    expect(driver.discoverCalls, 1);
+    expect(driver.openedPort, 'ble-selected');
+    await transport.close();
+  });
+
+  test('missing exact BLE selection fails closed without substitute', () async {
+    final driver = _FakeGattDriver(_FakeGattConnection((_, __, ___) {}));
+    final transport = Icp5BluetoothTransport(driver: driver);
+
+    final result = await transport.open();
+
+    expect(result.success, isFalse);
+    expect(driver.discoverCalls, 0);
+    expect(driver.openedPort, isNull);
+  });
+
   test('BLE uses unchanged handshake codec and reassembles Notify chunks',
       () async {
     late _FakeGattConnection connection;
@@ -106,6 +172,7 @@ void main() {
         driver: _FakeGattDriver(connection),
         readTimeout: const Duration(milliseconds: 50));
 
+    await transport.discover();
     final result = await transport.open();
 
     expect(result.success, isTrue);
@@ -125,6 +192,7 @@ void main() {
     final transport = Icp5BluetoothTransport(
         driver: _FakeGattDriver(connection),
         readTimeout: const Duration(milliseconds: 50));
+    await transport.discover();
     await transport.open();
 
     final result = await transport.writeCapturedMasterVolume(5.9);
@@ -145,6 +213,7 @@ void main() {
     final transport = Icp5BluetoothTransport(
         driver: _FakeGattDriver(connection),
         readTimeout: const Duration(milliseconds: 10));
+    await transport.discover();
     await transport.open();
 
     final result = await transport.writeCapturedMasterVolume(5.9);
@@ -166,6 +235,7 @@ void main() {
         driver: _FakeGattDriver(connection),
         readTimeout: const Duration(milliseconds: 10),
         onDspWriteStop: warnings.add);
+    await transport.discover();
     await transport.open();
 
     final outcome = await transport.runTestWithGuardedRestore();
