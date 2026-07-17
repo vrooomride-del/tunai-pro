@@ -50,6 +50,8 @@ class Icp5ProtocolEvidence {
   final Map<int, List<int>>? filterCutoffPairsByChannel;
   final int? peqBandGainParameterId;
   final Map<int, List<double>>? peqBand1GainPairsByChannel;
+  final List<int>? peqReadRequest;
+  final String? peqReadResponseFormat;
 
   const Icp5ProtocolEvidence({
     this.usbVendorId,
@@ -103,7 +105,12 @@ class Icp5ProtocolEvidence {
     this.filterCutoffPairsByChannel,
     this.peqBandGainParameterId,
     this.peqBand1GainPairsByChannel,
+    this.peqReadRequest,
+    this.peqReadResponseFormat,
   });
+
+  bool get hasPeqReadEvidence =>
+      peqReadRequest != null && peqReadResponseFormat != null;
 
   bool get isProtocolProven =>
       usbVendorId != null &&
