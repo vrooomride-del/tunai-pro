@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'adau1701_ch0_band0_read_service.dart';
 import 'dsp_command.dart';
 import 'dsp_transport.dart';
 import 'icp5_frame_codec.dart';
@@ -95,7 +96,7 @@ class Icp5PhaseCOutcome {
       {required this.test, this.restore, required this.stopActivated});
 }
 
-class Icp5UsbTransport implements DspTransport {
+class Icp5UsbTransport implements DspTransport, Adau1701RawReadTransport {
   final Icp5SerialDriver driver;
   final Duration readTimeout;
   final Duration writeTimeout;
@@ -144,7 +145,11 @@ class Icp5UsbTransport implements DspTransport {
   String get discoverySource => _discoverySource;
   String? get discoveryError => _discoveryError;
   String? get selectedPort => _selectedPort;
+  @override
+  bool get isConnected => _state == DspConnectionState.connected;
+  @override
   bool get handshakeComplete => _handshakeComplete;
+  @override
   String? get detectedProfile => _profile;
   bool get stopped => _stopped;
   bool get busy => _busy;
@@ -256,6 +261,7 @@ class Icp5UsbTransport implements DspTransport {
 
   /// Reads the capture-proven raw 0x2202 state block without decoding fields.
   /// This transaction sends only 0x1A read requests and has no write fallback.
+  @override
   Future<RawDspStateSnapshot> readRawDspState() async {
     if (!_handshakeComplete ||
         _state != DspConnectionState.connected ||
@@ -274,7 +280,8 @@ class Icp5UsbTransport implements DspTransport {
         if (response == null) throw StateError('No ICP5 read response.');
         return response;
       });
-      return await reader.read(deviceId: _selectedPort!);
+      // Use validated firmware identity, not the COM/BLE transport identifier.
+      return await reader.read(deviceId: _profile!);
     } finally {
       _busy = false;
     }
