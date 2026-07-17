@@ -37,6 +37,46 @@ const identityRx = <int>[
   0xD9,
 ];
 const goodAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x10, 0, 0x4D];
+
+// Builds a single ICP5 raw-state page frame (blockId=0x2202) from a slice of
+// the full 513-byte payload.  Page lengths are [0xA1, 0xA1, 0xA1, 0x3A].
+List<int> _buildRawStatePageFrame(int pageIndex, List<int> fullPayload) {
+  const sliceOffsets = [0, 154, 308, 462];
+  const payloadLengths = [154, 154, 154, 51];
+  const declaredLengths = [0xA1, 0xA1, 0xA1, 0x3A];
+  final slice = fullPayload.sublist(
+    sliceOffsets[pageIndex],
+    sliceOffsets[pageIndex] + payloadLengths[pageIndex],
+  );
+  final frame = [
+    0x55,
+    declaredLengths[pageIndex],
+    0xE0,
+    0x00,
+    0x00,
+    0x00,
+    0x22,
+    0x02,
+    ...slice,
+  ];
+  final checksum = frame.fold<int>(0, (s, b) => (s + b) & 0xFF);
+  return [...frame, checksum];
+}
+
+// Minimal valid 513-byte ADAU1701 raw state payload (Ch0 Band0 decoded).
+// freq=1000 Hz, gain=0 dB, Q=1.0, property08State=0.
+List<int> _validRawPayload() {
+  final p = List<int>.filled(513, 0x00);
+  p[19] = 0xE8; // freq low (1000 & 0xFF)
+  p[20] = 0x03; // freq high (1000 >> 8)
+  p[21] = 0x00; // gain: 0 dB × 10
+  p[23] = 0x0A; // Q: 1.0 × 10
+  p[24] = 0x00; // property08State
+  // Unique page markers so the collector does not reject duplicate frames.
+  p[154] = 0x01;
+  p[308] = 0x02;
+  return p;
+}
 const goodMuteAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x12, 0, 0x4F];
 const goodDacGainAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x14, 0, 0x51];
 
@@ -520,10 +560,15 @@ void main() {
   testWidgets('PEQ index 1 is operational and confirmed state is ACK-gated',
       (tester) async {
     const peqAck = [0x55, 7, 0xE1, 0, 0, 0, 0x18, 0, 0x55];
+    final payload = _validRawPayload();
+    final rawPages = List.generate(4, (i) => _buildRawStatePageFrame(i, payload));
     late FakeConnection connection;
     connection = FakeConnection((connection, call, bytes) {
       if (call == 1) connection.emit(identityRx);
-      if (call == 2) connection.emit(peqAck);
+      // calls 2-5: raw state pages emitted during preflight
+      if (call >= 2 && call <= 5) connection.emit(rawPages[call - 2]);
+      // call 6: PEQ write ACK
+      if (call == 6) connection.emit(peqAck);
     });
     final transport = Icp5UsbTransport(driver: FakeDriver(connection));
     await transport.open();
@@ -536,6 +581,12 @@ void main() {
                     icp5UsbTransport: transport)))));
     await tester.tap(find.text('ICP5 USB'));
     await tester.pump();
+    // Run the preflight gate before the PEQ card is unblocked.
+    final preflightButton = find.byKey(const Key('run_preflight_button'));
+    await tester.ensureVisible(preflightButton);
+    await tester.tap(preflightButton);
+    await tester.pumpAndSettle();
+    // Preflight passed; PEQ card is now unblocked.
     final button = find.byKey(const Key('icp5_phase_c_peq1_test'));
     await tester.ensureVisible(button);
     await tester.tap(button);

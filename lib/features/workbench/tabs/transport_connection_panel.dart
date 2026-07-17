@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import '../../../core/pro_usbi_native_backend.dart';
+import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
+import '../../../core/transport/adau1701_deployment_preflight.dart';
+import '../../../core/transport/adau1701_peq_deployment_gate.dart';
 import '../../../core/transport/dsp_transport.dart';
 import '../../../core/transport/icp5_bluetooth_driver.dart';
 import '../../../core/transport/icp5_transports.dart';
@@ -95,6 +98,10 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   String? _discoveryError;
   Icp5BluetoothUiState _bluetoothState = Icp5BluetoothUiState.disconnected;
   String? _bluetoothError;
+  // Preflight gate — holds last preflight result and gates PEQ writes.
+  late final Adau1701PeqDeploymentGate _preflightGate;
+  Adau1701PreflightResult? _preflightResult;
+  bool _preflightWorking = false;
 
   @override
   void initState() {
@@ -103,6 +110,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         Icp5UsbTransport(onDspWriteStop: widget.onDspWriteStop);
     _icp5Bluetooth = widget.icp5BluetoothTransport ??
         Icp5BluetoothTransport(onDspWriteStop: widget.onDspWriteStop);
+    _preflightGate = Adau1701PeqDeploymentGate(transport: _icp5Usb);
   }
 
   @override
@@ -846,8 +854,9 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         const SizedBox(height: 12),
         Text('PEQ Band 1 Gain diagnostics',
             style: proLabel(size: 9, spacing: 0.8)),
+        _preflightPanel(blocked: blocked),
         _phaseCCard(
-            blocked: blocked,
+            blocked: blocked || !(_preflightResult?.passed == true),
             keyName: 'peq0',
             title: 'PEQ Band 1 Gain index 0 · -1.0/-0.9 dB',
             parameter: '0x00000018',
@@ -859,7 +868,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             onRestore: () => _runPhaseCRestore(
                 'peq0', -1.0, () => _icp5Usb.restorePeqBand1Gain(0))),
         _phaseCCard(
-            blocked: blocked,
+            blocked: blocked || !(_preflightResult?.passed == true),
             keyName: 'peq1',
             title: 'PEQ Band 1 Gain index 1 · 4.1/4.2 dB',
             parameter: '0x00000018',
@@ -871,7 +880,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             onRestore: () => _runPhaseCRestore(
                 'peq1', 4.1, () => _icp5Usb.restorePeqBand1Gain(1))),
         _phaseCCard(
-            blocked: blocked,
+            blocked: blocked || !(_preflightResult?.passed == true),
             keyName: 'peq2',
             title: 'PEQ Band 1 Gain index 2 · -2.0/-1.0 dB',
             parameter: '0x00000018',
@@ -883,7 +892,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             onRestore: () => _runPhaseCRestore(
                 'peq2', -2.0, () => _icp5Usb.restorePeqBand1Gain(2))),
         _phaseCCard(
-            blocked: blocked,
+            blocked: blocked || !(_preflightResult?.passed == true),
             keyName: 'peq3',
             title: 'PEQ Band 1 Gain index 3 · 2.0/2.1 dB',
             parameter: '0x00000018',
@@ -1063,7 +1072,12 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   Future<void> _closeIcp5() async {
     setState(() => _working = true);
     await _icp5Usb.close();
-    if (mounted) setState(() => _working = false);
+    if (!mounted) return;
+    _preflightGate.invalidate();
+    setState(() {
+      _working = false;
+      _preflightResult = null;
+    });
   }
 
   Future<void> _test59([Icp5UsbTransport? selectedTransport]) async {
@@ -1155,6 +1169,18 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     });
   }
 
+  Future<void> _runPreflight() async {
+    setState(() => _preflightWorking = true);
+    // PEQ Band 1 Gain writes modify only the gain field.
+    const writePlan = Adau1701PeqWriteFields(gain: true);
+    final result = await _preflightGate.runPreflight(writePlan);
+    if (!mounted) return;
+    setState(() {
+      _preflightResult = result;
+      _preflightWorking = false;
+    });
+  }
+
   Future<void> _runPhaseCTest(String key, num testValue, num restoreValue,
       Future<Icp5PhaseCOutcome> Function() operation) async {
     setState(() => _working = true);
@@ -1190,6 +1216,57 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
               : 'restore blocked before transmit';
       if (result.success) _phaseCConfirmed[key] = restoreValue;
     });
+  }
+
+  Widget _preflightPanel({required bool blocked}) {
+    final result = _preflightResult;
+    final diag =
+        result == null ? null : Adau1701PreflightDiagnostics.fromResult(result);
+    return Container(
+      key: const Key('adau1701_preflight_panel'),
+      margin: const EdgeInsets.only(top: 7, bottom: 4),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: diag == null
+              ? kProBorder
+              : diag.passed
+                  ? Colors.green.withValues(alpha: 0.6)
+                  : Colors.red.withValues(alpha: 0.6),
+        ),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('ADAU1701 DEPLOYMENT PREFLIGHT',
+            style: proLabel(size: 9, spacing: 0.5)),
+        const SizedBox(height: 4),
+        if (diag != null) ...[
+          _row('Status', diag.passed ? 'PASSED' : 'BLOCKED — ${diag.status.name}'),
+          _row('Message', diag.message),
+          if (diag.dspIdentity != null) _row('DSP identity', diag.dspIdentity!),
+          if (diag.snapshotCapturedAt != null)
+            _row('Snapshot captured', diag.snapshotCapturedAt!.toIso8601String()),
+          if (diag.frequencyHz != null)
+            _row('Decoded frequencyHz', '${diag.frequencyHz} Hz'),
+          if (diag.gainDb != null) _row('Decoded gainDb', '${diag.gainDb} dB'),
+          if (diag.q != null) _row('Decoded Q', '${diag.q}'),
+          if (diag.property08State != null)
+            _row('property08State', '${diag.property08State}'),
+          if (diag.coverageIsCovered != null)
+            _row('Coverage', diag.coverageIsCovered! ? 'covered' : 'incomplete'),
+          if (diag.missingFields.isNotEmpty)
+            _row('Missing fields', diag.missingFields.join(', ')),
+        ] else
+          Text('No preflight result — run preflight before writing.',
+              style: proSubtitle(size: 9)),
+        const SizedBox(height: 6),
+        FilledButton(
+          key: const Key('run_preflight_button'),
+          onPressed: blocked || _preflightWorking ? null : _runPreflight,
+          child: Text(_preflightWorking ? 'Running preflight…' : 'RUN PREFLIGHT'),
+        ),
+      ]),
+    );
   }
 
   String _selectorLabel(DspTransportIdentity identity) => switch (identity) {
