@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'dsp_command.dart';
 import 'dsp_transport.dart';
 import 'icp5_frame_codec.dart';
+import 'icp5_raw_state_read.dart';
 import 'icp5_bluetooth_driver.dart';
 import 'icp5_serial_driver.dart';
 
@@ -172,13 +173,13 @@ class Icp5UsbTransport implements DspTransport {
       oneWordSafeLoad: false,
       fiveWordSafeLoad: false,
       ackSupport: true,
-      readbackSupport: false,
+      readbackSupport: true,
       reconnectSupport: true,
       maximumPayloadSize: 12,
       boardDetectionSupport: true);
   @override
   String? get missingEvidence =>
-      'SafeLoad, arbitrary parameters/range, dB mapping, ADAU1466, and Bluetooth remain unproven.';
+      'Raw 0x2202 state read is proven; PEQ offsets, SafeLoad, arbitrary parameters/range, dB mapping, ADAU1466, and Bluetooth remain unproven.';
 
   @override
   Future<DspTransportResult> open() => _open(discoverFirst: true);
@@ -252,6 +253,32 @@ class Icp5UsbTransport implements DspTransport {
   Future<DspTransportResult> execute(DspCommand command) async => _fail(
       DspTransportFailure.unsupportedCapability,
       'Arbitrary ICP5 commands are blocked; use the guarded diagnostic.');
+
+  /// Reads the capture-proven raw 0x2202 state block without decoding fields.
+  /// This transaction sends only 0x1A read requests and has no write fallback.
+  Future<RawDspStateSnapshot> readRawDspState() async {
+    if (!_handshakeComplete ||
+        _state != DspConnectionState.connected ||
+        _profile != Icp5FrameCodec.expectedProfile ||
+        _selectedPort == null) {
+      throw StateError('Successful ADAU1701 identity handshake is required.');
+    }
+    if (_busy) throw StateError('Another ICP5 transaction is active.');
+    _busy = true;
+    try {
+      final reader = Icp5RawStateReader(exchange: (request) async {
+        final response = await _exchange(
+          request,
+          (frame) => frame.length >= 3 && frame[0] == 0x55 && frame[2] == 0xE0,
+        );
+        if (response == null) throw StateError('No ICP5 read response.');
+        return response;
+      });
+      return await reader.read(deviceId: _selectedPort!);
+    } finally {
+      _busy = false;
+    }
+  }
 
   Future<Icp5MasterVolumeResult> writeCapturedMasterVolume(double value) async {
     if (_stopped) return _volumeFailure('Shared DSP STOP is active.');
