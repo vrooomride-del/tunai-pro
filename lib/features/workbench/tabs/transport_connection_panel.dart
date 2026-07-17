@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
 import '../../../core/transport/adau1701_deployment_preflight.dart';
+import '../../../core/transport/adau1701_deployment_report.dart';
 import '../../../core/transport/adau1701_peq_deployment_gate.dart';
 import '../../../core/transport/dsp_transport.dart';
 import '../../../core/transport/icp5_bluetooth_driver.dart';
@@ -102,6 +103,8 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   late final Adau1701PeqDeploymentGate _preflightGate;
   Adau1701PreflightResult? _preflightResult;
   bool _preflightWorking = false;
+  // Evidence report — populated after every preflight-gated write attempt.
+  Adau1701DeploymentReport? _deploymentReport;
 
   @override
   void initState() {
@@ -855,6 +858,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         Text('PEQ Band 1 Gain diagnostics',
             style: proLabel(size: 9, spacing: 0.8)),
         _preflightPanel(blocked: blocked),
+        _deploymentReportPanel(),
         _phaseCCard(
             blocked: blocked || !(_preflightResult?.passed == true),
             keyName: 'peq0',
@@ -863,7 +867,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             channelIndex: 0,
             testLabel: 'TEST -0.9',
             restoreLabel: 'RESTORE -1.0',
-            onTest: () => _runPhaseCTest(
+            onTest: () => _runAdau1701PhaseCTest(
                 'peq0', -0.9, -1.0, () => _icp5Usb.runPeqBand1GainTest(0)),
             onRestore: () => _runPhaseCRestore(
                 'peq0', -1.0, () => _icp5Usb.restorePeqBand1Gain(0))),
@@ -875,7 +879,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             channelIndex: 1,
             testLabel: 'TEST 4.2 dB',
             restoreLabel: 'RESTORE 4.1 dB',
-            onTest: () => _runPhaseCTest(
+            onTest: () => _runAdau1701PhaseCTest(
                 'peq1', 4.2, 4.1, () => _icp5Usb.runPeqBand1GainTest(1)),
             onRestore: () => _runPhaseCRestore(
                 'peq1', 4.1, () => _icp5Usb.restorePeqBand1Gain(1))),
@@ -887,7 +891,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             channelIndex: 2,
             testLabel: 'TEST -1.0',
             restoreLabel: 'RESTORE -2.0',
-            onTest: () => _runPhaseCTest(
+            onTest: () => _runAdau1701PhaseCTest(
                 'peq2', -1.0, -2.0, () => _icp5Usb.runPeqBand1GainTest(2)),
             onRestore: () => _runPhaseCRestore(
                 'peq2', -2.0, () => _icp5Usb.restorePeqBand1Gain(2))),
@@ -899,7 +903,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             channelIndex: 3,
             testLabel: 'TEST 2.1 dB',
             restoreLabel: 'RESTORE 2.0 dB',
-            onTest: () => _runPhaseCTest(
+            onTest: () => _runAdau1701PhaseCTest(
                 'peq3', 2.1, 2.0, () => _icp5Usb.runPeqBand1GainTest(3)),
             onRestore: () => _runPhaseCRestore(
                 'peq3', 2.0, () => _icp5Usb.restorePeqBand1Gain(3))),
@@ -1077,6 +1081,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     setState(() {
       _working = false;
       _preflightResult = null;
+      _deploymentReport = null;
     });
   }
 
@@ -1218,6 +1223,39 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     });
   }
 
+  /// Wrapper for the 4 preflight-gated PEQ Band 1 Gain write cards.
+  /// Runs the standard phase-C flow and then records an evidence report.
+  Future<void> _runAdau1701PhaseCTest(String key, num testValue,
+      num restoreValue, Future<Icp5PhaseCOutcome> Function() operation) async {
+    // Snapshot preflight context before the write so the report is consistent.
+    final preflight = _preflightResult!;
+    final transportId = _icp5Usb.selectedPort;
+    final attemptedAt = DateTime.now();
+    setState(() => _working = true);
+    final outcome = await operation();
+    if (!mounted) return;
+    final report = Adau1701DeploymentReport.fromAttempt(
+      preflight: preflight,
+      transportIdentity: transportId,
+      outcome: outcome,
+      attemptedAt: attemptedAt,
+    );
+    setState(() {
+      _working = false;
+      _deploymentReport = report;
+      _phaseCLast[key] = outcome.restore ?? outcome.test;
+      _phaseCRollback[key] = outcome.restore == null
+          ? 'not required'
+          : outcome.restore!.success
+              ? 'RESTORE PASS_ACK'
+              : 'RESTORE FAILED · STOP';
+      if (outcome.test.success) _phaseCConfirmed[key] = testValue;
+      if (!outcome.test.success && outcome.restore?.success == true) {
+        _phaseCConfirmed[key] = restoreValue;
+      }
+    });
+  }
+
   Widget _preflightPanel({required bool blocked}) {
     final result = _preflightResult;
     final diag =
@@ -1265,6 +1303,54 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           onPressed: blocked || _preflightWorking ? null : _runPreflight,
           child: Text(_preflightWorking ? 'Running preflight…' : 'RUN PREFLIGHT'),
         ),
+      ]),
+    );
+  }
+
+  Widget _deploymentReportPanel() {
+    final r = _deploymentReport;
+    if (r == null) return const SizedBox.shrink();
+    final borderColor = r.deploymentAllowed
+        ? r.deploymentSucceeded
+            ? Colors.green.withValues(alpha: 0.6)
+            : Colors.orange.withValues(alpha: 0.6)
+        : Colors.red.withValues(alpha: 0.6);
+    return Container(
+      key: const Key('adau1701_deployment_report_panel'),
+      margin: const EdgeInsets.only(top: 4, bottom: 4),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        border: Border.all(color: borderColor),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('ADAU1701 DEPLOYMENT REPORT',
+            style: proLabel(size: 9, spacing: 0.5)),
+        const SizedBox(height: 4),
+        _row('Attempted at', r.attemptedAt.toIso8601String()),
+        if (r.dspIdentity != null) _row('DSP identity', r.dspIdentity!),
+        if (r.transportIdentity != null)
+          _row('Transport identity', r.transportIdentity!),
+        if (r.snapshotCapturedAt != null)
+          _row('Snapshot captured', r.snapshotCapturedAt!.toIso8601String()),
+        _row('Original state available', r.originalStateAvailable ? 'yes' : 'no'),
+        if (r.coverageResult != null)
+          _row('Coverage', r.coverageResult! ? 'covered' : 'incomplete'),
+        _row('Preflight status', r.preflightStatus.name),
+        if (r.preflightFailureReason != null)
+          _row('Preflight failure reason', r.preflightFailureReason!),
+        _row('Deployment allowed', r.deploymentAllowed ? 'yes' : 'no'),
+        if (r.deploymentResult != null) ...[
+          _row('Deployment result',
+              r.deploymentResult!.success ? 'PASS_ACK' : 'FAILED'),
+          _row('Deployment message', r.deploymentResult!.message),
+        ],
+        if (r.rollbackResult != null) ...[
+          _row('Rollback result',
+              r.rollbackResult!.success ? 'RESTORE PASS_ACK' : 'RESTORE FAILED'),
+          _row('Rollback message', r.rollbackResult!.message),
+        ] else
+          _row('Rollback', 'not required'),
       ]),
     );
   }
