@@ -4,22 +4,36 @@ import 'package:flutter/material.dart';
 
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_crossover_response.dart';
+import '../../../core/pro_phase_response.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
 
-/// One driver's crossover state for the XO response graph.
+/// One driver's crossover + phase state for the XO response graph.
 class XoGraphChannel {
   final String label;
   final DriverRole role;
   final CrossoverChannelState channel;
   final bool selected;
 
+  /// Per-driver alignment delay (ms) and static phase offset (deg) from the
+  /// project's channel-control state. Drive the phase-simulation panel.
+  final double delayMs;
+  final double phaseOffsetDeg;
+
   const XoGraphChannel({
     required this.label,
     required this.role,
     required this.channel,
     this.selected = false,
+    this.delayMs = 0.0,
+    this.phaseOffsetDeg = 0.0,
   });
+
+  XoPhaseDriver get phaseDriver => XoPhaseDriver(
+        channel: channel,
+        delayMs: delayMs,
+        phaseOffsetDeg: phaseOffsetDeg,
+      );
 }
 
 /// Crossover response graph: per-driver magnitude curves + power-summed curve
@@ -34,7 +48,7 @@ class ProCrossoverResponseGraph extends StatelessWidget {
   const ProCrossoverResponseGraph({
     super.key,
     required this.channels,
-    this.height = 240,
+    this.height = 300,
   });
 
   @override
@@ -51,25 +65,22 @@ class ProCrossoverResponseGraph extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text('MAGNITUDE (dB)', style: proSubtitle(size: 8)),
           Expanded(
+            flex: 3,
             child: CustomPaint(
               size: Size.infinite,
               painter: _XoResponsePainter(channels: channels),
             ),
           ),
-          // Phase-preview placeholder strip.
-          const SizedBox(height: 4),
-          Container(
-            height: 22,
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: kProSurface,
-              border: Border.all(color: kProBorder),
-              borderRadius: BorderRadius.circular(3),
+          const SizedBox(height: 6),
+          Text('PHASE (°) — simulation preview', style: proSubtitle(size: 8)),
+          Expanded(
+            flex: 2,
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: _XoPhasePainter(channels: channels),
             ),
-            alignment: Alignment.center,
-            child: Text('PHASE PREVIEW — coming soon',
-                style: proSubtitle(size: 8)),
           ),
         ],
       ),
@@ -234,4 +245,107 @@ class _XoResponsePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_XoResponsePainter old) => true;
+}
+
+/// Phase-simulation panel: per-driver phase curves + complex-summed phase,
+/// wrapped −180..+180°, on the same log 20 Hz–20 kHz axis.
+class _XoPhasePainter extends CustomPainter {
+  final List<XoGraphChannel> channels;
+
+  static const double _degMax = 180;
+  static const double _degMin = -180;
+  static const _freqGrid = <double>[20, 100, 1000, 10000, 20000];
+  static const _degGrid = <double>[180, 90, 0, -90, -180];
+  static const double _leftPad = 28;
+  static const double _bottomPad = 12;
+
+  _XoPhasePainter({required this.channels});
+
+  double _x(double freq, Size size) {
+    final plotW = size.width - _leftPad;
+    final t = (math.log(freq) - math.log(CrossoverResponse.minHz)) /
+        (math.log(CrossoverResponse.maxHz) - math.log(CrossoverResponse.minHz));
+    return _leftPad + t.clamp(0.0, 1.0) * plotW;
+  }
+
+  double _y(double deg, Size size) {
+    final plotH = size.height - _bottomPad;
+    final t = (deg - _degMin) / (_degMax - _degMin);
+    return plotH - t.clamp(0.0, 1.0) * plotH;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = kProBorder
+      ..strokeWidth = 0.5;
+    final zero = Paint()
+      ..color = Colors.white38
+      ..strokeWidth = 1.0;
+    for (final f in _freqGrid) {
+      final x = _x(f, size);
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height - _bottomPad), grid);
+    }
+    for (final d in _degGrid) {
+      final y = _y(d, size);
+      canvas.drawLine(Offset(_leftPad, y), Offset(size.width, y),
+          d == 0 ? zero : grid);
+      _label(canvas, '${d > 0 ? '+' : ''}${d.toInt()}', Offset(0, y - 5));
+    }
+
+    if (channels.isEmpty) return;
+    final points = CrossoverResponse.logFrequencyPoints(count: 200);
+
+    // Per-driver phase (wrapped) — split into segments to avoid drawing the
+    // vertical line across a −180/+180 wrap.
+    for (final ch in channels) {
+      final curve = CrossoverPhase.driverPhaseCurve(
+        channel: ch.channel,
+        delayMs: ch.delayMs,
+        phaseOffsetDeg: ch.phaseOffsetDeg,
+        freqs: points,
+      );
+      _drawWrapped(canvas, size, points, curve, _roleColor(ch.role),
+          strokeWidth: ch.selected ? 1.8 : 1.1);
+    }
+
+    // Complex-summed phase.
+    final summed = CrossoverPhase.summedPhaseCurve(
+      drivers: [for (final ch in channels) ch.phaseDriver],
+      freqs: points,
+    );
+    _drawWrapped(canvas, size, points, summed, Colors.white, strokeWidth: 1.6);
+  }
+
+  void _drawWrapped(Canvas canvas, Size size, List<double> freqs,
+      List<double> deg, Color color,
+      {required double strokeWidth}) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round;
+    Offset? prev;
+    for (var i = 0; i < freqs.length; i++) {
+      final p = Offset(_x(freqs[i], size), _y(deg[i], size));
+      // Break the line when the wrapped phase jumps more than 180°.
+      if (prev != null && (deg[i] - deg[i - 1]).abs() <= 180) {
+        canvas.drawLine(prev, p, paint);
+      }
+      prev = p;
+    }
+  }
+
+  void _label(Canvas canvas, String text, Offset at) {
+    final tp = TextPainter(
+      text: TextSpan(
+          text: text,
+          style: const TextStyle(color: Colors.white38, fontSize: 8)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, at);
+  }
+
+  @override
+  bool shouldRepaint(_XoPhasePainter old) => true;
 }

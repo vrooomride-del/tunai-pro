@@ -38,16 +38,38 @@ void main() {
     await tester
         .pumpWidget(_wrap(const ProCrossoverResponseGraph(channels: [])));
     expect(find.byType(ProCrossoverResponseGraph), findsOneWidget);
-    expect(find.text('PHASE PREVIEW — coming soon'), findsOneWidget);
+    // Magnitude + phase panels both present.
+    expect(find.text('MAGNITUDE (dB)'), findsOneWidget);
+    expect(find.textContaining('PHASE (°)'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('renders woofer + tweeter (+ summed) without error',
+  testWidgets('renders woofer + tweeter (+ summed) magnitude and phase',
       (tester) async {
     await tester.pumpWidget(_wrap(
         ProCrossoverResponseGraph(channels: [_woofer(), _tweeter()])));
     expect(find.byType(ProCrossoverResponseGraph), findsOneWidget);
     expect(find.byType(CustomPaint), findsWidgets);
+    expect(find.textContaining('PHASE (°)'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('renders with a per-driver delay applied (phase sim)',
+      (tester) async {
+    final delayedWoofer = XoGraphChannel(
+      label: 'Woofer',
+      role: DriverRole.woofer,
+      delayMs: 0.5,
+      channel: const CrossoverChannelState(channelId: 'wf').copyWith(
+        lowPass: const CrossoverFilter(
+            side: FilterSide.lowPass,
+            type: CrossoverFilterType.linkwitzRiley,
+            slope: CrossoverSlope.db24,
+            frequencyHz: 2500),
+      ),
+    );
+    await tester.pumpWidget(_wrap(
+        ProCrossoverResponseGraph(channels: [delayedWoofer, _tweeter()])));
     expect(tester.takeException(), isNull);
   });
 

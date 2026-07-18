@@ -183,15 +183,23 @@ class _XoTabState extends ConsumerState<XoTab> {
             ProCrossoverResponseGraph(
               channels: [
                 for (final d in drivers)
-                  XoGraphChannel(
-                    label: d.name,
-                    role: d.role,
-                    channel: tuning.crossoverChannels.firstWhere(
+                  () {
+                    final ctrl = tuning.channelControls.firstWhere(
                       (c) => c.channelId == d.id,
-                      orElse: () => CrossoverChannelState.empty(d.id),
-                    ),
-                    selected: d.id == selectedId,
-                  ),
+                      orElse: () => ChannelControlState(channelId: d.id),
+                    );
+                    return XoGraphChannel(
+                      label: d.name,
+                      role: d.role,
+                      channel: tuning.crossoverChannels.firstWhere(
+                        (c) => c.channelId == d.id,
+                        orElse: () => CrossoverChannelState.empty(d.id),
+                      ),
+                      selected: d.id == selectedId,
+                      delayMs: ctrl.delayMs,
+                      phaseOffsetDeg: ctrl.phaseOffsetDeg,
+                    );
+                  }(),
               ],
             ),
 
