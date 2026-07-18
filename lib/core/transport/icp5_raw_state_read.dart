@@ -168,6 +168,18 @@ class Icp5RawStateReader {
       : clock = clock ?? DateTime.now;
 
   Future<RawDspStateSnapshot> read({required String deviceId}) async {
+    // Read the 0x2201 state-header descriptor before the 0x2202 pages, exactly
+    // as the capture-proven device conversation does. The header read re-arms
+    // the firmware's multi-page read pointer; without it, only the first read
+    // after handshake returns pages and every subsequent read on the same
+    // connection stalls. It is therefore required before EVERY multi-page read.
+    // The response is validated (envelope + 0x2201 block + checksum) but its
+    // payload is a descriptor and is not part of the 513-byte state.
+    final header = await exchange(Icp5ReadRequestBuilder.stateHeader());
+    Icp5ReadResponseValidator.parse(
+      header,
+      expectedBlockId: Icp5ReadRequestBuilder.stateHeaderBlockId,
+    );
     final collector = Icp5RawStateCollector();
     for (var page = 0; page < 4; page++) {
       final response = await exchange(Icp5ReadRequestBuilder.rawState());

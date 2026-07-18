@@ -57,14 +57,22 @@ void main() {
     expect(parsed.payload, [1, 2, 0, 0]);
   });
 
-  test('assembles four pages in arrival order into 513 raw bytes', () async {
+  test('reads the 0x2201 header, then assembles four pages into 513 raw bytes',
+      () async {
     final payloads = <List<int>>[
       List.generate(154, (index) => index & 0xFF),
       List.generate(154, (index) => (index + 40) & 0xFF),
       List.generate(154, (index) => (index + 80) & 0xFF),
       List.generate(51, (index) => (index + 120) & 0xFF),
     ];
+    // The header exchange comes first (0x2201), followed by the four pages.
+    final headerFrame = responseFrame(
+      declaredLength: 0x0B,
+      blockId: 0x2201,
+      payload: <int>[0x01, 0x02, 0, 0],
+    );
     final frames = <List<int>>[
+      headerFrame,
       responseFrame(declaredLength: 0xA1, payload: payloads[0]),
       responseFrame(declaredLength: 0xA1, payload: payloads[1]),
       responseFrame(declaredLength: 0xA1, payload: payloads[2]),
@@ -82,7 +90,10 @@ void main() {
 
     final snapshot = await reader.read(deviceId: 'ICP5-TEST');
 
-    expect(requests, List.filled(4, Icp5ReadRequestBuilder.rawState()));
+    expect(requests, <List<int>>[
+      Icp5ReadRequestBuilder.stateHeader(),
+      ...List.filled(4, Icp5ReadRequestBuilder.rawState()),
+    ]);
     expect(snapshot.deviceId, 'ICP5-TEST');
     expect(snapshot.timestamp, DateTime.utc(2026, 7, 17, 12));
     expect(snapshot.blockId, 0x2202);

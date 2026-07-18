@@ -36,6 +36,13 @@ const _identityFrame = <int>[
   0xD9,
 ];
 
+// Capture-proven 0x2201 state-header response (descriptor read before pages).
+final _stateHeaderFrame = <int>[
+  ...[0x55, 0x0B, 0xE0, 0, 0, 0, 0x22, 0x01, 0x01, 0x02, 0, 0],
+  Icp5FrameCodec.checksum(
+      const [0x55, 0x0B, 0xE0, 0, 0, 0, 0x22, 0x01, 0x01, 0x02, 0, 0]),
+];
+
 // Build a valid 0x2202 page frame of the given declared length with payload.
 List<int> _pageFrame(int declaredLength, List<int> payload) {
   final frame = <int>[
@@ -75,9 +82,12 @@ class _FakeConnection implements Icp5SerialConnection {
     // Write 1: identity request → emit identity frame
     if (_writeCount == 1) {
       _controller.add(_identityFrame);
+    } else if (_writeCount == 2) {
+      // Write 2: 0x2201 state-header request → emit header descriptor
+      _controller.add(_stateHeaderFrame);
     } else {
-      // Writes 2..5: raw state page requests
-      final pageIndex = _writeCount - 2;
+      // Writes 3..6: raw state page requests
+      final pageIndex = _writeCount - 3;
       if (pageIndex < rawPages.length) {
         _controller.add(rawPages[pageIndex]);
       }

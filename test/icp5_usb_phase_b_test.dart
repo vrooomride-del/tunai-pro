@@ -37,6 +37,10 @@ const identityRx = <int>[
   0xD9,
 ];
 const goodAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x10, 0, 0x4D];
+// Capture-proven 0x2201 state-header response read before the 0x2202 pages.
+const stateHeaderRx = <int>[
+  0x55, 0x0B, 0xE0, 0, 0, 0, 0x22, 0x01, 0x01, 0x02, 0, 0, 0x66
+];
 
 // Builds a single ICP5 raw-state page frame (blockId=0x2202) from a slice of
 // the full 513-byte payload.  Page lengths are [0xA1, 0xA1, 0xA1, 0x3A].
@@ -565,10 +569,12 @@ void main() {
     late FakeConnection connection;
     connection = FakeConnection((connection, call, bytes) {
       if (call == 1) connection.emit(identityRx);
-      // calls 2-5: raw state pages emitted during preflight
-      if (call >= 2 && call <= 5) connection.emit(rawPages[call - 2]);
-      // call 6: PEQ write ACK
-      if (call == 6) connection.emit(peqAck);
+      // call 2: 0x2201 state-header read that precedes the pages
+      if (call == 2) connection.emit(stateHeaderRx);
+      // calls 3-6: raw state pages emitted during preflight
+      if (call >= 3 && call <= 6) connection.emit(rawPages[call - 3]);
+      // call 7: PEQ write ACK
+      if (call == 7) connection.emit(peqAck);
     });
     final transport = Icp5UsbTransport(driver: FakeDriver(connection));
     await transport.open();
