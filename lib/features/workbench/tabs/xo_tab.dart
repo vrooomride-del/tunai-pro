@@ -12,6 +12,7 @@ import '../../../shared/pro_widgets.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_xo_audit_registry.dart';
 import '../../../core/pro_adau1466_wfl_lpf2_safeload_executor.dart';
+import '../../../core/pro_phase_alignment.dart';
 import '../widgets/pro_crossover_response_graph.dart';
 
 class XoTab extends ConsumerStatefulWidget {
@@ -202,6 +203,29 @@ class _XoTabState extends ConsumerState<XoTab> {
                   }(),
               ],
             ),
+            const SizedBox(height: 12),
+
+            // ── Phase alignment summary (electrical simulation) ─────────────
+            _PhaseAlignmentCard(
+              pairs: XoPhaseAlignment.analyze([
+                for (final d in drivers)
+                  () {
+                    final ctrl = tuning.channelControls.firstWhere(
+                      (c) => c.channelId == d.id,
+                      orElse: () => ChannelControlState(channelId: d.id),
+                    );
+                    return XoAlignmentInput(
+                      label: d.name,
+                      channel: tuning.crossoverChannels.firstWhere(
+                        (c) => c.channelId == d.id,
+                        orElse: () => CrossoverChannelState.empty(d.id),
+                      ),
+                      delayMs: ctrl.delayMs,
+                      phaseOffsetDeg: ctrl.phaseOffsetDeg,
+                    );
+                  }(),
+              ]),
+            ),
 
             // Phase D notice
             const SizedBox(height: 14),
@@ -230,6 +254,112 @@ class _XoTabState extends ConsumerState<XoTab> {
       ),
     ]);
   }
+}
+
+class _PhaseAlignmentCard extends StatelessWidget {
+  final List<XoAlignmentPair> pairs;
+  const _PhaseAlignmentCard({required this.pairs});
+
+  static Color _statusColor(XoAlignmentStatus s) => switch (s) {
+        XoAlignmentStatus.good => kProGreen,
+        XoAlignmentStatus.check => kProAmber,
+        XoAlignmentStatus.misalign => kProRed,
+      };
+
+  static String _freqLabel(double f) => f >= 1000
+      ? '${(f / 1000).toStringAsFixed(2)} kHz'
+      : '${f.round()} Hz';
+
+  static String _polarity(bool inverted) => inverted ? 'INV' : 'NORM';
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.timeline_outlined,
+              color: kProAccent.withValues(alpha: 0.6), size: 13),
+          const SizedBox(width: 6),
+          Text('PHASE ALIGNMENT',
+              style: proLabel(size: 9, spacing: 1.5)),
+        ]),
+        const SizedBox(height: 4),
+        Text('Electrical Phase Simulation', style: proSubtitle(size: 9)),
+        Text('Measured acoustic phase not available',
+            style: proSubtitle(size: 8, color: kProAmber.withValues(alpha: 0.8))),
+        const SizedBox(height: 10),
+        if (pairs.isEmpty)
+          Text(
+              'No overlapping crossover to analyse. Set a low-pass on one driver '
+              'and a high-pass on an adjacent driver within ±1 octave.',
+              style: proSubtitle(size: 9))
+        else
+          for (final p in pairs) ...[
+            _AlignmentRow(pair: p, statusColor: _statusColor(p.status)),
+            if (p != pairs.last) const SizedBox(height: 10),
+          ],
+        const SizedBox(height: 8),
+        Text('Alignment scored on |Δphase| at the crossover: '
+            'GOOD < 30°, CHECK 30–60°, MISALIGN > 60°.',
+            style: proSubtitle(size: 8)),
+      ]),
+    );
+  }
+}
+
+class _AlignmentRow extends StatelessWidget {
+  final XoAlignmentPair pair;
+  final Color statusColor;
+  const _AlignmentRow({required this.pair, required this.statusColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(
+          child: Text('${pair.lowLabel}  ×  ${pair.highLabel}',
+              style: const TextStyle(color: Colors.white, fontSize: 12)),
+        ),
+        ProStatusPill(label: pair.status.label, color: statusColor),
+      ]),
+      const SizedBox(height: 6),
+      Wrap(spacing: 16, runSpacing: 4, children: [
+        _Metric('Crossover', _PhaseAlignmentCard._freqLabel(pair.crossoverHz)),
+        _Metric('Δ phase', '${pair.phaseDiffDeg.round()}°'),
+        _Metric('Delay',
+            '${pair.lowDelayMs.toStringAsFixed(2)} / ${pair.highDelayMs.toStringAsFixed(2)} ms'),
+        _Metric(
+            'Polarity',
+            '${_PhaseAlignmentCard._polarity(pair.lowPolarityInverted)} / '
+                '${_PhaseAlignmentCard._polarity(pair.highPolarityInverted)}'),
+      ]),
+    ]);
+  }
+}
+
+class _Metric extends StatelessWidget {
+  final String label;
+  final String value;
+  const _Metric(this.label, this.value);
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label,
+              style: proSubtitle(size: 8, color: const Color(0xFF6B7280))),
+          Text(value,
+              style: const TextStyle(color: Colors.white70, fontSize: 11)),
+        ],
+      );
 }
 
 class Adau1466XoHardwareMappingPanel extends StatelessWidget {
