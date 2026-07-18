@@ -57,20 +57,13 @@ class _PeqTabState extends ConsumerState<PeqTab> {
     );
   }
 
-  Future<void> _addBand(String channelId) async {
-    final ch = _peqForChannel(channelId);
-    final band = PeqBand.create(type: PeqBandType.peak, frequencyHz: 1000.0, gainDb: 0.0, q: 1.41);
-    await _savePeqChannel(ch.copyWith(bands: [...ch.bands, band]));
-  }
-
-  Future<void> _removeBand(String channelId, String bandId) async {
-    final ch = _peqForChannel(channelId);
-    await _savePeqChannel(ch.copyWith(bands: ch.bands.where((b) => b.id != bandId).toList()));
-  }
-
-  Future<void> _updateBand(String channelId, PeqBand band) async {
-    final ch = _peqForChannel(channelId);
-    await _savePeqChannel(ch.copyWith(bands: ch.bands.map((b) => b.id == band.id ? band : b).toList()));
+  // Fixed 10-slot PEQ: bands are addressed by slot index (0-9), never
+  // added/removed. Updating a slot preserves the other nine.
+  Future<void> _updateBandAt(String channelId, int index, PeqBand band) async {
+    final ch = _peqForChannel(channelId).normalized();
+    final bands = [...ch.bands];
+    bands[index] = band;
+    await _savePeqChannel(ch.copyWith(bands: bands));
   }
 
   Future<void> _toggleBypass(String channelId) async {
@@ -79,7 +72,8 @@ class _PeqTabState extends ConsumerState<PeqTab> {
   }
 
   Future<void> _resetChannel(String channelId) async {
-    await _savePeqChannel(PeqChannelState.empty(channelId));
+    // Reset to ten disabled fixed slots (not an empty band list).
+    await _savePeqChannel(PeqChannelState.fixed(channelId));
   }
 
   @override
@@ -108,10 +102,13 @@ class _PeqTabState extends ConsumerState<PeqTab> {
 
     final selectedId = _selectedChannelId ?? drivers.first.id;
     final selectedDriver = drivers.firstWhere((d) => d.id == selectedId, orElse: () => drivers.first);
-    final peqCh = tuning.peqChannels.firstWhere(
-      (c) => c.channelId == selectedId,
-      orElse: () => PeqChannelState.empty(selectedId),
-    );
+    // Fixed 10-slot model: always present exactly Band 1 .. Band 10.
+    final peqCh = tuning.peqChannels
+        .firstWhere(
+          (c) => c.channelId == selectedId,
+          orElse: () => PeqChannelState.fixed(selectedId),
+        )
+        .normalized();
 
     return Row(children: [
       // ── Left: channel list ──────────────────────────────────────────────
@@ -160,23 +157,21 @@ class _PeqTabState extends ConsumerState<PeqTab> {
             _GraphPlaceholder(),
             const SizedBox(height: 14),
 
-            // Band list
-            if (peqCh.bands.isEmpty)
-              _NoBandsState(onAdd: () => _addBand(selectedId))
-            else ...[
-              Row(children: [
-                Text('BANDS (${peqCh.bands.length})', style: proLabel(size: 9, spacing: 2)),
-                const Spacer(),
-                _SmallBtn(label: '+ Add Band', onTap: () => _addBand(selectedId)),
-              ]),
-              const SizedBox(height: 8),
-              ...peqCh.bands.asMap().entries.map((e) => _BandCard(
-                index: e.key,
-                band: e.value,
-                onUpdate: (b) => _updateBand(selectedId, b),
-                onRemove: () => _removeBand(selectedId, e.value.id),
-              )),
-            ],
+            // Fixed 10-band PEQ slots (Band 1 .. Band 10). No add/remove — each
+            // card is one DSP PEQ slot; disable a slot to bypass it.
+            Row(children: [
+              Text('PEQ BANDS · ${PeqChannelState.bandCount} FIXED SLOTS',
+                  style: proLabel(size: 9, spacing: 2)),
+              const Spacer(),
+              Text('${peqCh.enabledBandCount} enabled',
+                  style: proSubtitle(size: 9)),
+            ]),
+            const SizedBox(height: 8),
+            ...peqCh.bands.asMap().entries.map((e) => _BandCard(
+                  index: e.key,
+                  band: e.value,
+                  onUpdate: (b) => _updateBandAt(selectedId, e.key, b),
+                )),
           ]),
         ),
       ),
@@ -228,9 +223,10 @@ class _ChannelList extends StatelessWidget {
                     Text(d.role.short,
                         style: proLabel(size: 8, color: active ? kProAccent : Colors.white24, spacing: 0.5)),
                   ]),
-                  if (peqCh.bands.isNotEmpty) ...[
+                  if (peqCh.enabledBandCount > 0) ...[
                     const SizedBox(height: 3),
-                    Text('${peqCh.bands.length} band${peqCh.bands.length == 1 ? '' : 's'}',
+                    Text(
+                        '${peqCh.enabledBandCount} / ${PeqChannelState.bandCount} enabled',
                         style: proSubtitle(size: 9)),
                   ],
                   if (peqCh.bypassed) ...[
@@ -304,39 +300,12 @@ class _GraphPlaceholder extends StatelessWidget {
   );
 }
 
-class _NoBandsState extends StatelessWidget {
-  final VoidCallback onAdd;
-  const _NoBandsState({required this.onAdd});
-
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        border: Border.all(color: kProBorder),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Column(children: [
-        const Icon(Icons.tune_outlined, color: Colors.white12, size: 24),
-        const SizedBox(height: 8),
-        Text('No PEQ bands', style: proTitle(size: 12, color: Colors.white38)),
-        const SizedBox(height: 4),
-        Text('Add a band to begin parametric correction for this channel.',
-            style: proSubtitle(size: 10), textAlign: TextAlign.center),
-        const SizedBox(height: 12),
-        _SmallBtn(label: '+ Add Band', onTap: onAdd),
-      ]),
-    ),
-  ]);
-}
-
 class _BandCard extends ConsumerStatefulWidget {
   final int index;
   final PeqBand band;
   final ValueChanged<PeqBand> onUpdate;
-  final VoidCallback onRemove;
   const _BandCard({required this.index, required this.band,
-      required this.onUpdate, required this.onRemove});
+      required this.onUpdate});
 
   @override
   ConsumerState<_BandCard> createState() => _BandCardState();
@@ -408,8 +377,8 @@ class _BandCardState extends ConsumerState<_BandCard> {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text('#${widget.index + 1}',
-              style: proLabel(size: 9, color: Colors.white24, spacing: 1)),
+          Text('Band ${widget.index + 1}',
+              style: proLabel(size: 9, color: Colors.white38, spacing: 1)),
           const SizedBox(width: 8),
           // Type selector
           _CompactDropdown<PeqBandType>(
@@ -422,19 +391,18 @@ class _BandCardState extends ConsumerState<_BandCard> {
           ProStatusPill(
               label: band.status.label, color: _statusColor(band.status)),
           const Spacer(),
-          // Enable toggle
+          // Enable / bypass this fixed slot (no removal — slots are permanent).
           GestureDetector(
-            onTap: () => widget.onUpdate(band.copyWith(enabled: !band.enabled)),
+            onTap: () => widget.onUpdate(band.copyWith(
+              enabled: !band.enabled,
+              status:
+                  !band.enabled ? PeqBandStatus.active : PeqBandStatus.bypassed,
+            )),
             child: Icon(
               band.enabled ? Icons.radio_button_checked : Icons.radio_button_unchecked,
               color: band.enabled ? kProGreen : Colors.white24,
               size: 14,
             ),
-          ),
-          const SizedBox(width: 8),
-          GestureDetector(
-            onTap: widget.onRemove,
-            child: const Icon(Icons.close, color: Colors.white24, size: 14),
           ),
         ]),
         const SizedBox(height: 10),

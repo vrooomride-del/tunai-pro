@@ -205,9 +205,27 @@ class PeqBand {
     gainDb: gainDb,
     q: q,
   );
+
+  /// A fixed DSP PEQ slot at [index] (0-based). Slots start disabled/bypassed
+  /// so an unconfigured slot is excluded from export/verification exactly like
+  /// the former "no band" state. The 0-based [index] is the band index that the
+  /// ICP5 hardware write path places in the confirmed band payload byte — the
+  /// mapping is unchanged; this model does not write to hardware.
+  factory PeqBand.slot(int index) => PeqBand(
+    id: 'band_$index',
+    enabled: false,
+    status: PeqBandStatus.bypassed,
+    type: PeqBandType.peak,
+    frequencyHz: 1000.0,
+    gainDb: 0.0,
+    q: 1.41,
+  );
 }
 
 class PeqChannelState {
+  /// Fixed number of DSP PEQ slots per channel (Band 1 .. Band 10).
+  static const int bandCount = 10;
+
   final String channelId;
   final bool bypassed;
   final List<PeqBand> bands;
@@ -219,7 +237,51 @@ class PeqChannelState {
   });
 
   int get activeBandCount => bands.where((b) => b.enabled && b.status != PeqBandStatus.bypassed).length;
+  int get enabledBandCount => bands.where((b) => b.enabled).length;
   bool get isEmpty => bands.isEmpty;
+
+  /// A channel with exactly [bandCount] fixed slots, all disabled.
+  factory PeqChannelState.fixed(String channelId) => PeqChannelState(
+    channelId: channelId,
+    bands: List.generate(bandCount, PeqBand.slot),
+  );
+
+  /// Returns a copy holding exactly [bandCount] slots: existing bands are kept
+  /// by position (preserving Band 1's verified values), missing slots are
+  /// padded with disabled [PeqBand.slot]s, and any beyond [bandCount] are
+  /// dropped. Idempotent — a channel already at [bandCount] is returned as-is.
+  PeqChannelState normalized() {
+    if (bands.length == bandCount) return this;
+    return copyWith(bands: <PeqBand>[
+      for (var i = 0; i < bandCount; i++)
+        i < bands.length ? bands[i] : PeqBand.slot(i),
+    ]);
+  }
+
+  /// Enables the first free (disabled) slot with the given values and returns
+  /// the normalized channel. If every slot is already in use the channel is
+  /// returned normalized but otherwise unchanged. Used instead of appending so
+  /// the fixed 10-slot invariant is never exceeded.
+  PeqChannelState fillNextFreeSlot({
+    required PeqBandType type,
+    required double frequencyHz,
+    required double gainDb,
+    required double q,
+  }) {
+    final norm = normalized();
+    final idx = norm.bands.indexWhere((b) => !b.enabled);
+    if (idx < 0) return norm;
+    final updated = [...norm.bands];
+    updated[idx] = norm.bands[idx].copyWith(
+      enabled: true,
+      status: PeqBandStatus.active,
+      type: type,
+      frequencyHz: frequencyHz,
+      gainDb: gainDb,
+      q: q,
+    );
+    return norm.copyWith(bands: updated);
+  }
 
   PeqChannelState copyWith({
     bool? bypassed,

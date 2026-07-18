@@ -100,17 +100,16 @@ class _OptimizerTabState extends ConsumerState<OptimizerTab> {
           final chId = sug.channelId!;
           final existing = tuning.peqChannels.firstWhere(
             (c) => c.channelId == chId,
-            orElse: () => PeqChannelState.empty(chId),
+            orElse: () => PeqChannelState.fixed(chId),
           );
-          final newBand = PeqBand(
-            id: 'band_${DateTime.now().millisecondsSinceEpoch}',
+          // Fixed 10-slot model: fill the next free slot instead of appending a
+          // new band, so the DSP's fixed PEQ slot count is never exceeded.
+          final updatedCh = existing.fillNextFreeSlot(
+            type: PeqBandType.peak,
             frequencyHz: sug.proposedFrequencyHz!,
             gainDb: sug.proposedGainDb!,
             q: sug.proposedQ!,
-            type: PeqBandType.peak,
-            enabled: true,
           );
-          final updatedCh = existing.copyWith(bands: [...existing.bands, newBand]);
           final hasEntry = tuning.peqChannels.any((c) => c.channelId == chId);
           final updatedChannels = hasEntry
               ? tuning.peqChannels.map((c) => c.channelId == chId ? updatedCh : c).toList()
