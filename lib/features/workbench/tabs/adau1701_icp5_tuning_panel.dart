@@ -7,15 +7,17 @@
 // Q is displayed read-only (no confirmed write path).
 // property08 is displayed read-only (semantic meaning unconfirmed).
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
 import '../../../core/transport/adau1701_peq_deployment_gate.dart';
+import '../../../core/transport/adau1701_tuning_transport.dart';
 import '../../../core/transport/icp5_frame_codec.dart';
-import '../../../core/transport/icp5_transports.dart';
 import '../../../shared/pro_widgets.dart';
 
 class Adau1701Icp5TuningPanel extends StatefulWidget {
-  final Icp5UsbTransport transport;
+  final Adau1701TuningTransport transport;
 
   const Adau1701Icp5TuningPanel({super.key, required this.transport});
 
@@ -28,6 +30,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   late final Adau1701PeqDeploymentGate _gate;
   late final TextEditingController _gainCtrl;
   late final TextEditingController _freqCtrl;
+  Timer? _statusTimer;
 
   bool _busy = false;
 
@@ -39,7 +42,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   String? _preflightMessage;
   bool? _preflightPassed;
 
-  // After APPLY
+  // After APPLY — snapshotted at apply time, not re-read from controllers
+  double? _appliedGain;
+  int? _appliedFreq;
   bool? _gainWriteOk;
   bool? _freqWriteOk;
   Adau1701Ch0Band0OriginalState? _verifyState;
@@ -51,10 +56,16 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
     _gate = Adau1701PeqDeploymentGate(transport: widget.transport);
     _gainCtrl = TextEditingController();
     _freqCtrl = TextEditingController();
+    // Poll transport status so the status bar reflects live ICP5 connection
+    // changes without requiring the parent widget to rebuild.
+    _statusTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _statusTimer?.cancel();
     _gainCtrl.dispose();
     _freqCtrl.dispose();
     super.dispose();
@@ -65,9 +76,6 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       widget.transport.handshakeComplete &&
       widget.transport.detectedProfile == Icp5FrameCodec.expectedProfile;
 
-  double? get _newGain => double.tryParse(_gainCtrl.text);
-  int? get _newFreq => int.tryParse(_freqCtrl.text);
-
   Future<void> _read() async {
     setState(() {
       _busy = true;
@@ -75,6 +83,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       _readError = null;
       _preflightMessage = null;
       _preflightPassed = null;
+      _appliedGain = null;
+      _appliedFreq = null;
       _gainWriteOk = null;
       _freqWriteOk = null;
       _verifyState = null;
@@ -102,8 +112,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   }
 
   Future<void> _apply() async {
-    final newGain = _newGain;
-    final newFreq = _newFreq;
+    final newGain = double.tryParse(_gainCtrl.text);
+    final newFreq = int.tryParse(_freqCtrl.text);
     if (newGain == null || newFreq == null) {
       setState(() => _applyError = 'Enter valid gain (dB) and frequency (Hz).');
       return;
@@ -121,6 +131,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       _busy = true;
       _preflightMessage = null;
       _preflightPassed = null;
+      // Snapshot intended values at apply time so _VerificationCard has stable data.
+      _appliedGain = newGain;
+      _appliedFreq = newFreq;
       _gainWriteOk = null;
       _freqWriteOk = null;
       _verifyState = null;
@@ -142,12 +155,21 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       final gainResult = await widget.transport.writePeqGain(0, newGain);
       if (!mounted) return;
       setState(() => _gainWriteOk = gainResult.success);
+      if (!gainResult.success) {
+        setState(() => _applyError = 'Gain write failed: ${gainResult.message}');
+        return;
+      }
 
       // ── 3. Write frequency ──────────────────────────────────────────────
       final freqResult =
           await widget.transport.writeFilterFrequency(0, newFreq);
       if (!mounted) return;
       setState(() => _freqWriteOk = freqResult.success);
+      if (!freqResult.success) {
+        setState(
+            () => _applyError = 'Frequency write failed: ${freqResult.message}');
+        return;
+      }
 
       // ── 4. Read-back verification ───────────────────────────────────────
       final svc = Adau1701Ch0Band0ReadService(transport: widget.transport);
@@ -253,11 +275,14 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
               detail: _freqWriteOk! ? 'ACK received.' : 'No ACK.',
             ),
           ],
-          if (_verifyState != null) ...[
+          // Only show verification when both writes succeeded and readback returned.
+          if (_verifyState != null &&
+              (_gainWriteOk ?? false) &&
+              (_freqWriteOk ?? false)) ...[
             const SizedBox(height: 10),
             _VerificationCard(
               original: _readState!,
-              written: (gain: _newGain!, freq: _newFreq!),
+              written: (gain: _appliedGain!, freq: _appliedFreq!),
               readback: _verifyState!,
             ),
           ],
@@ -270,7 +295,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
 // ── Status bar ────────────────────────────────────────────────────────────────
 
 class _StatusBar extends StatelessWidget {
-  final Icp5UsbTransport transport;
+  final Adau1701TuningTransport transport;
   const _StatusBar({required this.transport});
 
   @override
@@ -278,7 +303,8 @@ class _StatusBar extends StatelessWidget {
     final connected = transport.isConnected;
     final handshake = transport.handshakeComplete;
     final profile = transport.detectedProfile;
-    final ready = connected && handshake && profile == Icp5FrameCodec.expectedProfile;
+    final ready =
+        connected && handshake && profile == Icp5FrameCodec.expectedProfile;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -300,7 +326,9 @@ class _StatusBar extends StatelessWidget {
           ready
               ? 'ADAU1701 ready — $profile'
               : connected
-                  ? (handshake ? 'Profile mismatch: ${profile ?? "none"}' : 'Handshake pending')
+                  ? (handshake
+                      ? 'Profile mismatch: ${profile ?? "none"}'
+                      : 'Handshake pending')
                   : 'Not connected',
           style: TextStyle(
             fontSize: 10,
@@ -329,13 +357,14 @@ class _OriginalStateCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('CURRENT STATE (from hardware)',
-            style: proSubtitle(size: 9)),
+        Text('CURRENT STATE (from hardware)', style: proSubtitle(size: 9)),
         const SizedBox(height: 8),
         _StateRow('Frequency', '${state.frequencyHz} Hz'),
         _StateRow('Gain', '${state.gainDb.toStringAsFixed(1)} dB'),
-        _StateRow('Q', '${state.q.toStringAsFixed(2)}  (read-only — no write path confirmed)'),
-        _StateRow('property08', '${state.property08State}  (read-only — semantic unconfirmed)'),
+        _StateRow('Q',
+            '${state.q.toStringAsFixed(2)}  (read-only — no write path confirmed)'),
+        _StateRow('property08',
+            '${state.property08State}  (read-only — semantic unconfirmed)'),
         _StateRow('Device', state.deviceId),
         _StateRow('Captured', state.capturedAt.toIso8601String()),
       ]),
@@ -378,8 +407,7 @@ class _VerificationCard extends StatelessWidget {
     required this.readback,
   });
 
-  bool get _gainMatch =>
-      (readback.gainDb - written.gain).abs() < 0.15;
+  bool get _gainMatch => (readback.gainDb - written.gain).abs() < 0.15;
   bool get _freqMatch => readback.frequencyHz == written.freq;
   bool get _passed => _gainMatch && _freqMatch;
 
@@ -472,9 +500,8 @@ class _VerifyRow extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(readback,
-              style: TextStyle(
-                  fontSize: 9,
-                  color: match ? kProGreen : kProRed)),
+              style:
+                  TextStyle(fontSize: 9, color: match ? kProGreen : kProRed)),
         ]),
       );
 }
@@ -555,7 +582,8 @@ class _FieldEditor extends StatelessWidget {
                 borderRadius: BorderRadius.all(Radius.circular(3)),
               ),
               focusedBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: kProAccent.withValues(alpha: 0.6)),
+                borderSide:
+                    BorderSide(color: kProAccent.withValues(alpha: 0.6)),
                 borderRadius: const BorderRadius.all(Radius.circular(3)),
               ),
             ),
@@ -591,7 +619,8 @@ class _ActionButton extends StatelessWidget {
                   width: 12,
                   height: 12,
                   child: CircularProgressIndicator(
-                      strokeWidth: 1.5, color: color.withValues(alpha: 0.6)),
+                      strokeWidth: 1.5,
+                      color: color.withValues(alpha: 0.6)),
                 )
               : Icon(icon, size: 13, color: color),
           label: Text(label,
@@ -600,8 +629,8 @@ class _ActionButton extends StatelessWidget {
           style: OutlinedButton.styleFrom(
             side: BorderSide(color: color.withValues(alpha: 0.4)),
             padding: const EdgeInsets.symmetric(horizontal: 14),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(3)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
           ),
         ),
       );
@@ -627,8 +656,7 @@ Widget _errorRow(String msg) => Row(
         const SizedBox(width: 6),
         Expanded(
           child: Text(msg,
-              style:
-                  const TextStyle(color: kProRed, fontSize: 10)),
+              style: const TextStyle(color: kProRed, fontSize: 10)),
         ),
       ],
     );

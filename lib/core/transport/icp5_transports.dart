@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'adau1701_ch0_band0_read_service.dart';
+import 'adau1701_tuning_transport.dart';
 import 'dsp_command.dart';
 import 'dsp_transport.dart';
 import 'icp5_frame_codec.dart';
@@ -96,7 +97,8 @@ class Icp5PhaseCOutcome {
       {required this.test, this.restore, required this.stopActivated});
 }
 
-class Icp5UsbTransport implements DspTransport, Adau1701RawReadTransport {
+class Icp5UsbTransport
+    implements DspTransport, Adau1701RawReadTransport, Adau1701TuningTransport {
   final Icp5SerialDriver driver;
   final Duration readTimeout;
   final Duration writeTimeout;
@@ -469,20 +471,26 @@ class Icp5UsbTransport implements DspTransport, Adau1701RawReadTransport {
 
   /// Writes an arbitrary PEQ band 1 gain in −6.0 .. +3.0 dB for [channel].
   /// Uses the confirmed parameter-ID 0x18 encoding. Range-validated only.
-  Future<Icp5PhaseCResult> writePeqGain(int channel, double gainDb) =>
-      _writePhaseC(
-        Icp5FrameCodec.buildPeqGainWriteArbitrary(channel, gainDb),
-        Icp5FrameCodec.parsePeqGainAck,
-      );
+  @override
+  Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb) async {
+    final r = await _writePhaseC(
+      Icp5FrameCodec.buildPeqGainWriteArbitrary(channel, gainDb),
+      Icp5FrameCodec.parsePeqGainAck,
+    );
+    return Adau1701WriteAck(success: r.success, message: r.message);
+  }
 
   /// Writes an arbitrary filter frequency in 20 .. 20 000 Hz for [channel].
   /// Uses the confirmed parameter-ID 0x15 encoding. Range-validated only.
-  Future<Icp5PhaseCResult> writeFilterFrequency(
-          int channel, int frequencyHz) =>
-      _writePhaseC(
-        Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(channel, frequencyHz),
-        Icp5FrameCodec.parseFilterFrequencyAck,
-      );
+  @override
+  Future<Adau1701WriteAck> writeFilterFrequency(
+      int channel, int frequencyHz) async {
+    final r = await _writePhaseC(
+      Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(channel, frequencyHz),
+      Icp5FrameCodec.parseFilterFrequencyAck,
+    );
+    return Adau1701WriteAck(success: r.success, message: r.message);
+  }
 
   Future<Icp5PhaseCResult> writeCapturedPeqBand1Gain(
           int channel, double value) =>
