@@ -10,12 +10,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../../core/adau1701_peq_response.dart';
 import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
 import '../../../core/transport/adau1701_peq_band.dart';
 import '../../../core/transport/adau1701_peq_deployment_gate.dart';
 import '../../../core/transport/adau1701_tuning_transport.dart';
 import '../../../core/transport/icp5_frame_codec.dart';
 import '../../../shared/pro_widgets.dart';
+import '../widgets/adau1701_peq_response_graph.dart';
 
 class Adau1701Icp5TuningPanel extends StatefulWidget {
   final Adau1701TuningTransport transport;
@@ -68,6 +70,18 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   bool get _bandIsProven => _selectedBand == 0;
   int _appliedBand = 0;
 
+  // ── PEQ response model (visualisation/editing only) ────────────────────────
+  // ADAU1701 PEQ is 4 outputs × 10 fixed bands. This local model feeds the PEQ
+  // RESPONSE graph and the edit fields; it introduces no DSP parameter mapping
+  // and does not write hardware by itself. `enabled` controls only whether a
+  // band contributes to the rendered curve.
+  static const int _outputCount = 4;
+  int _selectedOutput = 0;
+  late final List<List<PeqResponseBand>> _peqModel;
+  // Baseline snapshot captured at READ (the "current" curve), shown behind the
+  // edited/total curve when present.
+  List<List<PeqResponseBand>>? _baselineModel;
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +89,14 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
     _gainCtrl = TextEditingController();
     _freqCtrl = TextEditingController();
     _qCtrl = TextEditingController();
+    _peqModel = List.generate(
+      _outputCount,
+      (_) => List.generate(
+        Icp5FrameCodec.peqBandCount,
+        (_) => const PeqResponseBand(
+            frequencyHz: 1000, gainDb: 0, q: 1.0, enabled: false),
+      ),
+    );
     // Poll transport status so the status bar reflects live ICP5 connection
     // changes without requiring the parent widget to rebuild.
     // Also clears stale read state on disconnect so the engineer always
@@ -119,6 +141,35 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       widget.transport.handshakeComplete &&
       widget.transport.detectedProfile == Icp5FrameCodec.expectedProfile;
 
+  PeqResponseBand get _selectedModelBand =>
+      _peqModel[_selectedOutput][_selectedBand];
+
+  /// Writes the current gain/freq/Q text into the selected output+band of the
+  /// response model (used to keep the graph in sync with live edits).
+  void _syncSelectedBandFromControllers({bool? enabled}) {
+    final f = double.tryParse(_freqCtrl.text);
+    final g = double.tryParse(_gainCtrl.text);
+    final q = double.tryParse(_qCtrl.text);
+    final cur = _selectedModelBand;
+    _peqModel[_selectedOutput][_selectedBand] = cur.copyWith(
+      frequencyHz: f ?? cur.frequencyHz,
+      gainDb: g ?? cur.gainDb,
+      q: q ?? cur.q,
+      enabled: enabled ?? cur.enabled,
+    );
+  }
+
+  /// Loads the selected output+band's model values into the edit controllers.
+  void _repopulateControllers() {
+    final b = _selectedModelBand;
+    _gainCtrl.text = b.gainDb.toStringAsFixed(1);
+    _freqCtrl.text = b.frequencyHz.toStringAsFixed(0);
+    _qCtrl.text = b.q.toStringAsFixed(1);
+  }
+
+  List<List<PeqResponseBand>> _cloneModel() =>
+      [for (final out in _peqModel) [...out]];
+
   Future<void> _read() async {
     setState(() {
       _busy = true;
@@ -145,9 +196,18 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         final s = result.originalState!;
         setState(() {
           _readState = s;
-          _gainCtrl.text = s.gainDb.toStringAsFixed(1);
-          _freqCtrl.text = '${s.frequencyHz}';
-          _qCtrl.text = s.q.toStringAsFixed(1);
+          // The verified read is Output 1 / Band 1 (Ch0 Band0). Load it into the
+          // model, enable it, select it, and snapshot the baseline curve.
+          _selectedOutput = 0;
+          _selectedBand = 0;
+          _peqModel[0][0] = PeqResponseBand(
+            frequencyHz: s.frequencyHz.toDouble(),
+            gainDb: s.gainDb,
+            q: s.q,
+            enabled: true,
+          );
+          _baselineModel = _cloneModel();
+          _repopulateControllers();
         });
       } else {
         setState(() => _readError = result.message);
@@ -176,6 +236,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
     }
 
     final band = _selectedBand;
+    final output = _selectedOutput;
     setState(() {
       _busy = true;
       _preflightMessage = null;
@@ -188,6 +249,12 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       _freqWriteOk = null;
       _verifyState = null;
       _applyError = null;
+      // Reflect the applied values in the response model and enable the band.
+      _peqModel[output][band] = _peqModel[output][band].copyWith(
+        frequencyHz: newFreq.toDouble(),
+        gainDb: newGain,
+        enabled: true,
+      );
     });
 
     try {
@@ -206,9 +273,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       });
       if (!preflight.passed) return;
 
-      // ── 2. Write gain (to the selected band) ────────────────────────────
-      final gainResult =
-          await widget.transport.writePeqGain(0, newGain, band: band);
+      // ── 2. Write gain (to the selected output + band) ───────────────────
+      final gainResult = await widget.transport
+          .writePeqGain(output, newGain, band: band);
       if (!mounted) return;
       setState(() => _gainWriteOk = gainResult.success);
       if (!gainResult.success) {
@@ -216,9 +283,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         return;
       }
 
-      // ── 3. Write frequency (to the selected band) ───────────────────────
-      final freqResult =
-          await widget.transport.writeFilterFrequency(0, newFreq, band: band);
+      // ── 3. Write frequency (to the selected output + band) ──────────────
+      final freqResult = await widget.transport
+          .writeFilterFrequency(output, newFreq, band: band);
       if (!mounted) return;
       setState(() => _freqWriteOk = freqResult.success);
       if (!freqResult.success) {
@@ -227,10 +294,10 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         return;
       }
 
-      // ── 4. Read-back verification (Band 1 only) ─────────────────────────
+      // ── 4. Read-back verification (Output 1 / Band 1 only) ──────────────
       // The confirmed decoder reads Ch0 Band 0, so readback verification is
-      // only possible for Band 1. Bands 2..10 are ACK-only (unverified).
-      if (band != 0) return;
+      // only possible for Output 1 / Band 1. All others are ACK-only.
+      if (output != 0 || band != 0) return;
       final svc = Adau1701Ch0Band0ReadService(transport: widget.transport);
       final verify = await svc.readOriginalState();
       if (!mounted) return;
@@ -263,6 +330,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
     }
 
     final band = _selectedBand;
+    final output = _selectedOutput;
     setState(() {
       _busy = true;
       _appliedQ = newQ;
@@ -270,6 +338,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       _qWriteOk = null;
       _qVerifyState = null;
       _qApplyError = null;
+      // Reflect the applied Q in the response model.
+      _peqModel[output][band] =
+          _peqModel[output][band].copyWith(q: newQ, enabled: true);
     });
 
     try {
@@ -285,7 +356,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         setState(() => _readState = preflight.originalState);
       }
 
-      final qResult = await widget.transport.writePeqQ(0, newQ, band: band);
+      final qResult =
+          await widget.transport.writePeqQ(output, newQ, band: band);
       if (!mounted) return;
       setState(() => _qWriteOk = qResult.success);
       if (!qResult.success) {
@@ -294,8 +366,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       }
 
       // Read-back so hardware verification can compare intended vs actual Q.
-      // Only Band 1 has a confirmed read offset; bands 2..10 are ACK-only.
-      if (band != 0) return;
+      // Only Output 1 / Band 1 has a confirmed read offset; others ACK-only.
+      if (output != 0 || band != 0) return;
       final svc = Adau1701Ch0Band0ReadService(transport: widget.transport);
       final verify = await svc.readOriginalState();
       if (!mounted) return;
@@ -338,12 +410,50 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
           _OriginalStateCard(state: _readState!),
           const SizedBox(height: 16),
 
+          // ── PEQ RESPONSE graph ───────────────────────────────────────────
+          Row(children: [
+            Text('PEQ RESPONSE — OUTPUT ${_selectedOutput + 1}',
+                style: proSubtitle(size: 9)),
+            const Spacer(),
+            Text(
+                '${Adau1701PeqResponse.enabledCount(_peqModel[_selectedOutput])}'
+                ' / ${Icp5FrameCodec.peqBandCount} bands',
+                style: proSubtitle(size: 9)),
+          ]),
+          const SizedBox(height: 6),
+          _OutputSelector(
+            outputCount: _outputCount,
+            selectedOutput: _selectedOutput,
+            onSelected: (o) => setState(() {
+              _syncSelectedBandFromControllers();
+              _selectedOutput = o;
+              _repopulateControllers();
+            }),
+          ),
+          const SizedBox(height: 8),
+          Adau1701PeqResponseGraph(
+            bands: _peqModel[_selectedOutput],
+            selectedBandIndex: _selectedBand,
+            baselineBands: _baselineModel?[_selectedOutput],
+          ),
+          const SizedBox(height: 6),
+          Text(
+              'Combined curve of enabled bands (peaking model @ '
+              '${(Adau1701PeqResponse.sampleRateHz / 1000).toStringAsFixed(0)} kHz). '
+              'Editing model — only Output 1 / Band 1 readback is hardware-verified.',
+              style: proSubtitle(size: 8)),
+          const SizedBox(height: 16),
+
           // ── Band selector (Band 1 .. Band 10) ────────────────────────────
           Text('PEQ BAND', style: proSubtitle(size: 9)),
           const SizedBox(height: 6),
           _BandSelector(
             selectedBand: _selectedBand,
-            onSelected: (band) => setState(() => _selectedBand = band),
+            onSelected: (band) => setState(() {
+              _syncSelectedBandFromControllers();
+              _selectedBand = band;
+              _repopulateControllers();
+            }),
           ),
           if (!_bandIsProven) ...[
             const SizedBox(height: 8),
@@ -358,7 +468,18 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
           const SizedBox(height: 16),
 
           // ── Edit section ─────────────────────────────────────────────────
-          Text('NEW VALUES', style: proSubtitle(size: 9)),
+          Row(children: [
+            Text('NEW VALUES', style: proSubtitle(size: 9)),
+            const Spacer(),
+            // Enable/disable the selected band in the response graph.
+            _BandEnableToggle(
+              enabled: _selectedModelBand.enabled,
+              onToggle: () => setState(() {
+                _peqModel[_selectedOutput][_selectedBand] = _selectedModelBand
+                    .copyWith(enabled: !_selectedModelBand.enabled);
+              }),
+            ),
+          ]),
           const SizedBox(height: 8),
           Row(children: [
             Expanded(
@@ -368,6 +489,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
                 hint: '-1.0',
                 keyboardType: const TextInputType.numberWithOptions(
                     signed: true, decimal: true),
+                onChanged: (_) =>
+                    setState(() => _syncSelectedBandFromControllers()),
               ),
             ),
             const SizedBox(width: 12),
@@ -377,6 +500,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
                 controller: _freqCtrl,
                 hint: '2000',
                 keyboardType: TextInputType.number,
+                onChanged: (_) =>
+                    setState(() => _syncSelectedBandFromControllers()),
               ),
             ),
           ]),
@@ -456,6 +581,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
                 hint: '2.0',
                 keyboardType: const TextInputType.numberWithOptions(
                     decimal: true),
+                onChanged: (_) =>
+                    setState(() => _syncSelectedBandFromControllers()),
               ),
             ),
           ]),
@@ -801,6 +928,60 @@ class _BandSelector extends StatelessWidget {
       );
 }
 
+// ── Output selector (Output 1 .. 4) ─────────────────────────────────────────────
+
+class _OutputSelector extends StatelessWidget {
+  final int outputCount;
+  final int selectedOutput;
+  final ValueChanged<int> onSelected;
+  const _OutputSelector({
+    required this.outputCount,
+    required this.selectedOutput,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (var output = 0; output < outputCount; output++)
+            ChoiceChip(
+              key: ValueKey('peq_output_$output'),
+              label: Text('Output ${output + 1}${output == 0 ? '' : ' *'}',
+                  style: const TextStyle(fontSize: 10)),
+              selected: output == selectedOutput,
+              onSelected: (_) => onSelected(output),
+            ),
+        ],
+      );
+}
+
+class _BandEnableToggle extends StatelessWidget {
+  final bool enabled;
+  final VoidCallback onToggle;
+  const _BandEnableToggle({required this.enabled, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        key: const ValueKey('peq_band_enable_toggle'),
+        onTap: onToggle,
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(
+            enabled ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+            size: 13,
+            color: enabled ? kProGreen : Colors.white24,
+          ),
+          const SizedBox(width: 4),
+          Text(enabled ? 'ENABLED' : 'DISABLED',
+              style: TextStyle(
+                  fontSize: 8,
+                  letterSpacing: 0.6,
+                  color: enabled ? kProGreen : Colors.white38)),
+        ]),
+      );
+}
+
 // ── Field editor ──────────────────────────────────────────────────────────────
 
 class _FieldEditor extends StatelessWidget {
@@ -808,12 +989,14 @@ class _FieldEditor extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
   final TextInputType? keyboardType;
+  final ValueChanged<String>? onChanged;
 
   const _FieldEditor({
     required this.label,
     required this.controller,
     required this.hint,
     this.keyboardType,
+    this.onChanged,
   });
 
   @override
@@ -825,6 +1008,7 @@ class _FieldEditor extends StatelessWidget {
           TextField(
             controller: controller,
             keyboardType: keyboardType,
+            onChanged: onChanged,
             style: const TextStyle(color: Colors.white, fontSize: 12),
             decoration: InputDecoration(
               hintText: hint,

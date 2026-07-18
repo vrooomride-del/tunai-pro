@@ -7,6 +7,7 @@ import 'package:tunai_pro/core/transport/adau1701_tuning_transport.dart';
 import 'package:tunai_pro/core/transport/icp5_frame_codec.dart';
 import 'package:tunai_pro/core/transport/icp5_raw_state_read.dart';
 import 'package:tunai_pro/features/workbench/tabs/adau1701_icp5_tuning_panel.dart';
+import 'package:tunai_pro/features/workbench/widgets/adau1701_peq_response_graph.dart';
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────
 
@@ -78,16 +79,19 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
     return _readSnapshot!;
   }
 
-  // Records the band index of the most recent write of each type so tests can
-  // assert the selected band is threaded through.
+  // Records the output (channel) and band index of the most recent write of
+  // each type so tests can assert selection is threaded through.
   int? lastGainBand;
   int? lastFreqBand;
   int? lastQBand;
+  int? lastGainChannel;
+  int? lastFreqChannel;
 
   @override
   Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb,
       {int band = 0}) async {
     lastGainBand = band;
+    lastGainChannel = channel;
     return Adau1701WriteAck(
       success: _gainWriteSuccess,
       message: _gainWriteSuccess ? 'PASS_ACK' : 'No ACK.',
@@ -98,6 +102,7 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
       {int band = 0}) async {
     lastFreqBand = band;
+    lastFreqChannel = channel;
     return Adau1701WriteAck(
       success: _freqWriteSuccess,
       message: _freqWriteSuccess ? 'PASS_ACK' : 'No ACK.',
@@ -132,12 +137,10 @@ Widget _wrap(Adau1701TuningTransport transport) => MaterialApp(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 void main() {
-  // Fake async delays: make pump not need fake timers for the Timer.periodic
-  // by using pumpAndSettle with timeout.
-
   group('disconnected state', () {
     testWidgets('shows not-connected prompt and no READ button', (tester) async {
       final transport = _FakeTuningTransport(isConnected: false);
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -151,6 +154,7 @@ void main() {
         isConnected: true,
         handshakeComplete: false,
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -164,6 +168,7 @@ void main() {
         handshakeComplete: true,
         detectedProfile: 'WRONG.PROFILE',
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -175,6 +180,7 @@ void main() {
     testWidgets('shows ADAU1701 ready status and READ button', (tester) async {
       final transport =
           _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -188,6 +194,7 @@ void main() {
     testWidgets('shows current state card and edit fields', (tester) async {
       final transport =
           _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -204,6 +211,7 @@ void main() {
         (tester) async {
       final transport =
           _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -228,6 +236,7 @@ void main() {
         readSnapshot: _snapshot(),
         readbackSnapshot: readbackSnap,
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -251,6 +260,7 @@ void main() {
         readSnapshot: _snapshot(),
         readbackSnapshot: _snapshot(),
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -275,6 +285,7 @@ void main() {
         readSnapshot: _snapshot(),
         qWriteSuccess: false,
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -296,6 +307,7 @@ void main() {
     testWidgets('selecting Band 3 threads band index 2 into gain/freq writes',
         (tester) async {
       final transport = _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -326,6 +338,7 @@ void main() {
         readSnapshot: _snapshot(),
         readbackSnapshot: _snapshot(),
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -341,6 +354,89 @@ void main() {
     });
   });
 
+  group('PEQ response graph + output switching', () {
+    testWidgets('graph appears after READ and shows Output 1', (tester) async {
+      final transport = _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      expect(find.byType(Adau1701PeqResponseGraph), findsOneWidget);
+      expect(find.textContaining('PEQ RESPONSE — OUTPUT 1'), findsOneWidget);
+      // Output selector chips 1..4 exist.
+      expect(find.byKey(const ValueKey('peq_output_0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('peq_output_3')), findsOneWidget);
+    });
+
+    testWidgets('selecting Output 3 threads channel index 2 into writes',
+        (tester) async {
+      final transport = _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      final out3 = find.byKey(const ValueKey('peq_output_2'));
+      await tester.ensureVisible(out3);
+      await tester.tap(out3);
+      await tester.pump();
+
+      await tester.tap(find.text('RUN PREFLIGHT + APPLY'));
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+
+      expect(transport.lastGainChannel, 2);
+      expect(transport.lastFreqChannel, 2);
+      // Non-Output-1 → no readback verification card.
+      expect(find.textContaining('VERIFICATION'), findsNothing);
+      expect(find.textContaining('PEQ RESPONSE — OUTPUT 3'), findsOneWidget);
+    });
+
+    testWidgets('Output 1 (default) writes channel 0 with verification',
+        (tester) async {
+      final transport = _FakeTuningTransport(
+        readSnapshot: _snapshot(),
+        readbackSnapshot: _snapshot(),
+      );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      await tester.tap(find.text('RUN PREFLIGHT + APPLY'));
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+
+      expect(transport.lastGainChannel, 0);
+      expect(find.textContaining('VERIFICATION PASS'), findsOneWidget);
+    });
+
+    testWidgets('disabling the selected band drops it from the enabled count',
+        (tester) async {
+      final transport = _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      // After READ, Band 1 is enabled → "1 / 10 bands".
+      expect(find.textContaining('1 / 10 bands'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('peq_band_enable_toggle')));
+      await tester.pump();
+
+      // Now zero enabled bands contribute to the curve.
+      expect(find.textContaining('0 / 10 bands'), findsOneWidget);
+    });
+  });
+
   group('after APPLY — gain write fails', () {
     testWidgets('shows GAIN WRITE ACK fail, no FREQ ACK row, no verification',
         (tester) async {
@@ -348,6 +444,7 @@ void main() {
         readSnapshot: _snapshot(),
         gainWriteSuccess: false,
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -372,6 +469,7 @@ void main() {
         gainWriteSuccess: true,
         freqWriteSuccess: false,
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -393,6 +491,7 @@ void main() {
       final transport = _FakeTuningTransport(
         readError: StateError('ICP5 timeout'),
       );
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -408,6 +507,7 @@ void main() {
     testWidgets('shows error for empty gain field', (tester) async {
       final transport =
           _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
@@ -428,6 +528,7 @@ void main() {
     testWidgets('shows error for out-of-range gain', (tester) async {
       final transport =
           _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
       await tester.pumpWidget(_wrap(transport));
       await tester.pump();
 
