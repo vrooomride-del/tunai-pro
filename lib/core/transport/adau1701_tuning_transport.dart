@@ -11,11 +11,16 @@ class Adau1701WriteAck {
 /// The tuning panel depends on this interface; [Icp5UsbTransport] implements it.
 abstract interface class Adau1701TuningTransport
     implements Adau1701RawReadTransport {
-  Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb);
-  Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz);
+  /// [band] is the PEQ band index (0 = Band 1). Band 0 is capture-proven;
+  /// bands 1..9 (Band 2..10) reuse the confirmed band payload byte but are
+  /// hardware-unverified.
+  Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb,
+      {int band = 0});
+  Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
+      {int band = 0});
 
-  /// Writes PEQ band 1 Q. NOT capture-proven — adopted from the Consumer Q
-  /// encoding; hardware ACK + readback verification pending. See
+  /// Writes PEQ Q for [band] (0 = Band 1). NOT capture-proven — adopted from the
+  /// Consumer Q encoding; hardware ACK + readback verification pending. See
   /// [Icp5FrameCodec.buildPeqQWriteArbitrary].
-  Future<Adau1701WriteAck> writePeqQ(int channel, double q);
+  Future<Adau1701WriteAck> writePeqQ(int channel, double q, {int band = 0});
 }

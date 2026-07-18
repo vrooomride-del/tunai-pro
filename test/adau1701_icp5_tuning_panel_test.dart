@@ -78,27 +78,41 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
     return _readSnapshot!;
   }
 
-  @override
-  Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb) async =>
-      Adau1701WriteAck(
-        success: _gainWriteSuccess,
-        message: _gainWriteSuccess ? 'PASS_ACK' : 'No ACK.',
-      );
+  // Records the band index of the most recent write of each type so tests can
+  // assert the selected band is threaded through.
+  int? lastGainBand;
+  int? lastFreqBand;
+  int? lastQBand;
 
   @override
-  Future<Adau1701WriteAck> writeFilterFrequency(
-          int channel, int frequencyHz) async =>
-      Adau1701WriteAck(
-        success: _freqWriteSuccess,
-        message: _freqWriteSuccess ? 'PASS_ACK' : 'No ACK.',
-      );
+  Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb,
+      {int band = 0}) async {
+    lastGainBand = band;
+    return Adau1701WriteAck(
+      success: _gainWriteSuccess,
+      message: _gainWriteSuccess ? 'PASS_ACK' : 'No ACK.',
+    );
+  }
 
   @override
-  Future<Adau1701WriteAck> writePeqQ(int channel, double q) async =>
-      Adau1701WriteAck(
-        success: _qWriteSuccess,
-        message: _qWriteSuccess ? 'PASS_ACK' : 'No ACK.',
-      );
+  Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
+      {int band = 0}) async {
+    lastFreqBand = band;
+    return Adau1701WriteAck(
+      success: _freqWriteSuccess,
+      message: _freqWriteSuccess ? 'PASS_ACK' : 'No ACK.',
+    );
+  }
+
+  @override
+  Future<Adau1701WriteAck> writePeqQ(int channel, double q,
+      {int band = 0}) async {
+    lastQBand = band;
+    return Adau1701WriteAck(
+      success: _qWriteSuccess,
+      message: _qWriteSuccess ? 'PASS_ACK' : 'No ACK.',
+    );
+  }
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -275,6 +289,55 @@ void main() {
       expect(find.textContaining('Q WRITE ACK'), findsOneWidget);
       expect(find.textContaining('Q write failed'), findsOneWidget);
       expect(find.textContaining('Q READBACK'), findsNothing);
+    });
+  });
+
+  group('multi-band selection', () {
+    testWidgets('selecting Band 3 threads band index 2 into gain/freq writes',
+        (tester) async {
+      final transport = _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      // Select Band 3 (index 2).
+      final band3 = find.byKey(const ValueKey('peq_band_2'));
+      await tester.ensureVisible(band3);
+      await tester.tap(band3);
+      await tester.pump();
+
+      await tester.tap(find.text('RUN PREFLIGHT + APPLY'));
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+
+      expect(transport.lastGainBand, 2);
+      expect(transport.lastFreqBand, 2);
+      // No readback/verification for non-Band-1 (decoder is Band 1 only).
+      expect(find.textContaining('VERIFICATION'), findsNothing);
+      // Unverified-band banner is shown.
+      expect(find.textContaining('is NOT capture-proven and has no readback'),
+          findsOneWidget);
+    });
+
+    testWidgets('Band 1 (default) still writes band index 0 with verification',
+        (tester) async {
+      final transport = _FakeTuningTransport(
+        readSnapshot: _snapshot(),
+        readbackSnapshot: _snapshot(),
+      );
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      await tester.tap(find.text('RUN PREFLIGHT + APPLY'));
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+
+      expect(transport.lastGainBand, 0);
+      expect(transport.lastFreqBand, 0);
+      expect(find.textContaining('VERIFICATION PASS'), findsOneWidget);
     });
   });
 

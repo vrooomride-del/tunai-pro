@@ -141,19 +141,40 @@ abstract final class Icp5FrameCodec {
   static bool parseDelayCandidateAck(List<int> frame) =>
       _parseSuccessAck(frame, delayCandidateParameterId);
 
-  /// Writes an arbitrary PEQ band 1 gain for [channel] using the confirmed
+  /// Number of PEQ bands the DSP exposes (Band 1 .. Band 10 → index 0 .. 9).
+  static const int peqBandCount = 10;
+
+  /// Payload byte index that carries the PEQ band selector. Confirmed by the
+  /// Consumer builder's `[channel, property, band, value]` structure; only
+  /// band index 0 (Band 1) is PRO hardware-capture-proven.
+  static const int peqBandPayloadIndex = 2;
+
+  static void _validatePeqBand(int band) {
+    if (band < 0 || band >= peqBandCount) {
+      throw ArgumentError.value(
+          band, 'band', 'PEQ band index must be 0 .. ${peqBandCount - 1}.');
+    }
+  }
+
+  /// Writes an arbitrary PEQ gain for [channel] and [band] using the confirmed
   /// ICP5 parameter-ID 0x18 encoding. [gainDb] must be in −6.0 .. +3.0 dB
   /// (the range enforced by the ADAU1701 decoder at read time).
-  static List<int> buildPeqGainWriteArbitrary(int channel, double gainDb) {
+  ///
+  /// Band index 0 (Band 1) is capture-proven and its bytes are unchanged.
+  /// Bands 1 .. 9 (Band 2 .. Band 10) place the index in the confirmed band
+  /// payload byte but are NOT independently capture-proven — see [peqBandPayloadIndex].
+  static List<int> buildPeqGainWriteArbitrary(int channel, double gainDb,
+      {int band = 0}) {
     if (channel < 0 || channel > 3) {
       throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
     }
+    _validatePeqBand(band);
     if (gainDb < -6.0 || gainDb > 3.0) {
       throw ArgumentError.value(
           gainDb, 'gainDb', 'Gain must be in −6.0 .. +3.0 dB.');
     }
     final tenths = (gainDb * 10).round() & 0xFF;
-    return _frame(0x0A, peqBandGainParameterId, [channel, 0x01, 0x00, tenths]);
+    return _frame(0x0A, peqBandGainParameterId, [channel, 0x01, band, tenths]);
   }
 
   static bool parsePeqGainAck(List<int> frame) =>
@@ -168,15 +189,17 @@ abstract final class Icp5FrameCodec {
   /// readback verification remains PENDING. Range is guarded to the ADAU1701
   /// decoder's validated 0.3 .. 10.0 window, exactly as gain/frequency are
   /// range-guarded, and the write is gated behind the same PEQ preflight.
-  static List<int> buildPeqQWriteArbitrary(int channel, double q) {
+  static List<int> buildPeqQWriteArbitrary(int channel, double q,
+      {int band = 0}) {
     if (channel < 0 || channel > 3) {
       throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
     }
+    _validatePeqBand(band);
     if (q < 0.3 || q > 10.0) {
       throw ArgumentError.value(q, 'q', 'Q must be in 0.3 .. 10.0.');
     }
     final tenths = (q * 10).round() & 0xFF;
-    return _frame(0x0A, peqBandGainParameterId, [channel, 0x00, 0x00, tenths]);
+    return _frame(0x0A, peqBandGainParameterId, [channel, 0x00, band, tenths]);
   }
 
   /// ACK for the adopted-from-Consumer Q write. Shares parameter 0x18 with the
@@ -186,13 +209,19 @@ abstract final class Icp5FrameCodec {
   static bool parsePeqQAck(List<int> frame) =>
       _parseSuccessAck(frame, peqBandGainParameterId);
 
-  /// Writes an arbitrary filter frequency for [channel] using the confirmed
-  /// ICP5 parameter-ID 0x15 encoding. [frequencyHz] must be in 20 .. 20000.
+  /// Writes an arbitrary filter frequency for [channel] and [band] using the
+  /// confirmed ICP5 parameter-ID 0x15 encoding. [frequencyHz] in 20 .. 20000.
+  ///
+  /// Band index 0 (Band 1) is capture-proven and its bytes are unchanged.
+  /// Bands 1 .. 9 place the index in the confirmed band payload byte but are
+  /// NOT independently capture-proven.
   static List<int> buildFilterFrequencyWriteArbitrary(
-      int channel, int frequencyHz) {
+      int channel, int frequencyHz,
+      {int band = 0}) {
     if (channel < 0 || channel > 3) {
       throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
     }
+    _validatePeqBand(band);
     if (frequencyHz < 20 || frequencyHz > 20000) {
       throw ArgumentError.value(
           frequencyHz, 'frequencyHz', 'Frequency must be in 20 .. 20 000 Hz.');
@@ -200,7 +229,7 @@ abstract final class Icp5FrameCodec {
     return _frame(0x0B, filterCutoffParameterId, [
       channel,
       0x02,
-      0x00,
+      band,
       frequencyHz & 0xFF,
       (frequencyHz >> 8) & 0xFF,
     ]);

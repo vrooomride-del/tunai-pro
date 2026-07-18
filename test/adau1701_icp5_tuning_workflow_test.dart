@@ -216,6 +216,65 @@ void main() {
     });
   });
 
+  // ── Multi-band (Band 1..10) generalization ───────────────────────────────
+  // Band index occupies payload byte 2 = frame index 9. Band 0 (Band 1) output
+  // must be byte-identical to the pre-multiband build; bands 1..9 set index 9.
+
+  group('multi-band band index encoding', () {
+    test('gain band 0 is unchanged and matches default (no band arg)', () {
+      final def = Icp5FrameCodec.buildPeqGainWriteArbitrary(0, -1.0);
+      final band0 = Icp5FrameCodec.buildPeqGainWriteArbitrary(0, -1.0, band: 0);
+      expect(band0, def);
+      expect(band0[9], 0x00); // band byte
+    });
+
+    test('gain band N sets frame index 9 to N, everything else identical', () {
+      final band0 = Icp5FrameCodec.buildPeqGainWriteArbitrary(0, -1.0);
+      for (var band = 1; band < Icp5FrameCodec.peqBandCount; band++) {
+        final f = Icp5FrameCodec.buildPeqGainWriteArbitrary(0, -1.0, band: band);
+        expect(validEnvelope(f), isTrue);
+        expect(f[9], band);
+        // Only the band byte and checksum differ from band 0.
+        expect(f.sublist(0, 9), band0.sublist(0, 9));
+        expect(f[10], band0[10]); // gain value unchanged
+      }
+    });
+
+    test('frequency band N sets frame index 9 to N', () {
+      final band0 = Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(0, 2000);
+      final f =
+          Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(0, 2000, band: 7);
+      expect(validEnvelope(f), isTrue);
+      expect(f[9], 7);
+      expect(f.sublist(0, 9), band0.sublist(0, 9));
+      expect(f.sublist(10, 12), band0.sublist(10, 12)); // freq LE bytes unchanged
+    });
+
+    test('Q band N sets frame index 9 to N', () {
+      final f = Icp5FrameCodec.buildPeqQWriteArbitrary(0, 2.0, band: 9);
+      expect(validEnvelope(f), isTrue);
+      expect(f[9], 9);
+      expect(f[10], 20); // Q value unchanged
+    });
+
+    test('rejects out-of-range band for all three builders', () {
+      expect(() => Icp5FrameCodec.buildPeqGainWriteArbitrary(0, 0.0, band: 10),
+          throwsA(isA<ArgumentError>()));
+      expect(() => Icp5FrameCodec.buildPeqGainWriteArbitrary(0, 0.0, band: -1),
+          throwsA(isA<ArgumentError>()));
+      expect(
+          () => Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(0, 1000,
+              band: 10),
+          throwsA(isA<ArgumentError>()));
+      expect(() => Icp5FrameCodec.buildPeqQWriteArbitrary(0, 2.0, band: 10),
+          throwsA(isA<ArgumentError>()));
+    });
+
+    test('peqBandCount is 10 (Band 1 .. Band 10)', () {
+      expect(Icp5FrameCodec.peqBandCount, 10);
+    });
+  });
+
   // ── Envelope consistency across both methods ─────────────────────────────
 
   group('frame envelope consistency', () {

@@ -525,30 +525,36 @@ class Icp5UsbTransport
       _writePhaseC(Icp5FrameCodec.buildFilterCutoffWrite(channel, value),
           Icp5FrameCodec.parseFilterCutoffAck);
 
-  /// Writes an arbitrary PEQ band 1 gain in −6.0 .. +3.0 dB for [channel].
-  /// Uses the confirmed parameter-ID 0x18 encoding. Range-validated only.
+  /// Writes an arbitrary PEQ gain in −6.0 .. +3.0 dB for [channel] and [band]
+  /// (0 = Band 1). Uses the confirmed parameter-ID 0x18 encoding. Band 0 is
+  /// capture-proven; bands 1..9 reuse the confirmed band payload byte and are
+  /// hardware-unverified. Range-validated only.
   @override
-  Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb) async {
+  Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb,
+      {int band = 0}) async {
     final r = await _writePhaseC(
-      Icp5FrameCodec.buildPeqGainWriteArbitrary(channel, gainDb),
+      Icp5FrameCodec.buildPeqGainWriteArbitrary(channel, gainDb, band: band),
       Icp5FrameCodec.parsePeqGainAck,
     );
     return Adau1701WriteAck(success: r.success, message: r.message);
   }
 
-  /// Writes an arbitrary filter frequency in 20 .. 20 000 Hz for [channel].
-  /// Uses the confirmed parameter-ID 0x15 encoding. Range-validated only.
+  /// Writes an arbitrary filter frequency in 20 .. 20 000 Hz for [channel] and
+  /// [band] (0 = Band 1). Uses the confirmed parameter-ID 0x15 encoding. Band 0
+  /// is capture-proven; bands 1..9 are hardware-unverified. Range-validated only.
   @override
-  Future<Adau1701WriteAck> writeFilterFrequency(
-      int channel, int frequencyHz) async {
+  Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
+      {int band = 0}) async {
     final r = await _writePhaseC(
-      Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(channel, frequencyHz),
+      Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(channel, frequencyHz,
+          band: band),
       Icp5FrameCodec.parseFilterFrequencyAck,
     );
     return Adau1701WriteAck(success: r.success, message: r.message);
   }
 
-  /// Writes an arbitrary PEQ band 1 Q in 0.3 .. 10.0 for [channel].
+  /// Writes an arbitrary PEQ Q in 0.3 .. 10.0 for [channel] and [band]
+  /// (0 = Band 1).
   ///
   /// NOT capture-proven: the encoding is adopted from the hardware-proven
   /// Consumer Q builder (parameter 0x18, property 0x00) — hardware ACK +
@@ -556,9 +562,10 @@ class Icp5UsbTransport
   /// handshake / profile / busy guards as [writePeqGain] via [_writePhaseC];
   /// the working transport request/response path is unchanged.
   @override
-  Future<Adau1701WriteAck> writePeqQ(int channel, double q) async {
+  Future<Adau1701WriteAck> writePeqQ(int channel, double q,
+      {int band = 0}) async {
     final r = await _writePhaseC(
-      Icp5FrameCodec.buildPeqQWriteArbitrary(channel, q),
+      Icp5FrameCodec.buildPeqQWriteArbitrary(channel, q, band: band),
       Icp5FrameCodec.parsePeqQAck,
     );
     return Adau1701WriteAck(success: r.success, message: r.message);

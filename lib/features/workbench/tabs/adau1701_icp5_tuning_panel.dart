@@ -11,6 +11,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
+import '../../../core/transport/adau1701_peq_band.dart';
 import '../../../core/transport/adau1701_peq_deployment_gate.dart';
 import '../../../core/transport/adau1701_tuning_transport.dart';
 import '../../../core/transport/icp5_frame_codec.dart';
@@ -59,6 +60,13 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   bool? _qWriteOk;
   Adau1701Ch0Band0OriginalState? _qVerifyState;
   String? _qApplyError;
+
+  // Selected PEQ band index (0 = Band 1). Only Band 1 is capture-proven and
+  // has a readback path (the confirmed decoder reads Ch0 Band 0); bands 2..10
+  // reuse the confirmed band payload byte but are hardware-unverified.
+  int _selectedBand = 0;
+  bool get _bandIsProven => _selectedBand == 0;
+  int _appliedBand = 0;
 
   @override
   void initState() {
@@ -167,6 +175,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       return;
     }
 
+    final band = _selectedBand;
     setState(() {
       _busy = true;
       _preflightMessage = null;
@@ -174,6 +183,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       // Snapshot intended values at apply time so _VerificationCard has stable data.
       _appliedGain = newGain;
       _appliedFreq = newFreq;
+      _appliedBand = band;
       _gainWriteOk = null;
       _freqWriteOk = null;
       _verifyState = null;
@@ -196,8 +206,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       });
       if (!preflight.passed) return;
 
-      // ── 2. Write gain ───────────────────────────────────────────────────
-      final gainResult = await widget.transport.writePeqGain(0, newGain);
+      // ── 2. Write gain (to the selected band) ────────────────────────────
+      final gainResult =
+          await widget.transport.writePeqGain(0, newGain, band: band);
       if (!mounted) return;
       setState(() => _gainWriteOk = gainResult.success);
       if (!gainResult.success) {
@@ -205,9 +216,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         return;
       }
 
-      // ── 3. Write frequency ──────────────────────────────────────────────
+      // ── 3. Write frequency (to the selected band) ───────────────────────
       final freqResult =
-          await widget.transport.writeFilterFrequency(0, newFreq);
+          await widget.transport.writeFilterFrequency(0, newFreq, band: band);
       if (!mounted) return;
       setState(() => _freqWriteOk = freqResult.success);
       if (!freqResult.success) {
@@ -216,7 +227,10 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         return;
       }
 
-      // ── 4. Read-back verification ───────────────────────────────────────
+      // ── 4. Read-back verification (Band 1 only) ─────────────────────────
+      // The confirmed decoder reads Ch0 Band 0, so readback verification is
+      // only possible for Band 1. Bands 2..10 are ACK-only (unverified).
+      if (band != 0) return;
       final svc = Adau1701Ch0Band0ReadService(transport: widget.transport);
       final verify = await svc.readOriginalState();
       if (!mounted) return;
@@ -248,9 +262,11 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       return;
     }
 
+    final band = _selectedBand;
     setState(() {
       _busy = true;
       _appliedQ = newQ;
+      _appliedBand = band;
       _qWriteOk = null;
       _qVerifyState = null;
       _qApplyError = null;
@@ -269,7 +285,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         setState(() => _readState = preflight.originalState);
       }
 
-      final qResult = await widget.transport.writePeqQ(0, newQ);
+      final qResult = await widget.transport.writePeqQ(0, newQ, band: band);
       if (!mounted) return;
       setState(() => _qWriteOk = qResult.success);
       if (!qResult.success) {
@@ -278,6 +294,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       }
 
       // Read-back so hardware verification can compare intended vs actual Q.
+      // Only Band 1 has a confirmed read offset; bands 2..10 are ACK-only.
+      if (band != 0) return;
       final svc = Adau1701Ch0Band0ReadService(transport: widget.transport);
       final verify = await svc.readOriginalState();
       if (!mounted) return;
@@ -318,6 +336,25 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         if (_readState != null) ...[
           const SizedBox(height: 12),
           _OriginalStateCard(state: _readState!),
+          const SizedBox(height: 16),
+
+          // ── Band selector (Band 1 .. Band 10) ────────────────────────────
+          Text('PEQ BAND', style: proSubtitle(size: 9)),
+          const SizedBox(height: 6),
+          _BandSelector(
+            selectedBand: _selectedBand,
+            onSelected: (band) => setState(() => _selectedBand = band),
+          ),
+          if (!_bandIsProven) ...[
+            const SizedBox(height: 8),
+            _UnverifiedBanner(
+              message:
+                  'Band ${_selectedBand + 1} reuses the confirmed band payload '
+                  'byte but is NOT capture-proven and has no readback path '
+                  '(the decoder reads Band 1 only). Writes are ACK-only — '
+                  'confirm on hardware.',
+            ),
+          ],
           const SizedBox(height: 16),
 
           // ── Edit section ─────────────────────────────────────────────────
@@ -370,7 +407,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
             _ResultRow(
               label: 'GAIN WRITE ACK',
               passed: _gainWriteOk!,
-              detail: _gainWriteOk! ? 'ACK received.' : 'No ACK.',
+              detail: _gainWriteOk!
+                  ? 'ACK received (${Adau1701PeqBand(index: _appliedBand).label}).'
+                  : 'No ACK.',
             ),
           ],
           if (_freqWriteOk != null) ...[
@@ -378,7 +417,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
             _ResultRow(
               label: 'FREQ WRITE ACK',
               passed: _freqWriteOk!,
-              detail: _freqWriteOk! ? 'ACK received.' : 'No ACK.',
+              detail: _freqWriteOk!
+                  ? 'ACK received (${Adau1701PeqBand(index: _appliedBand).label}).'
+                  : 'No ACK.',
             ),
           ],
           // Only show verification when both writes succeeded and readback returned.
@@ -398,7 +439,12 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
           // gain/frequency apply above. Hardware ACK + readback verification
           // is pending; treat any result here as provisional.
           const SizedBox(height: 20),
-          _UnverifiedBanner(),
+          const _UnverifiedBanner(
+            message:
+                'Q write mapping is adopted from the Consumer app and is NOT '
+                'capture-proven on ICP5. Hardware ACK + readback verification '
+                'is pending — do not treat a PASS here as confirmed.',
+          ),
           const SizedBox(height: 8),
           Text('Q (UNVERIFIED WRITE)  0.3 .. 10.0', style: proSubtitle(size: 9)),
           const SizedBox(height: 8),
@@ -707,6 +753,9 @@ class _ResultRow extends StatelessWidget {
 // ── Unverified-path banner ──────────────────────────────────────────────────────
 
 class _UnverifiedBanner extends StatelessWidget {
+  final String message;
+  const _UnverifiedBanner({required this.message});
+
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -720,14 +769,35 @@ class _UnverifiedBanner extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              'Q write mapping is adopted from the Consumer app and is NOT '
-              'capture-proven on ICP5. Hardware ACK + readback verification '
-              'is pending — do not treat a PASS here as confirmed.',
+              message,
               style: TextStyle(
                   color: kProAmber.withValues(alpha: 0.9), fontSize: 9),
             ),
           ),
         ]),
+      );
+}
+
+class _BandSelector extends StatelessWidget {
+  final int selectedBand;
+  final ValueChanged<int> onSelected;
+  const _BandSelector(
+      {required this.selectedBand, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (var band = 0; band < Icp5FrameCodec.peqBandCount; band++)
+            ChoiceChip(
+              key: ValueKey('peq_band_$band'),
+              label: Text('Band ${band + 1}${band == 0 ? '' : ' *'}',
+                  style: const TextStyle(fontSize: 10)),
+              selected: band == selectedBand,
+              onSelected: (_) => onSelected(band),
+            ),
+        ],
       );
 }
 
