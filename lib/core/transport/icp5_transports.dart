@@ -610,12 +610,17 @@ class Icp5UsbTransport
 
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
+    // Subscribe before writing so a fast response is never missed on the
+    // broadcast stream.
+    final frameFuture = _frames.stream.firstWhere(accepts);
     final written =
         await _connection!.write(tx, writeTimeout).timeout(writeTimeout);
     if (written != tx.length) {
       throw StateError('Partial serial write: $written/${tx.length}.');
     }
-    return _frames.stream.firstWhere(accepts).timeout(readTimeout);
+    // Apply readTimeout after write returns so BLE write acknowledgement time
+    // does not consume the response timeout budget.
+    return frameFuture.timeout(readTimeout);
   }
 
   void _activateStop(String warning) {
