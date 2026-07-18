@@ -78,8 +78,16 @@ class Icp5BluetoothGattDriver
           error: 'ICP5 BLE GATT is unavailable on this platform.');
     }
     try {
-      if (await FlutterBluePlus.adapterState.first !=
-          BluetoothAdapterState.on) {
+      // On macOS/CoreBluetooth the adapterState stream emits `unknown` first,
+      // before the adapter has reported its real state. Acting on that raw
+      // first value produced a false "Bluetooth is off" warning on the initial
+      // Connect click (the second click worked once `on` had been emitted).
+      // Wait for the first definitive (non-unknown) state instead.
+      final adapterState = await FlutterBluePlus.adapterState
+          .firstWhere((state) => state != BluetoothAdapterState.unknown)
+          .timeout(const Duration(seconds: 2),
+              onTimeout: () => BluetoothAdapterState.unknown);
+      if (adapterState != BluetoothAdapterState.on) {
         return const Icp5DiscoveryResult(
             source: source,
             allPorts: [],
