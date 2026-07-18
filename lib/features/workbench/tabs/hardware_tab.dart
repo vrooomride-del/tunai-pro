@@ -376,6 +376,20 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         .firstOrNull;
     final hwState = project?.hardwareState ?? HardwareProjectState.createDefault();
     final conn = hwState.connectionState;
+    // The CONNECTION STATE panel is sourced from the persisted project model,
+    // which is not updated by the live ICP5 USB/BLE transport. Reflect the
+    // actual active transport so a working, handshaked connection (proven by a
+    // successful read/write) is not shown as "Disconnected". Display-only: the
+    // project model and transport behavior are unchanged, and simulation-only
+    // mode is left exactly as-is. Re-evaluated live by the 1 s refresh timer.
+    final liveIcp5Connected = (_adau1701BleTransport.isConnected &&
+            _adau1701BleTransport.handshakeComplete) ||
+        (_adau1701UsbTransport.isConnected &&
+            _adau1701UsbTransport.handshakeComplete);
+    final displayConn = (liveIcp5Connected &&
+            conn.transportType != HardwareTransportType.simulationOnly)
+        ? conn.copyWith(connectionStatus: HardwareConnectionStatus.connected)
+        : conn;
     final activePlan = hwState.activePlan;
     final activePkg = project?.exportState.activePackage;
     final validationState = project?.addressValidationState
@@ -449,7 +463,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         const _SectionHeader('CONNECTION STATE', Icons.usb_outlined),
         const SizedBox(height: 8),
         _ConnectionPanel(
-          conn: conn,
+          conn: displayConn,
           onTransport: _setTransport,
           onTarget: _setTargetDevice,
           onCheck: _checkConnection,
