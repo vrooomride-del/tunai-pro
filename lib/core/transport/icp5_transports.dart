@@ -610,19 +610,12 @@ class Icp5UsbTransport
 
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
-    // Subscribe before writing so a fast response is never missed on the
-    // broadcast stream.
-    final frameFuture = _frames.stream.firstWhere(accepts);
     final written =
         await _connection!.write(tx, writeTimeout).timeout(writeTimeout);
     if (written != tx.length) {
       throw StateError('Partial serial write: $written/${tx.length}.');
     }
-    // Apply readTimeout AFTER write returns. On BLE, write() with
-    // withoutResponse:false awaits the ATT Write Response, which takes
-    // real time and would consume the budget before the ICP5 data
-    // response even arrives if the timeout started before the write.
-    return frameFuture.timeout(readTimeout);
+    return _frames.stream.firstWhere(accepts).timeout(readTimeout);
   }
 
   void _activateStop(String warning) {
