@@ -248,6 +248,8 @@ abstract final class Icp5FrameCodec {
 class Icp5FrameBuffer {
   final List<int> _bytes = [];
 
+  void reset() => _bytes.clear();
+
   List<List<int>> add(List<int> chunk) {
     _bytes.addAll(chunk);
     final frames = <List<int>>[];

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'adau1701_ch0_band0_read_service.dart';
 import 'adau1701_tuning_transport.dart';
@@ -106,8 +107,8 @@ class Icp5UsbTransport
   Icp5SerialConnection? _connection;
   StreamSubscription<List<int>>? _subscription;
   final Icp5FrameBuffer _buffer = Icp5FrameBuffer();
-  final StreamController<List<int>> _frames =
-      StreamController<List<int>>.broadcast();
+  final Queue<List<int>> _frameQueue = Queue<List<int>>();
+  Completer<void>? _frameCompleter;
   List<Icp5SerialDevice> _devices = const [];
   List<Icp5SerialDevice> _enumeratedPorts = const [];
   String _discoverySource = 'Windows SetupAPI Ports class';
@@ -212,7 +213,9 @@ class Icp5UsbTransport
       _connection = await driver.open(_selectedPort!);
       _subscription = _connection!.bytes.listen((chunk) {
         for (final frame in _buffer.add(chunk)) {
-          _frames.add(frame);
+          _frameQueue.addLast(frame);
+          final c = _frameCompleter;
+          if (c != null && !c.isCompleted) c.complete();
         }
       }, onError: (_) => _state = DspConnectionState.error);
       final identity = await _exchange(Icp5FrameCodec.identificationRequest,
@@ -246,6 +249,9 @@ class Icp5UsbTransport
   Future<void> close() async {
     await _subscription?.cancel();
     _subscription = null;
+    _frameQueue.clear();
+    _frameCompleter = null;
+    _buffer.reset();
     await _connection?.close();
     _connection = null;
     _handshakeComplete = false;
@@ -274,6 +280,10 @@ class Icp5UsbTransport
     if (_busy) throw StateError('Another ICP5 transaction is active.');
     _busy = true;
     try {
+      // Discard any stale frames (e.g. unsolicited notifies from a prior cycle)
+      // and partial bytes in the buffer so the new read starts clean.
+      _frameQueue.clear();
+      _buffer.reset();
       final reader = Icp5RawStateReader(exchange: (request) async {
         final response = await _exchange(
           request,
@@ -610,17 +620,31 @@ class Icp5UsbTransport
 
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
-    // Subscribe before writing so a fast response is never missed on the
-    // broadcast stream.
-    final frameFuture = _frames.stream.firstWhere(accepts);
     final written =
         await _connection!.write(tx, writeTimeout).timeout(writeTimeout);
     if (written != tx.length) {
       throw StateError('Partial serial write: $written/${tx.length}.');
     }
-    // Apply readTimeout after write returns so BLE write acknowledgement time
-    // does not consume the response timeout budget.
-    return frameFuture.timeout(readTimeout);
+    // Drain the queue for a matching frame.  Frames that arrived between
+    // consecutive exchange calls (e.g. rapid BLE notifies for a multi-page
+    // read) are buffered in _frameQueue and never dropped.
+    final deadline = DateTime.now().add(readTimeout);
+    while (true) {
+      while (_frameQueue.isNotEmpty) {
+        final frame = _frameQueue.removeFirst();
+        if (accepts(frame)) return frame;
+      }
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining.isNegative) return null;
+      _frameCompleter = Completer<void>();
+      try {
+        await _frameCompleter!.future.timeout(remaining);
+      } on TimeoutException {
+        _frameCompleter = null;
+        return null;
+      }
+      _frameCompleter = null;
+    }
   }
 
   void _activateStop(String warning) {
