@@ -548,6 +548,22 @@ class Icp5UsbTransport
     return Adau1701WriteAck(success: r.success, message: r.message);
   }
 
+  /// Writes an arbitrary PEQ band 1 Q in 0.3 .. 10.0 for [channel].
+  ///
+  /// NOT capture-proven: the encoding is adopted from the hardware-proven
+  /// Consumer Q builder (parameter 0x18, property 0x00) — hardware ACK +
+  /// readback verification is PENDING. Goes through the identical STOP /
+  /// handshake / profile / busy guards as [writePeqGain] via [_writePhaseC];
+  /// the working transport request/response path is unchanged.
+  @override
+  Future<Adau1701WriteAck> writePeqQ(int channel, double q) async {
+    final r = await _writePhaseC(
+      Icp5FrameCodec.buildPeqQWriteArbitrary(channel, q),
+      Icp5FrameCodec.parsePeqQAck,
+    );
+    return Adau1701WriteAck(success: r.success, message: r.message);
+  }
+
   Future<Icp5PhaseCResult> writeCapturedPeqBand1Gain(
           int channel, double value) =>
       _writePhaseC(Icp5FrameCodec.buildPeqBand1GainWrite(channel, value),

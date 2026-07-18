@@ -45,6 +45,7 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   final RawDspStateSnapshot? _readSnapshot;
   final bool _gainWriteSuccess;
   final bool _freqWriteSuccess;
+  final bool _qWriteSuccess;
 
   /// Second read (readback) can return different data if [_readbackSnapshot] is set.
   final RawDspStateSnapshot? _readbackSnapshot;
@@ -58,11 +59,13 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
     Object? readError,
     bool gainWriteSuccess = true,
     bool freqWriteSuccess = true,
+    bool qWriteSuccess = true,
     RawDspStateSnapshot? readbackSnapshot,
   })  : _readSnapshot = readSnapshot,
         _readError = readError,
         _gainWriteSuccess = gainWriteSuccess,
         _freqWriteSuccess = freqWriteSuccess,
+        _qWriteSuccess = qWriteSuccess,
         _readbackSnapshot = readbackSnapshot;
 
   @override
@@ -88,6 +91,13 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
       Adau1701WriteAck(
         success: _freqWriteSuccess,
         message: _freqWriteSuccess ? 'PASS_ACK' : 'No ACK.',
+      );
+
+  @override
+  Future<Adau1701WriteAck> writePeqQ(int channel, double q) async =>
+      Adau1701WriteAck(
+        success: _qWriteSuccess,
+        message: _qWriteSuccess ? 'PASS_ACK' : 'No ACK.',
       );
 }
 
@@ -187,10 +197,12 @@ void main() {
       await tester.pumpAndSettle(const Duration(seconds: 2));
 
       // Verify the TextField controllers have the hardware values.
-      // find.byType(TextField) returns [gain, freq] in order.
-      final textFields = tester.widgetList<TextField>(find.byType(TextField));
-      expect(textFields.first.controller?.text, '-1.0');
-      expect(textFields.last.controller?.text, '2000');
+      // find.byType(TextField) returns [gain, freq, q] in order.
+      final textFields =
+          tester.widgetList<TextField>(find.byType(TextField)).toList();
+      expect(textFields[0].controller?.text, '-1.0'); // gain
+      expect(textFields[1].controller?.text, '2000'); // frequency
+      expect(textFields[2].controller?.text, '2.0'); // Q (prefilled from read)
     });
   });
 
@@ -215,6 +227,54 @@ void main() {
       expect(find.textContaining('VERIFICATION PASS'), findsOneWidget);
       expect(find.textContaining('GAIN WRITE ACK'), findsOneWidget);
       expect(find.textContaining('FREQ WRITE ACK'), findsOneWidget);
+    });
+  });
+
+  group('after Q APPLY (adopted-from-Consumer, unverified)', () {
+    testWidgets('shows Q WRITE ACK + Q READBACK and the unverified banner',
+        (tester) async {
+      final transport = _FakeTuningTransport(
+        readSnapshot: _snapshot(),
+        readbackSnapshot: _snapshot(),
+      );
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      final applyQ = find.text('APPLY Q (UNVERIFIED)');
+      await tester.ensureVisible(applyQ);
+      await tester.tap(applyQ);
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+
+      expect(find.textContaining('Q WRITE ACK'), findsOneWidget);
+      expect(find.textContaining('Q READBACK'), findsOneWidget);
+      // Banner makes the unverified status explicit.
+      expect(find.textContaining('do not treat a PASS here as confirmed'),
+          findsOneWidget);
+    });
+
+    testWidgets('Q write failure shows error and no readback row',
+        (tester) async {
+      final transport = _FakeTuningTransport(
+        readSnapshot: _snapshot(),
+        qWriteSuccess: false,
+      );
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      final applyQ = find.text('APPLY Q (UNVERIFIED)');
+      await tester.ensureVisible(applyQ);
+      await tester.tap(applyQ);
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+
+      expect(find.textContaining('Q WRITE ACK'), findsOneWidget);
+      expect(find.textContaining('Q write failed'), findsOneWidget);
+      expect(find.textContaining('Q READBACK'), findsNothing);
     });
   });
 

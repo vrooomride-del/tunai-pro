@@ -159,6 +159,33 @@ abstract final class Icp5FrameCodec {
   static bool parsePeqGainAck(List<int> frame) =>
       _parseSuccessAck(frame, peqBandGainParameterId);
 
+  /// Writes an arbitrary PEQ band 1 Q for [channel].
+  ///
+  /// PROVENANCE — NOT capture-proven on the PRO capture set. This encoding is
+  /// ADOPTED FROM the hardware-proven Consumer q() builder (parameter 0x18,
+  /// property byte 0x00; the same 0x18 parameter this file already uses for
+  /// gain, with the property byte switched from 0x01 to 0x00). Hardware ACK +
+  /// readback verification remains PENDING. Range is guarded to the ADAU1701
+  /// decoder's validated 0.3 .. 10.0 window, exactly as gain/frequency are
+  /// range-guarded, and the write is gated behind the same PEQ preflight.
+  static List<int> buildPeqQWriteArbitrary(int channel, double q) {
+    if (channel < 0 || channel > 3) {
+      throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
+    }
+    if (q < 0.3 || q > 10.0) {
+      throw ArgumentError.value(q, 'q', 'Q must be in 0.3 .. 10.0.');
+    }
+    final tenths = (q * 10).round() & 0xFF;
+    return _frame(0x0A, peqBandGainParameterId, [channel, 0x00, 0x00, tenths]);
+  }
+
+  /// ACK for the adopted-from-Consumer Q write. Shares parameter 0x18 with the
+  /// gain ACK (the ICP5 success ACK does not echo the property byte), so this
+  /// is structurally identical to [parsePeqGainAck]; kept as a named parser so
+  /// the unverified Q path stays self-documenting.
+  static bool parsePeqQAck(List<int> frame) =>
+      _parseSuccessAck(frame, peqBandGainParameterId);
+
   /// Writes an arbitrary filter frequency for [channel] using the confirmed
   /// ICP5 parameter-ID 0x15 encoding. [frequencyHz] must be in 20 .. 20000.
   static List<int> buildFilterFrequencyWriteArbitrary(

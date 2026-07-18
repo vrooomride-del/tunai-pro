@@ -13,4 +13,9 @@ abstract interface class Adau1701TuningTransport
     implements Adau1701RawReadTransport {
   Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb);
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz);
+
+  /// Writes PEQ band 1 Q. NOT capture-proven — adopted from the Consumer Q
+  /// encoding; hardware ACK + readback verification pending. See
+  /// [Icp5FrameCodec.buildPeqQWriteArbitrary].
+  Future<Adau1701WriteAck> writePeqQ(int channel, double q);
 }

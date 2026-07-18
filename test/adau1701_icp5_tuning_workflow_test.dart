@@ -162,6 +162,60 @@ void main() {
     });
   });
 
+  // ── Q write (adopted-from-Consumer, NOT capture-proven) ──────────────────
+
+  group('buildPeqQWriteArbitrary (adopted-from-Consumer, unverified)', () {
+    test('builds frame: param 0x18, property 0x00, Q 2.0 on channel 0', () {
+      final frame = Icp5FrameCodec.buildPeqQWriteArbitrary(0, 2.0);
+      expect(validEnvelope(frame), isTrue);
+      // Parameter ID 0x00000018 at bytes 3-6 (same 0x18 as gain).
+      expect(frame.sublist(3, 7), [0x00, 0x00, 0x00, 0x18]);
+      // Payload: [channel=0, property=0x00 (Q), 0x00, tenths=(2.0*10)=20].
+      expect(frame[7], 0x00); // channel
+      expect(frame[8], 0x00); // Q property (gain uses 0x01, freq(consumer) 0x02)
+      expect(frame[9], 0x00);
+      expect(frame[10], 20);
+      // Full expected packet incl. checksum.
+      const base = [0x55, 0x0A, 0x1C, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
+        20];
+      expect(frame, [...base, Icp5FrameCodec.checksum(base)]);
+    });
+
+    test('differs from gain only in the property byte', () {
+      final q = Icp5FrameCodec.buildPeqQWriteArbitrary(0, 2.0);
+      final gain = Icp5FrameCodec.buildPeqGainWriteArbitrary(0, 2.0);
+      expect(q[8], 0x00); // Q property
+      expect(gain[8], 0x01); // gain property
+      // Same parameter id, same channel/band/value bytes.
+      expect(q.sublist(3, 7), gain.sublist(3, 7));
+      expect(q[7], gain[7]); // channel
+      expect(q[10], gain[10]); // tenths
+    });
+
+    test('encodes lower and upper Q bounds', () {
+      expect(Icp5FrameCodec.buildPeqQWriteArbitrary(0, 0.3)[10], 3);
+      expect(Icp5FrameCodec.buildPeqQWriteArbitrary(0, 10.0)[10], 100);
+    });
+
+    test('ACK parser accepts parameter ID 0x18', () {
+      const ack = [0x55, 0x07, 0xE1, 0x00, 0x00, 0x00, 0x18, 0x00];
+      final full = [...ack, Icp5FrameCodec.checksum(ack)];
+      expect(Icp5FrameCodec.parsePeqQAck(full), isTrue);
+    });
+
+    test('rejects Q below 0.3 and above 10.0', () {
+      expect(() => Icp5FrameCodec.buildPeqQWriteArbitrary(0, 0.29),
+          throwsA(isA<ArgumentError>()));
+      expect(() => Icp5FrameCodec.buildPeqQWriteArbitrary(0, 10.1),
+          throwsA(isA<ArgumentError>()));
+    });
+
+    test('rejects invalid channel', () {
+      expect(() => Icp5FrameCodec.buildPeqQWriteArbitrary(4, 2.0),
+          throwsA(isA<ArgumentError>()));
+    });
+  });
+
   // ── Envelope consistency across both methods ─────────────────────────────
 
   group('frame envelope consistency', () {

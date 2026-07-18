@@ -30,6 +30,10 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   late final Adau1701PeqDeploymentGate _gate;
   late final TextEditingController _gainCtrl;
   late final TextEditingController _freqCtrl;
+  // Q write is ADOPTED-FROM-CONSUMER and NOT capture-proven; its control is a
+  // separate, clearly-labelled unverified path that never touches the proven
+  // gain/frequency apply flow above.
+  late final TextEditingController _qCtrl;
   Timer? _statusTimer;
 
   bool _busy = false;
@@ -50,12 +54,19 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   Adau1701Ch0Band0OriginalState? _verifyState;
   String? _applyError;
 
+  // After Q APPLY (adopted-from-Consumer, hardware-unverified)
+  double? _appliedQ;
+  bool? _qWriteOk;
+  Adau1701Ch0Band0OriginalState? _qVerifyState;
+  String? _qApplyError;
+
   @override
   void initState() {
     super.initState();
     _gate = Adau1701PeqDeploymentGate(transport: widget.transport);
     _gainCtrl = TextEditingController();
     _freqCtrl = TextEditingController();
+    _qCtrl = TextEditingController();
     // Poll transport status so the status bar reflects live ICP5 connection
     // changes without requiring the parent widget to rebuild.
     // Also clears stale read state on disconnect so the engineer always
@@ -74,6 +85,10 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
           _freqWriteOk = null;
           _verifyState = null;
           _applyError = null;
+          _appliedQ = null;
+          _qWriteOk = null;
+          _qVerifyState = null;
+          _qApplyError = null;
         });
         _gate.invalidate();
       } else {
@@ -87,6 +102,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
     _statusTimer?.cancel();
     _gainCtrl.dispose();
     _freqCtrl.dispose();
+    _qCtrl.dispose();
     super.dispose();
   }
 
@@ -108,6 +124,10 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       _freqWriteOk = null;
       _verifyState = null;
       _applyError = null;
+      _appliedQ = null;
+      _qWriteOk = null;
+      _qVerifyState = null;
+      _qApplyError = null;
     });
     try {
       final svc = Adau1701Ch0Band0ReadService(transport: widget.transport);
@@ -119,6 +139,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
           _readState = s;
           _gainCtrl.text = s.gainDb.toStringAsFixed(1);
           _freqCtrl.text = '${s.frequencyHz}';
+          _qCtrl.text = s.q.toStringAsFixed(1);
         });
       } else {
         setState(() => _readError = result.message);
@@ -206,6 +227,67 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       }
     } catch (e) {
       if (mounted) setState(() => _applyError = '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Applies an ADAU1701 PEQ Q write. This path is ADOPTED-FROM-CONSUMER and is
+  /// NOT capture-proven; hardware ACK + readback verification is PENDING. It is
+  /// deliberately independent of [_apply] so the proven gain/frequency flow is
+  /// never affected, but it uses the identical preflight gate and the same
+  /// transport safety guards ([Icp5UsbTransport.writePeqQ] → _writePhaseC).
+  Future<void> _applyQ() async {
+    final newQ = double.tryParse(_qCtrl.text);
+    if (newQ == null) {
+      setState(() => _qApplyError = 'Enter valid Q.');
+      return;
+    }
+    if (newQ < 0.3 || newQ > 10.0) {
+      setState(() => _qApplyError = 'Q must be 0.3 .. 10.0.');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _appliedQ = newQ;
+      _qWriteOk = null;
+      _qVerifyState = null;
+      _qApplyError = null;
+    });
+
+    try {
+      // Same preflight gate as gain/frequency, declaring a Q write.
+      final preflight =
+          await _gate.runPreflight(const Adau1701PeqWriteFields(q: true));
+      if (!mounted) return;
+      if (!preflight.passed) {
+        setState(() => _qApplyError = 'Preflight failed: ${preflight.message}');
+        return;
+      }
+      if (preflight.originalState != null) {
+        setState(() => _readState = preflight.originalState);
+      }
+
+      final qResult = await widget.transport.writePeqQ(0, newQ);
+      if (!mounted) return;
+      setState(() => _qWriteOk = qResult.success);
+      if (!qResult.success) {
+        setState(() => _qApplyError = 'Q write failed: ${qResult.message}');
+        return;
+      }
+
+      // Read-back so hardware verification can compare intended vs actual Q.
+      final svc = Adau1701Ch0Band0ReadService(transport: widget.transport);
+      final verify = await svc.readOriginalState();
+      if (!mounted) return;
+      if (verify.succeeded) {
+        setState(() => _qVerifyState = verify.originalState);
+      } else {
+        setState(() => _qApplyError = 'Q readback failed: ${verify.message}');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _qApplyError = '$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -310,6 +392,59 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
               readback: _verifyState!,
             ),
           ],
+
+          // ── Q (UNVERIFIED — adopted-from-Consumer) ─────────────────────────
+          // Separate, clearly-labelled path. Does not affect the proven
+          // gain/frequency apply above. Hardware ACK + readback verification
+          // is pending; treat any result here as provisional.
+          const SizedBox(height: 20),
+          _UnverifiedBanner(),
+          const SizedBox(height: 8),
+          Text('Q (UNVERIFIED WRITE)  0.3 .. 10.0', style: proSubtitle(size: 9)),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: _FieldEditor(
+                label: 'Q  (adopted-from-Consumer, not capture-proven)',
+                controller: _qCtrl,
+                hint: '2.0',
+                keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          _ActionButton(
+            label: 'APPLY Q (UNVERIFIED)',
+            icon: Icons.science_outlined,
+            busy: _busy,
+            color: kProAmber,
+            onPressed: _applyQ,
+          ),
+          if (_qApplyError != null) ...[
+            const SizedBox(height: 8),
+            _errorRow(_qApplyError!),
+          ],
+          if (_qWriteOk != null) ...[
+            const SizedBox(height: 4),
+            _ResultRow(
+              label: 'Q WRITE ACK',
+              passed: _qWriteOk!,
+              detail: _qWriteOk!
+                  ? 'ACK received (mapping unverified — confirm on hardware).'
+                  : 'No ACK.',
+            ),
+          ],
+          if (_qVerifyState != null && (_qWriteOk ?? false)) ...[
+            const SizedBox(height: 4),
+            _ResultRow(
+              label: 'Q READBACK',
+              passed: (_qVerifyState!.q - (_appliedQ ?? 0)).abs() < 0.15,
+              detail: 'wrote ${(_appliedQ ?? 0).toStringAsFixed(1)} · '
+                  'read ${_qVerifyState!.q.toStringAsFixed(1)} '
+                  '(hardware confirmation pending).',
+            ),
+          ],
         ],
       ],
     ]);
@@ -386,7 +521,7 @@ class _OriginalStateCard extends StatelessWidget {
         _StateRow('Frequency', '${state.frequencyHz} Hz'),
         _StateRow('Gain', '${state.gainDb.toStringAsFixed(1)} dB'),
         _StateRow('Q',
-            '${state.q.toStringAsFixed(2)}  (read-only — no write path confirmed)'),
+            '${state.q.toStringAsFixed(2)}  (write path adopted-from-Consumer — UNVERIFIED)'),
         _StateRow('property08',
             '${state.property08State}  (read-only — semantic unconfirmed)'),
         _StateRow('Device', state.deviceId),
@@ -566,6 +701,33 @@ class _ResultRow extends StatelessWidget {
                 style: const TextStyle(color: Colors.white54, fontSize: 9)),
           ),
         ],
+      );
+}
+
+// ── Unverified-path banner ──────────────────────────────────────────────────────
+
+class _UnverifiedBanner extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: kProAmber.withValues(alpha: 0.08),
+          border: Border.all(color: kProAmber.withValues(alpha: 0.35)),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(children: [
+          const Icon(Icons.warning_amber_outlined, size: 12, color: kProAmber),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Q write mapping is adopted from the Consumer app and is NOT '
+              'capture-proven on ICP5. Hardware ACK + readback verification '
+              'is pending — do not treat a PASS here as confirmed.',
+              style: TextStyle(
+                  color: kProAmber.withValues(alpha: 0.9), fontSize: 9),
+            ),
+          ),
+        ]),
       );
 }
 
