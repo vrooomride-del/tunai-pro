@@ -106,12 +106,27 @@ class Icp5UsbTransport
   Icp5SerialConnection? _connection;
   StreamSubscription<List<int>>? _subscription;
   final Icp5FrameBuffer _buffer = Icp5FrameBuffer();
-  // Consumer-proven pattern: one Completer<List<int>> per in-flight exchange,
-  // set BEFORE the write so rapid BLE notifies are never missed. Frames that
-  // arrive with no active exchange, or that the active matcher rejects, are
-  // discarded so a stale response can never satisfy a later request.
+
+  // ── Consumer-proven request/response transaction engine ────────────────────
+  // Ported structurally from ConsumerBleService (tunai_codex). A dedicated
+  // handshake completer takes routing priority; application exchanges own a
+  // single generation-guarded completer + matcher that are always set BEFORE
+  // the write, so a BLE notify arriving during the GATT write is never missed.
+  Completer<List<int>>? _handshakeResponse;
   Completer<List<int>>? _pendingResponse;
   bool Function(List<int>)? _pendingAccepts;
+  // Monotonically increasing request generation. A frame is only routed to
+  // _pendingResponse when _activeGeneration matches the request's generation.
+  // Set to -1 when no request is active or during the stale-ACK quarantine.
+  int _applicationGeneration = 0;
+  int _activeGeneration = -1;
+
+  /// How long to discard incoming notifications after a command timeout before
+  /// the next request is allowed. The ICP5 protocol carries no per-command
+  /// sequence identifier, so this bounded fail-closed quarantine (proven in the
+  /// Consumer transport) prevents a delayed frame from satisfying a later
+  /// command. Must exceed the maximum expected BLE round-trip (~30 ms).
+  final Duration staleAckQuarantine;
   List<Icp5SerialDevice> _devices = const [];
   List<Icp5SerialDevice> _enumeratedPorts = const [];
   String _discoverySource = 'Windows SetupAPI Ports class';
@@ -127,6 +142,7 @@ class Icp5UsbTransport
       {Icp5SerialDriver? driver,
       this.readTimeout = const Duration(seconds: 1),
       this.writeTimeout = const Duration(seconds: 1),
+      this.staleAckQuarantine = const Duration(milliseconds: 50),
       this.onDspWriteStop})
       : driver = driver ?? WindowsIcp5SerialDriver();
 
@@ -214,21 +230,31 @@ class Icp5UsbTransport
     _state = DspConnectionState.connecting;
     try {
       _connection = await driver.open(_selectedPort!);
-      _subscription = _connection!.bytes.listen((chunk) {
-        for (final frame in _buffer.add(chunk)) {
-          final r = _pendingResponse;
-          final a = _pendingAccepts;
-          if (r != null && !r.isCompleted && a != null && a(frame)) {
-            r.complete(frame);
-          }
-          // Consumer-proven: any other frame is discarded — it must never
-          // satisfy a later request.
-        }
-      }, onError: (_) => _state = DspConnectionState.error);
-      final identity = await _exchange(Icp5FrameCodec.identificationRequest,
-          (frame) => Icp5FrameCodec.parseIdentity(frame) != null);
-      final profile =
-          identity == null ? null : Icp5FrameCodec.parseIdentity(identity);
+      // Mirror ConsumerBleService._connectAndValidate: reset the receive buffer
+      // and arm the handshake completer BEFORE subscribing and writing.
+      _buffer.reset();
+      _handshakeResponse = Completer<List<int>>();
+      _subscription = _connection!.bytes.listen(
+        _onBytes,
+        onError: _onConnectionError,
+        onDone: _onConnectionClosed,
+      );
+      // Attach the handshake awaiter BEFORE the write. .timeout() eagerly
+      // subscribes to the completer's future, so a disconnect error delivered
+      // synchronously during the GATT write is always handled here rather than
+      // surfacing as an unhandled async error.
+      final handshakeFuture = _handshakeResponse!.future.timeout(readTimeout);
+      final written = await _connection!
+          .write(Icp5FrameCodec.identificationRequest, writeTimeout)
+          .timeout(writeTimeout);
+      if (written != Icp5FrameCodec.identificationRequest.length) {
+        await close();
+        return _fail(DspTransportFailure.ackFailed,
+            'ICP5 identity handshake write was incomplete.');
+      }
+      final identity = await handshakeFuture;
+      _handshakeResponse = null;
+      final profile = Icp5FrameCodec.parseIdentity(identity);
       if (profile == null) {
         await close();
         return _fail(
@@ -254,13 +280,28 @@ class Icp5UsbTransport
 
   @override
   Future<void> close() async {
-    await _subscription?.cancel();
+    final subscription = _subscription;
     _subscription = null;
+    await subscription?.cancel();
+    final connection = _connection;
+    _connection = null;
+    // Mirror ConsumerBleService._closeConnection: invalidate the active
+    // generation and complete both pending operations with an error immediately
+    // so callers do not stall until their individual timeouts fire.
+    _activeGeneration = -1;
+    final handshake = _handshakeResponse;
+    _handshakeResponse = null;
+    if (handshake != null && !handshake.isCompleted) {
+      handshake.completeError(StateError('ICP5 transport disconnected.'));
+    }
+    final application = _pendingResponse;
     _pendingResponse = null;
     _pendingAccepts = null;
+    if (application != null && !application.isCompleted) {
+      application.completeError(StateError('ICP5 transport disconnected.'));
+    }
     _buffer.reset();
-    await _connection?.close();
-    _connection = null;
+    await connection?.close();
     _handshakeComplete = false;
     _profile = null;
     _selectedPort = null;
@@ -623,43 +664,88 @@ class Icp5UsbTransport
     return restore;
   }
 
-  /// How long to discard incoming notifications after a command timeout before
-  /// allowing the next request. The ICP5 protocol carries no per-command
-  /// sequence identifier, so this bounded quarantine (proven in the Consumer
-  /// transport) prevents a delayed ACK from satisfying the next command.
-  static const _staleAckQuarantine = Duration(milliseconds: 50);
+  /// Routes every complete frame extracted from the receive buffer, mirroring
+  /// ConsumerBleService._onNotification: the handshake completer takes priority;
+  /// otherwise a frame is delivered only to an active, generation-current
+  /// request whose matcher accepts it. Every other frame is discarded so a
+  /// stale or unsolicited response can never satisfy a later request.
+  void _onBytes(List<int> chunk) {
+    for (final frame in _buffer.add(chunk)) {
+      final handshake = _handshakeResponse;
+      if (handshake != null && !handshake.isCompleted) {
+        handshake.complete(frame);
+        continue;
+      }
+      final application = _pendingResponse;
+      final matcher = _pendingAccepts;
+      if (application != null &&
+          !application.isCompleted &&
+          _activeGeneration >= 0 &&
+          matcher != null &&
+          matcher(frame)) {
+        application.complete(frame);
+      }
+    }
+  }
 
+  // On a transport-level stream error or close, invalidate the active
+  // generation so no in-flight frame can satisfy the pending request, and mark
+  // the connection errored. The pending handshake or application operation then
+  // fails closed via its own timeout — PRO has no auto-reconnect, so (unlike the
+  // Consumer, which fails fast to trigger reconnect) it must not surface a raw
+  // stream error that races the synchronous notify path.
+  void _onConnectionError(Object error, StackTrace stackTrace) {
+    _activeGeneration = -1;
+    _state = DspConnectionState.error;
+  }
+
+  void _onConnectionClosed() {
+    _activeGeneration = -1;
+  }
+
+  /// Releases generation/completer ownership, mirroring
+  /// ConsumerBleService._clearApplicationRequest.
+  void _clearApplicationRequest(int generation, Completer<List<int>> response) {
+    if (_activeGeneration == generation) _activeGeneration = -1;
+    if (_applicationGeneration == generation &&
+        (_pendingResponse == null || identical(_pendingResponse, response))) {
+      _pendingResponse = null;
+      _pendingAccepts = null;
+    }
+  }
+
+  /// Writes one request frame and returns the next matching notification, or
+  /// null on timeout. Structurally equivalent to
+  /// ConsumerBleService.sendApplicationFrameAndAwaitExchange: exactly one
+  /// request may await a response at a time; the generation-guarded completer
+  /// and matcher are armed BEFORE the write so a fast notify is never missed.
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
-    // Consumer-proven pattern: set up the response Completer BEFORE writing so
-    // a BLE notify that arrives during the GATT write is never missed.
+    if (_pendingResponse != null) {
+      throw StateError('Another ICP5 command is awaiting a response.');
+    }
+    final generation = ++_applicationGeneration;
+    _activeGeneration = generation;
+    _pendingAccepts = accepts;
     final response = Completer<List<int>>();
     _pendingResponse = response;
-    _pendingAccepts = accepts;
     try {
       final written =
           await _connection!.write(tx, writeTimeout).timeout(writeTimeout);
       if (written != tx.length) {
         throw StateError('Partial serial write: $written/${tx.length}.');
       }
-      try {
-        return await response.future.timeout(readTimeout);
-      } on TimeoutException {
-        // Consumer-proven fail-closed timeout handling: detach the matcher so
-        // an in-flight notification is discarded immediately, flush partial
-        // bytes, and quarantine briefly so the delayed response cannot pair
-        // with the next command.
-        _pendingResponse = null;
-        _pendingAccepts = null;
-        _buffer.reset();
-        await Future<void>.delayed(_staleAckQuarantine);
-        return null;
-      }
+      return await response.future.timeout(readTimeout);
+    } on TimeoutException {
+      // Consumer-proven fail-closed timeout handling: invalidate the generation
+      // so an in-flight notification is discarded immediately, quarantine to
+      // absorb a delayed BLE frame, then flush any partial receive bytes.
+      _clearApplicationRequest(generation, response);
+      await Future<void>.delayed(staleAckQuarantine);
+      _buffer.reset();
+      return null;
     } finally {
-      if (identical(_pendingResponse, response)) {
-        _pendingResponse = null;
-        _pendingAccepts = null;
-      }
+      _clearApplicationRequest(generation, response);
     }
   }
 
