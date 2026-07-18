@@ -98,4 +98,41 @@ void main() {
       }
     });
   });
+
+  group('autoScaleDbRange (Y-axis symmetric range)', () {
+    test('a flat/small curve uses the tight ±6 dB default', () {
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [0, 0, 0]), 6);
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [3.5, -2.0, 0]), 6);
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [6, -6]), 6);
+    });
+
+    test('widens to ±9 dB only when the peak exceeds 6 dB', () {
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [6.1]), 9);
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [-8.5, 2]), 9);
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [9, -9]), 9);
+    });
+
+    test('widens to ±12 dB for larger swings and caps there', () {
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [9.1]), 12);
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [-11]), 12);
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [20, -30]), 12);
+    });
+
+    test('is symmetric about 0 (uses magnitude of both boost and cut)', () {
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [-7]), 9);
+      expect(Adau1701PeqResponse.autoScaleDbRange(const [7]), 9);
+    });
+
+    test('a real two-band example (80 Hz +3.5, 350 Hz -2.0) stays at ±6', () {
+      final bands = [
+        const PeqResponseBand(
+            frequencyHz: 80, gainDb: 3.5, q: 1.0, enabled: true),
+        const PeqResponseBand(
+            frequencyHz: 350, gainDb: -2.0, q: 1.0, enabled: true),
+      ];
+      final curve = Adau1701PeqResponse.combinedCurve(
+          bands, Adau1701PeqResponse.logFrequencyPoints(count: 200));
+      expect(Adau1701PeqResponse.autoScaleDbRange(curve), 6);
+    });
+  });
 }

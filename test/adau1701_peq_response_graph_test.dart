@@ -54,4 +54,23 @@ void main() {
         _wrap(Adau1701PeqResponseGraph(bands: _bands(enabledCount: 4))));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('renders with a large-boost band (auto-scales to ±12) and with '
+      'autoScale disabled', (tester) async {
+    final big = [
+      const PeqResponseBand(
+          frequencyHz: 1000, gainDb: 3, q: 6, enabled: true),
+      const PeqResponseBand(
+          frequencyHz: 1000, gainDb: 3, q: 6, enabled: true),
+      const PeqResponseBand(
+          frequencyHz: 1000, gainDb: 3, q: 6, enabled: true),
+      const PeqResponseBand(
+          frequencyHz: 1000, gainDb: 3, q: 6, enabled: true),
+    ];
+    await tester.pumpWidget(_wrap(Adau1701PeqResponseGraph(bands: big)));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(
+        _wrap(Adau1701PeqResponseGraph(bands: big, autoScale: false)));
+    expect(tester.takeException(), isNull);
+  });
 }

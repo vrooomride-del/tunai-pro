@@ -115,4 +115,26 @@ abstract final class Adau1701PeqResponse {
   /// Number of enabled bands in [bands].
   static int enabledCount(Iterable<PeqResponseBand> bands) =>
       bands.where((b) => b.enabled).length;
+
+  /// Y-axis half-ranges (dB) used to auto-scale the response graph, in
+  /// priority order: ±6 first, then ±9, then ±12.
+  static const List<double> autoScaleDbSteps = [6, 9, 12];
+
+  /// Chooses a symmetric Y-axis half-range (dB) for a rendered [curveDb] so
+  /// small PEQ changes stay visible while large boosts/cuts still fit:
+  ///   * ±6 dB by default (peak ≤ 6 dB)
+  ///   * ±9 dB when the peak exceeds 6 dB
+  ///   * ±12 dB for larger swings (peak exceeds 9 dB; capped at ±12)
+  /// The axis is always symmetric about 0 dB.
+  static double autoScaleDbRange(Iterable<double> curveDb) {
+    var peak = 0.0;
+    for (final db in curveDb) {
+      final magnitude = db.abs();
+      if (magnitude > peak) peak = magnitude;
+    }
+    for (final step in autoScaleDbSteps) {
+      if (peak <= step) return step;
+    }
+    return autoScaleDbSteps.last;
+  }
 }
