@@ -407,10 +407,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         ],
         if (_readState != null) ...[
           const SizedBox(height: 12),
-          _OriginalStateCard(state: _readState!),
-          const SizedBox(height: 16),
 
-          // ── PEQ RESPONSE graph ───────────────────────────────────────────
+          // ── PEQ RESPONSE — primary tuning panel (full width, above cards) ──
           Row(children: [
             Text('PEQ RESPONSE — OUTPUT ${_selectedOutput + 1}',
                 style: proSubtitle(size: 9)),
@@ -435,6 +433,7 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
             bands: _peqModel[_selectedOutput],
             selectedBandIndex: _selectedBand,
             baselineBands: _baselineModel?[_selectedOutput],
+            height: 400,
           ),
           const SizedBox(height: 6),
           Text(
@@ -442,6 +441,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
               '${(Adau1701PeqResponse.sampleRateHz / 1000).toStringAsFixed(0)} kHz). '
               'Editing model — only Output 1 / Band 1 readback is hardware-verified.',
               style: proSubtitle(size: 8)),
+          const SizedBox(height: 16),
+
+          _OriginalStateCard(state: _readState!),
           const SizedBox(height: 16),
 
           // ── Band selector (Band 1 .. Band 10) ────────────────────────────

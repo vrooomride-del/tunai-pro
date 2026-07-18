@@ -23,19 +23,20 @@ class Adau1701PeqResponseGraph extends StatelessWidget {
     required this.bands,
     this.selectedBandIndex,
     this.baselineBands,
-    this.height = 180,
+    this.height = 400,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
+      width: double.infinity,
       height: height,
       decoration: BoxDecoration(
         color: kProPanel,
         border: Border.all(color: kProBorder),
         borderRadius: BorderRadius.circular(4),
       ),
-      padding: const EdgeInsets.fromLTRB(6, 8, 10, 4),
+      padding: const EdgeInsets.fromLTRB(8, 10, 12, 6),
       child: CustomPaint(
         size: Size.infinite,
         painter: _PeqResponsePainter(
