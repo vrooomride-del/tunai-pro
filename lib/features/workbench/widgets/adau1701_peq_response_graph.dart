@@ -11,9 +11,11 @@ import '../../../shared/pro_widgets.dart';
 /// - Y axis: dB, symmetric about 0 dB. Default ±6 dB so small PEQ changes are
 ///   clearly visible; with [autoScale] it widens to ±9 or ±12 dB only when the
 ///   combined curve needs the extra headroom.
-/// - Combined total curve (enabled bands only)
-/// - Optional highlighted curve for [selectedBandIndex]
-/// - Optional [baselineBands] curve drawn behind the edited/total curve
+/// - Combined total curve (enabled bands only) — the "after" curve
+/// - Optional highlighted curve + on-curve marker and frequency/gain readout
+///   for [selectedBandIndex]
+/// - Optional [baselineBands] "before" curve drawn behind, with a before/after
+///   legend
 class Adau1701PeqResponseGraph extends StatelessWidget {
   final List<PeqResponseBand> bands;
   final int? selectedBandIndex;
@@ -139,10 +141,104 @@ class _PeqResponsePainter extends CustomPainter {
       );
     }
 
-    // Combined total curve — drawn on top.
+    // Combined total curve ("after") — drawn on top.
     _drawCurve(canvas, size, points, combined, kProAccent, range,
         strokeWidth: 1.6);
+
+    // Selected-band marker + frequency/gain readout.
+    final si = selectedBandIndex;
+    if (si != null && si >= 0 && si < bands.length && bands[si].enabled) {
+      _drawSelectedMarker(canvas, size, bands[si], combined, points, range);
+    }
+
+    // before/after legend.
+    _drawLegend(canvas, size, showBefore: baseline != null);
   }
+
+  void _drawSelectedMarker(Canvas canvas, Size size, PeqResponseBand band,
+      List<double> combined, List<double> points, double range) {
+    final f = band.frequencyHz
+        .clamp(Adau1701PeqResponse.minHz, Adau1701PeqResponse.maxHz)
+        .toDouble();
+    // Sit the marker on the combined ("after") curve at the band's centre.
+    final markerDb = Adau1701PeqResponse.combinedMagnitudeDb(bands, f);
+    final mx = _x(f, size);
+    final my = _y(markerDb, size, range);
+
+    canvas.drawCircle(Offset(mx, my), 4,
+        Paint()..color = kProAmber);
+    canvas.drawCircle(
+        Offset(mx, my),
+        4,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1);
+
+    final g = band.gainDb;
+    final readout =
+        '${_freqReadout(f)}  ·  ${g >= 0 ? '+' : ''}${g.toStringAsFixed(1)} dB';
+    _readoutLabel(canvas, size, readout, Offset(mx, my));
+  }
+
+  void _readoutLabel(Canvas canvas, Size size, String text, Offset marker) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: const TextStyle(
+            color: kProAmber, fontSize: 9, fontWeight: FontWeight.w600),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    const pad = 3.0;
+    var left = marker.dx + 8;
+    var top = marker.dy - tp.height - 8;
+    // Keep the readout inside the plot.
+    if (left + tp.width + pad * 2 > size.width) {
+      left = marker.dx - tp.width - 8 - pad * 2;
+    }
+    if (left < _leftPad) left = _leftPad;
+    if (top < 0) top = marker.dy + 8;
+    final rect = Rect.fromLTWH(
+        left, top, tp.width + pad * 2, tp.height + pad * 2);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(3)),
+      Paint()..color = Colors.black.withValues(alpha: 0.55),
+    );
+    tp.paint(canvas, Offset(left + pad, top + pad));
+  }
+
+  void _drawLegend(Canvas canvas, Size size, {required bool showBefore}) {
+    final entries = <(Color, String)>[
+      if (showBefore) (Colors.white38, 'before'),
+      (kProAccent, 'after'),
+    ];
+    var y = 2.0;
+    for (final (color, label) in entries) {
+      const swatchW = 12.0;
+      final tp = TextPainter(
+        text: TextSpan(
+            text: label,
+            style: const TextStyle(color: Colors.white54, fontSize: 8)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final right = size.width - 2;
+      final textLeft = right - tp.width;
+      final swatchRight = textLeft - 4;
+      canvas.drawLine(
+        Offset(swatchRight - swatchW, y + tp.height / 2),
+        Offset(swatchRight, y + tp.height / 2),
+        Paint()
+          ..color = color
+          ..strokeWidth = 2,
+      );
+      tp.paint(canvas, Offset(textLeft, y));
+      y += tp.height + 3;
+    }
+  }
+
+  static String _freqReadout(double f) =>
+      f >= 1000 ? '${(f / 1000).toStringAsFixed(1)} kHz' : '${f.round()} Hz';
 
   void _drawGrid(Canvas canvas, Size size, double range) {
     final gridPaint = Paint()

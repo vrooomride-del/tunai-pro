@@ -464,6 +464,93 @@ void main() {
     });
   });
 
+  group('PEQ presets + Apply section', () {
+    Future<void> pumpAfterRead(WidgetTester tester) async {
+      final transport = _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3600));
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+    }
+
+    Adau1701PeqResponseGraph graphOf(WidgetTester tester) =>
+        tester.widget<Adau1701PeqResponseGraph>(
+            find.byType(Adau1701PeqResponseGraph));
+
+    testWidgets('PEQ PRESET and PEQ APPLY sections appear above the bands',
+        (tester) async {
+      await pumpAfterRead(tester);
+      expect(find.text('PEQ PRESET'), findsOneWidget);
+      expect(find.text('PEQ APPLY'), findsOneWidget);
+      expect(find.text('RUN PREFLIGHT + APPLY'), findsOneWidget);
+      expect(find.byKey(const ValueKey('peq_preset_warm')), findsOneWidget);
+      expect(find.byKey(const ValueKey('peq_preset_custom')), findsOneWidget);
+    });
+
+    testWidgets('selecting Warm applies its bands to the graph', (tester) async {
+      await pumpAfterRead(tester);
+
+      final warm = find.byKey(const ValueKey('peq_preset_warm'));
+      await tester.ensureVisible(warm);
+      await tester.tap(warm);
+      await tester.pump();
+
+      final enabled = graphOf(tester).bands.where((b) => b.enabled).toList();
+      expect(enabled.length, 3);
+      expect(enabled.first.frequencyHz, 90);
+      expect(find.textContaining('3 / 10 bands'), findsOneWidget);
+    });
+
+    testWidgets('read state selects Custom; a preset then reselects it',
+        (tester) async {
+      await pumpAfterRead(tester);
+
+      // After a hardware read the model is device state → Custom.
+      ChoiceChip chip(String key) =>
+          tester.widget<ChoiceChip>(find.byKey(ValueKey(key)));
+      expect(chip('peq_preset_custom').selected, isTrue);
+
+      final flat = find.byKey(const ValueKey('peq_preset_flat'));
+      await tester.ensureVisible(flat);
+      await tester.tap(flat);
+      await tester.pump();
+      expect(chip('peq_preset_flat').selected, isTrue);
+      expect(chip('peq_preset_custom').selected, isFalse);
+    });
+
+    testWidgets('editing a value after a preset flips back to Custom',
+        (tester) async {
+      await pumpAfterRead(tester);
+
+      final warm = find.byKey(const ValueKey('peq_preset_warm'));
+      await tester.ensureVisible(warm);
+      await tester.tap(warm);
+      await tester.pump();
+      expect(
+          tester
+              .widget<ChoiceChip>(find.byKey(const ValueKey('peq_preset_warm')))
+              .selected,
+          isTrue);
+
+      // Edit the frequency field (gain, freq, q order).
+      await tester.enterText(find.byType(TextField).at(1), '5000');
+      await tester.pump();
+
+      expect(
+          tester
+              .widget<ChoiceChip>(
+                  find.byKey(const ValueKey('peq_preset_custom')))
+              .selected,
+          isTrue);
+      expect(
+          tester
+              .widget<ChoiceChip>(find.byKey(const ValueKey('peq_preset_warm')))
+              .selected,
+          isFalse);
+    });
+  });
+
   group('after APPLY — gain write fails', () {
     testWidgets('shows GAIN WRITE ACK fail, no FREQ ACK row, no verification',
         (tester) async {

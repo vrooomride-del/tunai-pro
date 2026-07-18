@@ -10,6 +10,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../../core/adau1701_peq_preset.dart';
 import '../../../core/adau1701_peq_response.dart';
 import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
 import '../../../core/transport/adau1701_peq_band.dart';
@@ -77,6 +78,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   // band contributes to the rendered curve.
   static const int _outputCount = 4;
   int _selectedOutput = 0;
+  // Global voicing preset (model/UI only — no DSP write). Flips to `custom` on
+  // any manual band edit or after a hardware read.
+  Adau1701PeqPreset _selectedPreset = Adau1701PeqPreset.flat;
   late final List<List<PeqResponseBand>> _peqModel;
   // Baseline snapshot captured at READ (the "current" curve), shown behind the
   // edited/total curve when present.
@@ -170,6 +174,20 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   List<List<PeqResponseBand>> _cloneModel() =>
       [for (final out in _peqModel) [...out]];
 
+  /// Applies a global voicing [preset] to the editing model (all outputs).
+  /// Model/UI only — no DSP write. `custom` is derived and not applied here.
+  void _applyPreset(Adau1701PeqPreset preset) {
+    if (!preset.hasCurve) return;
+    setState(() {
+      final bands = Adau1701PeqPresets.bandsFor(preset);
+      for (var output = 0; output < _outputCount; output++) {
+        _peqModel[output] = [for (final band in bands) band];
+      }
+      _selectedPreset = preset;
+      _repopulateControllers();
+    });
+  }
+
   Future<void> _read() async {
     setState(() {
       _busy = true;
@@ -206,6 +224,8 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
             q: s.q,
             enabled: true,
           );
+          // Device state does not correspond to a preset curve.
+          _selectedPreset = Adau1701PeqPreset.custom;
           _baselineModel = _cloneModel();
           _repopulateControllers();
         });
@@ -448,70 +468,25 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
           _OriginalStateCard(state: _readState!),
           const SizedBox(height: 16),
 
-          // ── Band selector (Band 1 .. Band 10) ────────────────────────────
-          Text('PEQ BAND', style: proSubtitle(size: 9)),
+          // ── PEQ PRESETS (global voicing — model only, no DSP write) ───────
+          Text('PEQ PRESET', style: proSubtitle(size: 9)),
           const SizedBox(height: 6),
-          _BandSelector(
-            selectedBand: _selectedBand,
-            onSelected: (band) => setState(() {
-              _syncSelectedBandFromControllers();
-              _selectedBand = band;
-              _repopulateControllers();
-            }),
+          _PresetSelector(
+            selected: _selectedPreset,
+            onSelected: _applyPreset,
           ),
-          if (!_bandIsProven) ...[
-            const SizedBox(height: 8),
-            _UnverifiedBanner(
-              message:
-                  'Band ${_selectedBand + 1} reuses the confirmed band payload '
-                  'byte but is NOT capture-proven and has no readback path '
-                  '(the decoder reads Band 1 only). Writes are ACK-only — '
-                  'confirm on hardware.',
-            ),
-          ],
           const SizedBox(height: 16),
 
-          // ── Edit section ─────────────────────────────────────────────────
-          Row(children: [
-            Text('NEW VALUES', style: proSubtitle(size: 9)),
-            const Spacer(),
-            // Enable/disable the selected band in the response graph.
-            _BandEnableToggle(
-              enabled: _selectedModelBand.enabled,
-              onToggle: () => setState(() {
-                _peqModel[_selectedOutput][_selectedBand] = _selectedModelBand
-                    .copyWith(enabled: !_selectedModelBand.enabled);
-              }),
-            ),
-          ]),
+          // ── PEQ APPLY (above bands — existing hardware safety gates) ──────
+          Text('PEQ APPLY', style: proSubtitle(size: 9)),
+          const SizedBox(height: 6),
+          Text(
+              'Runs preflight, then writes the selected band '
+              '(Output ${_selectedOutput + 1} / Band ${_selectedBand + 1}) to the '
+              'speaker. Rollback-guarded — nothing is written unless preflight '
+              'passes.',
+              style: proSubtitle(size: 8)),
           const SizedBox(height: 8),
-          Row(children: [
-            Expanded(
-              child: _FieldEditor(
-                label: 'GAIN (dB)  −6.0 .. +3.0',
-                controller: _gainCtrl,
-                hint: '-1.0',
-                keyboardType: const TextInputType.numberWithOptions(
-                    signed: true, decimal: true),
-                onChanged: (_) =>
-                    setState(() => _syncSelectedBandFromControllers()),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _FieldEditor(
-                label: 'FREQUENCY (Hz)  20 .. 20 000',
-                controller: _freqCtrl,
-                hint: '2000',
-                keyboardType: TextInputType.number,
-                onChanged: (_) =>
-                    setState(() => _syncSelectedBandFromControllers()),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 16),
-
-          // ── Apply section ────────────────────────────────────────────────
           _ActionButton(
             label: 'RUN PREFLIGHT + APPLY',
             icon: Icons.send_outlined,
@@ -562,6 +537,79 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
               readback: _verifyState!,
             ),
           ],
+          const SizedBox(height: 20),
+
+          // ── Band selector (Band 1 .. Band 10) ────────────────────────────
+          Text('PEQ BAND', style: proSubtitle(size: 9)),
+          const SizedBox(height: 6),
+          _BandSelector(
+            selectedBand: _selectedBand,
+            onSelected: (band) => setState(() {
+              _syncSelectedBandFromControllers();
+              _selectedBand = band;
+              _repopulateControllers();
+            }),
+          ),
+          if (!_bandIsProven) ...[
+            const SizedBox(height: 8),
+            _UnverifiedBanner(
+              message:
+                  'Band ${_selectedBand + 1} reuses the confirmed band payload '
+                  'byte but is NOT capture-proven and has no readback path '
+                  '(the decoder reads Band 1 only). Writes are ACK-only — '
+                  'confirm on hardware.',
+            ),
+          ],
+          const SizedBox(height: 16),
+
+          // ── Edit section ─────────────────────────────────────────────────
+          Row(children: [
+            Text('NEW VALUES', style: proSubtitle(size: 9)),
+            const Spacer(),
+            // Enable/disable the selected band in the response graph.
+            _BandEnableToggle(
+              enabled: _selectedModelBand.enabled,
+              onToggle: () => setState(() {
+                _peqModel[_selectedOutput][_selectedBand] = _selectedModelBand
+                    .copyWith(enabled: !_selectedModelBand.enabled);
+                _selectedPreset = Adau1701PeqPreset.custom;
+              }),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: _FieldEditor(
+                label: 'GAIN (dB)  −6.0 .. +3.0',
+                controller: _gainCtrl,
+                hint: '-1.0',
+                keyboardType: const TextInputType.numberWithOptions(
+                    signed: true, decimal: true),
+                onChanged: (_) => setState(() {
+                  _syncSelectedBandFromControllers();
+                  _selectedPreset = Adau1701PeqPreset.custom;
+                }),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _FieldEditor(
+                label: 'FREQUENCY (Hz)  20 .. 20 000',
+                controller: _freqCtrl,
+                hint: '2000',
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {
+                  _syncSelectedBandFromControllers();
+                  _selectedPreset = Adau1701PeqPreset.custom;
+                }),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+              'Edits update the graph live. Use PEQ APPLY above to write the '
+              'selected band to the speaker.',
+              style: proSubtitle(size: 8)),
 
           // ── Q (UNVERIFIED — adopted-from-Consumer) ─────────────────────────
           // Separate, clearly-labelled path. Does not affect the proven
@@ -585,8 +633,10 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
                 hint: '2.0',
                 keyboardType: const TextInputType.numberWithOptions(
                     decimal: true),
-                onChanged: (_) =>
-                    setState(() => _syncSelectedBandFromControllers()),
+                onChanged: (_) => setState(() {
+                  _syncSelectedBandFromControllers();
+                  _selectedPreset = Adau1701PeqPreset.custom;
+                }),
               ),
             ),
           ]),
@@ -957,6 +1007,35 @@ class _OutputSelector extends StatelessWidget {
               selected: output == selectedOutput,
               onSelected: (_) => onSelected(output),
             ),
+        ],
+      );
+}
+
+class _PresetSelector extends StatelessWidget {
+  final Adau1701PeqPreset selected;
+  final ValueChanged<Adau1701PeqPreset> onSelected;
+  const _PresetSelector({required this.selected, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final preset in Adau1701PeqPresets.selectable)
+            ChoiceChip(
+              key: ValueKey('peq_preset_${preset.name}'),
+              label: Text(preset.label, style: const TextStyle(fontSize: 10)),
+              selected: selected == preset,
+              onSelected: (_) => onSelected(preset),
+            ),
+          // Custom reflects manual edits; it is derived, not directly applied.
+          ChoiceChip(
+            key: const ValueKey('peq_preset_custom'),
+            label: Text(Adau1701PeqPreset.custom.label,
+                style: const TextStyle(fontSize: 10)),
+            selected: selected == Adau1701PeqPreset.custom,
+            onSelected: (_) {},
+          ),
         ],
       );
 }
