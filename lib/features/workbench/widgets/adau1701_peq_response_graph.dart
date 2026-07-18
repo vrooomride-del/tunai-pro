@@ -192,8 +192,31 @@ class _PeqResponsePainter extends CustomPainter {
       f >= 1000 ? '${(f / 1000).toStringAsFixed(f % 1000 == 0 ? 0 : 1)}k' : '${f.toInt()}';
 
   @override
-  bool shouldRepaint(_PeqResponsePainter old) =>
-      old.bands != bands ||
-      old.selectedBandIndex != selectedBandIndex ||
-      old.baselineBands != baselineBands;
+  bool shouldRepaint(_PeqResponsePainter old) {
+    // The band list can be mutated in place by the caller (the ICP5 tuning
+    // panel edits its 4×10 model in place and passes the same list instance),
+    // so identity/length checks are unreliable. Compare field values so a
+    // frequency/gain/Q/enabled edit always repaints the curve.
+    if (old.selectedBandIndex != selectedBandIndex) return true;
+    if (_bandsDiffer(old.bands, bands)) return true;
+    if (_bandsDiffer(old.baselineBands, baselineBands)) return true;
+    return false;
+  }
+
+  static bool _bandsDiffer(
+      List<PeqResponseBand>? a, List<PeqResponseBand>? b) {
+    if (identical(a, b)) return false;
+    if (a == null || b == null) return true;
+    if (a.length != b.length) return true;
+    for (var i = 0; i < a.length; i++) {
+      final x = a[i], y = b[i];
+      if (x.enabled != y.enabled ||
+          x.frequencyHz != y.frequencyHz ||
+          x.gainDb != y.gainDb ||
+          x.q != y.q) {
+        return true;
+      }
+    }
+    return false;
+  }
 }

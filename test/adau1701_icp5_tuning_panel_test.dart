@@ -435,6 +435,33 @@ void main() {
       // Now zero enabled bands contribute to the curve.
       expect(find.textContaining('0 / 10 bands'), findsOneWidget);
     });
+
+    testWidgets('editing frequency immediately updates the graph bands',
+        (tester) async {
+      final transport = _FakeTuningTransport(readSnapshot: _snapshot());
+      await tester.binding.setSurfaceSize(const Size(1200, 3200));
+      await tester.pumpWidget(_wrap(transport));
+      await tester.pump();
+
+      await tester.tap(find.text('READ DSP STATE'));
+      await tester.pumpAndSettle(const Duration(seconds: 2));
+
+      Adau1701PeqResponseGraph graph() =>
+          tester.widget<Adau1701PeqResponseGraph>(
+              find.byType(Adau1701PeqResponseGraph));
+
+      // After READ, selected band (Band 1) holds the read frequency (2000 Hz).
+      expect(graph().bands[0].frequencyHz, 2000);
+      expect(graph().bands[0].enabled, isTrue);
+
+      // Edit the FREQUENCY field (2nd text field: gain, freq, q).
+      await tester.enterText(find.byType(TextField).at(1), '8000');
+      await tester.pump();
+
+      // The graph immediately reflects the edited value — no Simulation needed.
+      expect(graph().bands[0].frequencyHz, 8000);
+      expect(graph().bands[0].enabled, isTrue);
+    });
   });
 
   group('after APPLY — gain write fails', () {

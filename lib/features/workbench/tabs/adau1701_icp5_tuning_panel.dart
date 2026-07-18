@@ -430,7 +430,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
           ),
           const SizedBox(height: 8),
           Adau1701PeqResponseGraph(
-            bands: _peqModel[_selectedOutput],
+            // Pass an immutable point-in-time snapshot so the graph detects
+            // per-edit changes (the model is edited in place).
+            bands: List.of(_peqModel[_selectedOutput]),
             selectedBandIndex: _selectedBand,
             baselineBands: _baselineModel?[_selectedOutput],
             height: 400,
