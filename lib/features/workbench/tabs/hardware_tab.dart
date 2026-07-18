@@ -27,6 +27,7 @@ import '../../../core/pro_usbi_temporary_executor.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_usbi_windows_native_backend.dart';
 import '../../../core/pro_usbi_packet_builder.dart';
+import 'dart:async';
 import 'dart:io';
 import 'pro_hardware_mvp_status_card.dart';
 import 'sigma_verification_console.dart';
@@ -101,8 +102,10 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   bool _executingMuteGain = false;
   UsbiExecutionResult? _lastMuteGainResult;
 
-  // ── ADAU1701 ICP5 tuning transport ──────────────────────────────────────
-  late final Icp5UsbTransport _adau1701Transport;
+  // ── ADAU1701 ICP5 tuning transports (USB + BLE shared with connection panel)
+  late final Icp5UsbTransport _adau1701UsbTransport;
+  late final Icp5BluetoothTransport _adau1701BleTransport;
+  Timer? _tuningRefreshTimer;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
   bool _checkingTransport = false;
@@ -310,7 +313,13 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   void initState() {
     super.initState();
     _usbiDeviceOpen = widget.initialUsbiDeviceOpen;
-    _adau1701Transport = Icp5UsbTransport();
+    _adau1701UsbTransport = Icp5UsbTransport();
+    _adau1701BleTransport = Icp5BluetoothTransport();
+    // Periodic rebuild so the tuning panel's key reflects the active transport
+    // (USB vs BLE) without needing a callback from TransportConnectionPanel.
+    _tuningRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
     if (widget.usbiBackend != null) {
       _usbiNativeBackend = widget.usbiBackend!;
       _usbiExecutor = ProUsbiTemporaryExecutor(
@@ -338,8 +347,20 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     if (_isWindows && _usbiNativeBackend is ProUsbiWindowsNativeBackend) {
       (_usbiNativeBackend as ProUsbiWindowsNativeBackend).closeDevice();
     }
-    _adau1701Transport.close();
+    _tuningRefreshTimer?.cancel();
+    _adau1701UsbTransport.close();
+    _adau1701BleTransport.close();
     super.dispose();
+  }
+
+  /// Returns whichever ADAU1701 ICP5 transport is currently ready.
+  /// BLE takes priority when connected; falls back to USB.
+  Icp5UsbTransport get _activeTuningTransport {
+    if (_adau1701BleTransport.isConnected &&
+        _adau1701BleTransport.handshakeComplete) {
+      return _adau1701BleTransport;
+    }
+    return _adau1701UsbTransport;
   }
 
   @override
@@ -398,7 +419,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           backend: _usbiNativeBackend,
           deviceOpen: _usbiDeviceOpen,
           dspWritesStopped: _dspWritesDisabledForSession,
-          icp5UsbTransport: _adau1701Transport,
+          icp5UsbTransport: _adau1701UsbTransport,
+          icp5BluetoothTransport: _adau1701BleTransport,
           onDspWriteStop: (warning) {
             if (!mounted) return;
             setState(() {
@@ -412,7 +434,10 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
 
         const _SectionHeader('ADAU1701 ICP5 TUNING', Icons.tune_outlined),
         const SizedBox(height: 8),
-        Adau1701Icp5TuningPanel(transport: _adau1701Transport),
+        Adau1701Icp5TuningPanel(
+          key: ValueKey(_activeTuningTransport.identity),
+          transport: _activeTuningTransport,
+        ),
         const SizedBox(height: 20),
 
         // A: Connection State Panel
