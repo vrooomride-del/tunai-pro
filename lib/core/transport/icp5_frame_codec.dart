@@ -141,6 +141,47 @@ abstract final class Icp5FrameCodec {
   static bool parseDelayCandidateAck(List<int> frame) =>
       _parseSuccessAck(frame, delayCandidateParameterId);
 
+  /// Writes an arbitrary PEQ band 1 gain for [channel] using the confirmed
+  /// ICP5 parameter-ID 0x18 encoding. [gainDb] must be in −6.0 .. +3.0 dB
+  /// (the range enforced by the ADAU1701 decoder at read time).
+  static List<int> buildPeqGainWriteArbitrary(int channel, double gainDb) {
+    if (channel < 0 || channel > 3) {
+      throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
+    }
+    if (gainDb < -6.0 || gainDb > 3.0) {
+      throw ArgumentError.value(
+          gainDb, 'gainDb', 'Gain must be in −6.0 .. +3.0 dB.');
+    }
+    final tenths = (gainDb * 10).round() & 0xFF;
+    return _frame(0x0A, peqBandGainParameterId, [channel, 0x01, 0x00, tenths]);
+  }
+
+  static bool parsePeqGainAck(List<int> frame) =>
+      _parseSuccessAck(frame, peqBandGainParameterId);
+
+  /// Writes an arbitrary filter frequency for [channel] using the confirmed
+  /// ICP5 parameter-ID 0x15 encoding. [frequencyHz] must be in 20 .. 20000.
+  static List<int> buildFilterFrequencyWriteArbitrary(
+      int channel, int frequencyHz) {
+    if (channel < 0 || channel > 3) {
+      throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
+    }
+    if (frequencyHz < 20 || frequencyHz > 20000) {
+      throw ArgumentError.value(
+          frequencyHz, 'frequencyHz', 'Frequency must be in 20 .. 20 000 Hz.');
+    }
+    return _frame(0x0B, filterCutoffParameterId, [
+      channel,
+      0x02,
+      0x00,
+      frequencyHz & 0xFF,
+      (frequencyHz >> 8) & 0xFF,
+    ]);
+  }
+
+  static bool parseFilterFrequencyAck(List<int> frame) =>
+      _parseSuccessAck(frame, filterCutoffParameterId);
+
   static List<int> buildFilterCutoffWrite(int channel, int value) {
     const pairs = <int, List<int>>{
       0: [2001, 2000],

@@ -467,6 +467,23 @@ class Icp5UsbTransport implements DspTransport, Adau1701RawReadTransport {
       _writePhaseC(Icp5FrameCodec.buildFilterCutoffWrite(channel, value),
           Icp5FrameCodec.parseFilterCutoffAck);
 
+  /// Writes an arbitrary PEQ band 1 gain in −6.0 .. +3.0 dB for [channel].
+  /// Uses the confirmed parameter-ID 0x18 encoding. Range-validated only.
+  Future<Icp5PhaseCResult> writePeqGain(int channel, double gainDb) =>
+      _writePhaseC(
+        Icp5FrameCodec.buildPeqGainWriteArbitrary(channel, gainDb),
+        Icp5FrameCodec.parsePeqGainAck,
+      );
+
+  /// Writes an arbitrary filter frequency in 20 .. 20 000 Hz for [channel].
+  /// Uses the confirmed parameter-ID 0x15 encoding. Range-validated only.
+  Future<Icp5PhaseCResult> writeFilterFrequency(
+          int channel, int frequencyHz) =>
+      _writePhaseC(
+        Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(channel, frequencyHz),
+        Icp5FrameCodec.parseFilterFrequencyAck,
+      );
+
   Future<Icp5PhaseCResult> writeCapturedPeqBand1Gain(
           int channel, double value) =>
       _writePhaseC(Icp5FrameCodec.buildPeqBand1GainWrite(channel, value),

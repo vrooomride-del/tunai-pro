@@ -32,6 +32,8 @@ import 'pro_hardware_mvp_status_card.dart';
 import 'sigma_verification_console.dart';
 import 'operational_master_volume_control.dart';
 import 'transport_connection_panel.dart';
+import 'adau1701_icp5_tuning_panel.dart';
+import '../../../core/transport/icp5_transports.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -98,6 +100,9 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   bool _muteGainConfirmed = false;
   bool _executingMuteGain = false;
   UsbiExecutionResult? _lastMuteGainResult;
+
+  // ── ADAU1701 ICP5 tuning transport ──────────────────────────────────────
+  late final Icp5UsbTransport _adau1701Transport;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
   bool _checkingTransport = false;
@@ -305,6 +310,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   void initState() {
     super.initState();
     _usbiDeviceOpen = widget.initialUsbiDeviceOpen;
+    _adau1701Transport = Icp5UsbTransport();
     if (widget.usbiBackend != null) {
       _usbiNativeBackend = widget.usbiBackend!;
       _usbiExecutor = ProUsbiTemporaryExecutor(
@@ -391,6 +397,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           backend: _usbiNativeBackend,
           deviceOpen: _usbiDeviceOpen,
           dspWritesStopped: _dspWritesDisabledForSession,
+          icp5UsbTransport: _adau1701Transport,
           onDspWriteStop: (warning) {
             if (!mounted) return;
             setState(() {
@@ -400,6 +407,11 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
             });
           },
         ),
+        const SizedBox(height: 20),
+
+        const _SectionHeader('ADAU1701 ICP5 TUNING', Icons.tune_outlined),
+        const SizedBox(height: 8),
+        Adau1701Icp5TuningPanel(transport: _adau1701Transport),
         const SizedBox(height: 20),
 
         // A: Connection State Panel
