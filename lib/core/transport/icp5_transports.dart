@@ -107,12 +107,11 @@ class Icp5UsbTransport
   StreamSubscription<List<int>>? _subscription;
   final Icp5FrameBuffer _buffer = Icp5FrameBuffer();
   // Consumer-proven pattern: one Completer<List<int>> per in-flight exchange,
-  // set BEFORE the write so rapid BLE notifies are never missed.
+  // set BEFORE the write so rapid BLE notifies are never missed. Frames that
+  // arrive with no active exchange, or that the active matcher rejects, are
+  // discarded so a stale response can never satisfy a later request.
   Completer<List<int>>? _pendingResponse;
   bool Function(List<int>)? _pendingAccepts;
-  // Overflow: frames that arrived while no exchange was waiting (e.g. pages
-  // 2-4 of a multi-page read arriving before exchange 1 clears its completer).
-  final List<List<int>> _overflow = [];
   List<Icp5SerialDevice> _devices = const [];
   List<Icp5SerialDevice> _enumeratedPorts = const [];
   String _discoverySource = 'Windows SetupAPI Ports class';
@@ -221,10 +220,9 @@ class Icp5UsbTransport
           final a = _pendingAccepts;
           if (r != null && !r.isCompleted && a != null && a(frame)) {
             r.complete(frame);
-          } else {
-            // Buffer for the next exchange (e.g. rapid multi-page BLE notifies).
-            _overflow.add(frame);
           }
+          // Consumer-proven: any other frame is discarded — it must never
+          // satisfy a later request.
         }
       }, onError: (_) => _state = DspConnectionState.error);
       final identity = await _exchange(Icp5FrameCodec.identificationRequest,
@@ -260,7 +258,6 @@ class Icp5UsbTransport
     _subscription = null;
     _pendingResponse = null;
     _pendingAccepts = null;
-    _overflow.clear();
     _buffer.reset();
     await _connection?.close();
     _connection = null;
@@ -290,8 +287,7 @@ class Icp5UsbTransport
     if (_busy) throw StateError('Another ICP5 transaction is active.');
     _busy = true;
     try {
-      // Flush stale overflow frames and partial bytes from any prior cycle.
-      _overflow.clear();
+      // Flush partial bytes from any prior cycle.
       _buffer.reset();
       final reader = Icp5RawStateReader(exchange: (request) async {
         final response = await _exchange(
@@ -627,16 +623,14 @@ class Icp5UsbTransport
     return restore;
   }
 
+  /// How long to discard incoming notifications after a command timeout before
+  /// allowing the next request. The ICP5 protocol carries no per-command
+  /// sequence identifier, so this bounded quarantine (proven in the Consumer
+  /// transport) prevents a delayed ACK from satisfying the next command.
+  static const _staleAckQuarantine = Duration(milliseconds: 50);
+
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
-    // Drain overflow first: rapid BLE multi-page responses can queue page N+1
-    // before exchange N+1 even starts.  Matching frames are consumed in order;
-    // unmatched frames (e.g. from a prior write ACK) are discarded.
-    for (var i = 0; i < _overflow.length; i++) {
-      if (accepts(_overflow[i])) return _overflow.removeAt(i);
-    }
-    _overflow.clear();
-
     // Consumer-proven pattern: set up the response Completer BEFORE writing so
     // a BLE notify that arrives during the GATT write is never missed.
     final response = Completer<List<int>>();
@@ -651,6 +645,14 @@ class Icp5UsbTransport
       try {
         return await response.future.timeout(readTimeout);
       } on TimeoutException {
+        // Consumer-proven fail-closed timeout handling: detach the matcher so
+        // an in-flight notification is discarded immediately, flush partial
+        // bytes, and quarantine briefly so the delayed response cannot pair
+        // with the next command.
+        _pendingResponse = null;
+        _pendingAccepts = null;
+        _buffer.reset();
+        await Future<void>.delayed(_staleAckQuarantine);
         return null;
       }
     } finally {
