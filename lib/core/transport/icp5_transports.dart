@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'adau1701_ch0_band0_read_service.dart';
 import 'adau1701_tuning_transport.dart';
@@ -107,8 +106,13 @@ class Icp5UsbTransport
   Icp5SerialConnection? _connection;
   StreamSubscription<List<int>>? _subscription;
   final Icp5FrameBuffer _buffer = Icp5FrameBuffer();
-  final Queue<List<int>> _frameQueue = Queue<List<int>>();
-  Completer<void>? _frameCompleter;
+  // Consumer-proven pattern: one Completer<List<int>> per in-flight exchange,
+  // set BEFORE the write so rapid BLE notifies are never missed.
+  Completer<List<int>>? _pendingResponse;
+  bool Function(List<int>)? _pendingAccepts;
+  // Overflow: frames that arrived while no exchange was waiting (e.g. pages
+  // 2-4 of a multi-page read arriving before exchange 1 clears its completer).
+  final List<List<int>> _overflow = [];
   List<Icp5SerialDevice> _devices = const [];
   List<Icp5SerialDevice> _enumeratedPorts = const [];
   String _discoverySource = 'Windows SetupAPI Ports class';
@@ -213,9 +217,14 @@ class Icp5UsbTransport
       _connection = await driver.open(_selectedPort!);
       _subscription = _connection!.bytes.listen((chunk) {
         for (final frame in _buffer.add(chunk)) {
-          _frameQueue.addLast(frame);
-          final c = _frameCompleter;
-          if (c != null && !c.isCompleted) c.complete();
+          final r = _pendingResponse;
+          final a = _pendingAccepts;
+          if (r != null && !r.isCompleted && a != null && a(frame)) {
+            r.complete(frame);
+          } else {
+            // Buffer for the next exchange (e.g. rapid multi-page BLE notifies).
+            _overflow.add(frame);
+          }
         }
       }, onError: (_) => _state = DspConnectionState.error);
       final identity = await _exchange(Icp5FrameCodec.identificationRequest,
@@ -249,8 +258,9 @@ class Icp5UsbTransport
   Future<void> close() async {
     await _subscription?.cancel();
     _subscription = null;
-    _frameQueue.clear();
-    _frameCompleter = null;
+    _pendingResponse = null;
+    _pendingAccepts = null;
+    _overflow.clear();
     _buffer.reset();
     await _connection?.close();
     _connection = null;
@@ -280,9 +290,8 @@ class Icp5UsbTransport
     if (_busy) throw StateError('Another ICP5 transaction is active.');
     _busy = true;
     try {
-      // Discard any stale frames (e.g. unsolicited notifies from a prior cycle)
-      // and partial bytes in the buffer so the new read starts clean.
-      _frameQueue.clear();
+      // Flush stale overflow frames and partial bytes from any prior cycle.
+      _overflow.clear();
       _buffer.reset();
       final reader = Icp5RawStateReader(exchange: (request) async {
         final response = await _exchange(
@@ -620,30 +629,35 @@ class Icp5UsbTransport
 
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
-    final written =
-        await _connection!.write(tx, writeTimeout).timeout(writeTimeout);
-    if (written != tx.length) {
-      throw StateError('Partial serial write: $written/${tx.length}.');
+    // Drain overflow first: rapid BLE multi-page responses can queue page N+1
+    // before exchange N+1 even starts.  Matching frames are consumed in order;
+    // unmatched frames (e.g. from a prior write ACK) are discarded.
+    for (var i = 0; i < _overflow.length; i++) {
+      if (accepts(_overflow[i])) return _overflow.removeAt(i);
     }
-    // Drain the queue for a matching frame.  Frames that arrived between
-    // consecutive exchange calls (e.g. rapid BLE notifies for a multi-page
-    // read) are buffered in _frameQueue and never dropped.
-    final deadline = DateTime.now().add(readTimeout);
-    while (true) {
-      while (_frameQueue.isNotEmpty) {
-        final frame = _frameQueue.removeFirst();
-        if (accepts(frame)) return frame;
+    _overflow.clear();
+
+    // Consumer-proven pattern: set up the response Completer BEFORE writing so
+    // a BLE notify that arrives during the GATT write is never missed.
+    final response = Completer<List<int>>();
+    _pendingResponse = response;
+    _pendingAccepts = accepts;
+    try {
+      final written =
+          await _connection!.write(tx, writeTimeout).timeout(writeTimeout);
+      if (written != tx.length) {
+        throw StateError('Partial serial write: $written/${tx.length}.');
       }
-      final remaining = deadline.difference(DateTime.now());
-      if (remaining.isNegative) return null;
-      _frameCompleter = Completer<void>();
       try {
-        await _frameCompleter!.future.timeout(remaining);
+        return await response.future.timeout(readTimeout);
       } on TimeoutException {
-        _frameCompleter = null;
         return null;
       }
-      _frameCompleter = null;
+    } finally {
+      if (identical(_pendingResponse, response)) {
+        _pendingResponse = null;
+        _pendingAccepts = null;
+      }
     }
   }
 
