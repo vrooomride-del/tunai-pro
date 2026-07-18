@@ -314,7 +314,12 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     super.initState();
     _usbiDeviceOpen = widget.initialUsbiDeviceOpen;
     _adau1701UsbTransport = Icp5UsbTransport();
-    _adau1701BleTransport = Icp5BluetoothTransport();
+    // 3 s timeout gives the DSP firmware margin to respond after back-to-back
+    // page reads; the default 1 s is tight for BLE with ATT Write Response.
+    _adau1701BleTransport = Icp5BluetoothTransport(
+      readTimeout: const Duration(seconds: 3),
+      writeTimeout: const Duration(seconds: 3),
+    );
     // Periodic rebuild so the tuning panel's key reflects the active transport
     // (USB vs BLE) without needing a callback from TransportConnectionPanel.
     _tuningRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
