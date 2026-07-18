@@ -338,6 +338,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     if (_isWindows && _usbiNativeBackend is ProUsbiWindowsNativeBackend) {
       (_usbiNativeBackend as ProUsbiWindowsNativeBackend).closeDevice();
     }
+    _adau1701Transport.close();
     super.dispose();
   }
 

@@ -58,8 +58,27 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
     _freqCtrl = TextEditingController();
     // Poll transport status so the status bar reflects live ICP5 connection
     // changes without requiring the parent widget to rebuild.
+    // Also clears stale read state on disconnect so the engineer always
+    // sees fresh values after reconnect.
     _statusTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      if (!_transportReady && _readState != null) {
+        setState(() {
+          _readState = null;
+          _readError = null;
+          _preflightMessage = null;
+          _preflightPassed = null;
+          _appliedGain = null;
+          _appliedFreq = null;
+          _gainWriteOk = null;
+          _freqWriteOk = null;
+          _verifyState = null;
+          _applyError = null;
+        });
+        _gate.invalidate();
+      } else {
+        setState(() {});
+      }
     });
   }
 
@@ -148,6 +167,11 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       setState(() {
         _preflightPassed = preflight.passed;
         _preflightMessage = preflight.message;
+        // Preflight does its own hardware read; use that fresh state so the
+        // "CURRENT STATE" card stays in sync with actual pre-write values.
+        if (preflight.originalState != null) {
+          _readState = preflight.originalState;
+        }
       });
       if (!preflight.passed) return;
 
