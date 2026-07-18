@@ -12,6 +12,7 @@ import '../../../shared/pro_widgets.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_xo_audit_registry.dart';
 import '../../../core/pro_adau1466_wfl_lpf2_safeload_executor.dart';
+import '../widgets/pro_crossover_response_graph.dart';
 
 class XoTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -176,8 +177,23 @@ class _XoTabState extends ConsumerState<XoTab> {
             ),
             const SizedBox(height: 14),
 
-            // Graph placeholder
-            _XoGraphPlaceholder(),
+            // ── XO response graph (woofer / tweeter / summed + phase preview) ──
+            Text('XO RESPONSE', style: proSubtitle(size: 9)),
+            const SizedBox(height: 6),
+            ProCrossoverResponseGraph(
+              channels: [
+                for (final d in drivers)
+                  XoGraphChannel(
+                    label: d.name,
+                    role: d.role,
+                    channel: tuning.crossoverChannels.firstWhere(
+                      (c) => c.channelId == d.id,
+                      orElse: () => CrossoverChannelState.empty(d.id),
+                    ),
+                    selected: d.id == selectedId,
+                  ),
+              ],
+            ),
 
             // Phase D notice
             const SizedBox(height: 14),
@@ -880,23 +896,3 @@ class _FilterDropdown<T> extends StatelessWidget {
       ]);
 }
 
-class _XoGraphPlaceholder extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Container(
-        height: 120,
-        decoration: BoxDecoration(
-          color: kProSurface,
-          border: Border.all(color: kProBorder),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.show_chart, color: Colors.white12, size: 20),
-            const SizedBox(height: 6),
-            Text(
-                'Summed acoustic response preview — available in the Simulation tab',
-                style: proSubtitle(size: 9)),
-          ]),
-        ),
-      );
-}
