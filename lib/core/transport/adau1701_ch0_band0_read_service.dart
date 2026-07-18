@@ -1,4 +1,5 @@
 import 'adau1701_ch0_band0_decoder.dart';
+import 'adau1701_peq_band_decoder.dart';
 import 'icp5_frame_codec.dart';
 import 'icp5_raw_state_read.dart';
 
@@ -147,6 +148,91 @@ class Adau1701Ch0Band0ReadService {
       ),
     );
   }
+
+  /// Band-index-aware readback (Band 1..10). Additive — [readOriginalState] and
+  /// the verified Band 1 path are unchanged; band 0 here returns the same proven
+  /// values via [Adau1701PeqBandDecoder] (which delegates to the verified
+  /// decoder). Bands 1..9 are decoded at an UNVERIFIED per-band offset and are
+  /// flagged [Adau1701PeqBandReadback.isCaptureProven] == false — treat them as
+  /// "hardware verification pending" until a real device readback confirms them.
+  Future<Adau1701PeqBandReadResult> readBandState({int band = 0}) async {
+    if (!transport.isConnected ||
+        !transport.handshakeComplete ||
+        transport.detectedProfile != Icp5FrameCodec.expectedProfile) {
+      return const Adau1701PeqBandReadResult.failure(
+        Adau1701Ch0Band0ReadStatus.transportNotReady,
+        'ADAU1701 identity handshake is required before reading state.',
+      );
+    }
+
+    final RawDspStateSnapshot snapshot;
+    try {
+      snapshot = await transport.readRawDspState();
+    } catch (error) {
+      return Adau1701PeqBandReadResult.failure(
+        Adau1701Ch0Band0ReadStatus.rawReadFailed,
+        'Raw DSP state read failed: $error',
+      );
+    }
+
+    if (snapshot.deviceId != Icp5FrameCodec.expectedProfile) {
+      return Adau1701PeqBandReadResult.failure(
+        Adau1701Ch0Band0ReadStatus.deviceIdentityMismatch,
+        'Raw snapshot device identity mismatch: ${snapshot.deviceId}',
+      );
+    }
+
+    final Adau1701PeqBandReadback readback;
+    try {
+      readback = Adau1701PeqBandDecoder.decode(snapshot, band: band);
+    } on FormatException catch (e) {
+      return Adau1701PeqBandReadResult.failure(
+        Adau1701Ch0Band0ReadStatus.decodeFailed,
+        'ADAU1701 band $band decode failed: ${e.message}',
+      );
+    }
+
+    return Adau1701PeqBandReadResult.success(readback, snapshot.timestamp);
+  }
+}
+
+// ── Band-aware read result ────────────────────────────────────────────────────
+
+class Adau1701PeqBandReadResult {
+  final Adau1701Ch0Band0ReadStatus status;
+  final Adau1701PeqBandReadback? readback;
+  final DateTime? capturedAt;
+  final String message;
+
+  const Adau1701PeqBandReadResult._({
+    required this.status,
+    required this.message,
+    this.readback,
+    this.capturedAt,
+  });
+
+  factory Adau1701PeqBandReadResult.success(
+    Adau1701PeqBandReadback readback,
+    DateTime capturedAt,
+  ) =>
+      Adau1701PeqBandReadResult._(
+        status: Adau1701Ch0Band0ReadStatus.success,
+        message: 'ADAU1701 band ${readback.band} state read succeeded'
+            '${readback.isCaptureProven ? '' : ' (UNVERIFIED offset — pending)'}.',
+        readback: readback,
+        capturedAt: capturedAt,
+      );
+
+  const Adau1701PeqBandReadResult.failure(this.status, this.message)
+      : readback = null,
+        capturedAt = null;
+
+  bool get succeeded =>
+      status == Adau1701Ch0Band0ReadStatus.success && readback != null;
+
+  /// True only when the read succeeded AND the band offset is capture-proven
+  /// (band 0). Bands 1..9 are never hardware-verified until confirmed.
+  bool get isHardwareVerified => succeeded && readback!.isCaptureProven;
 }
 
 // ── Write-plan field coverage ─────────────────────────────────────────────────
