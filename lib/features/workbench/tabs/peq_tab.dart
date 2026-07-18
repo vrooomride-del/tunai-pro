@@ -5,11 +5,13 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/adau1701_peq_response.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
 import '../../../core/pro_usbi_native_backend.dart';
+import '../widgets/adau1701_peq_response_graph.dart';
 import 'pro_adau1466_peq_hardware_panel.dart';
 
 class PeqTab extends ConsumerStatefulWidget {
@@ -153,8 +155,21 @@ class _PeqTabState extends ConsumerState<PeqTab> {
             ),
             const SizedBox(height: 14),
 
-            // Graph placeholder
-            _GraphPlaceholder(),
+            // Live PEQ magnitude response of this channel's fixed bands.
+            // Editing an enabled band's frequency/gain/Q updates the curve
+            // immediately (the tab rebuilds from tuning state on every change).
+            Adau1701PeqResponseGraph(
+              bands: [
+                for (final b in peqCh.bands)
+                  PeqResponseBand(
+                    frequencyHz: b.frequencyHz,
+                    gainDb: b.gainDb,
+                    q: b.q,
+                    enabled: b.enabled && !peqCh.bypassed,
+                  ),
+              ],
+              height: 240,
+            ),
             const SizedBox(height: 14),
 
             // Fixed 10-band PEQ slots (Band 1 .. Band 10). No add/remove — each
@@ -280,25 +295,6 @@ class _ChannelHeader extends StatelessWidget {
   );
 }
 
-class _GraphPlaceholder extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Container(
-    height: 120,
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Center(
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Icon(Icons.show_chart, color: Colors.white12, size: 20),
-        const SizedBox(height: 6),
-        Text('Magnitude response preview — run Simulation to preview estimated response curves',
-            style: proSubtitle(size: 9)),
-      ]),
-    ),
-  );
-}
 
 class _BandCard extends ConsumerStatefulWidget {
   final int index;
