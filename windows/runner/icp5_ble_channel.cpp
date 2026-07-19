@@ -72,6 +72,22 @@ std::string ConnStatusStr(BluetoothConnectionStatus s) {
                                                    : "Disconnected";
 }
 
+// Renders a GattWriteResult: communication status + the exact ATT protocol
+// error byte when present (e.g. 0x05 InsufficientAuthentication, 0x0F
+// InsufficientEncryption → device requires pairing/encryption).
+std::string WriteResultStr(GattWriteResult const& r) {
+  std::string s = CommStatusStr(r.Status());
+  auto perr = r.ProtocolError();
+  if (perr != nullptr) {
+    char buf[8]{};
+    sprintf_s(buf, "0x%02X", static_cast<int>(perr.Value()));
+    s += std::string(" attError=") + buf;
+  } else {
+    s += " attError=none";
+  }
+  return s;
+}
+
 std::string AddrTypeStr(BluetoothAddressType t) {
   switch (t) {
     case BluetoothAddressType::Public:
@@ -533,7 +549,11 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
   bool has_error = false;
   std::string err_msg;
   try {
+    // Use the SAME FFF1 characteristic instance discovered during connect, plus
+    // the maintained device/session (kept alive in the session map).
     GattCharacteristic rx{nullptr};
+    BluetoothLEDevice device{nullptr};
+    GattSession gattSession{nullptr};
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       auto it = g_sessions.find(deviceId);
@@ -541,33 +561,74 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
         throw std::runtime_error("No RX (FFF1) characteristic for " + deviceId);
       }
       rx = it->second.rx;
+      device = it->second.device;
+      gattSession = it->second.gattSession;
     }
 
     const auto props = rx.CharacteristicProperties();
     const bool hasNotify = HasProp(props, GattCharacteristicProperties::Notify);
     const bool hasIndicate =
         HasProp(props, GattCharacteristicProperties::Indicate);
-    LogMsg("FFF1_PROPS raw=" + std::to_string(static_cast<int>(props)) +
-           " notify=" + B(hasNotify) + " indicate=" + B(hasIndicate));
+    const bool hasWrite = HasProp(props, GattCharacteristicProperties::Write) ||
+        HasProp(props, GattCharacteristicProperties::WriteWithoutResponse);
+    const bool hasRead = HasProp(props, GattCharacteristicProperties::Read);
+
+    // Exact FFF1 characteristic diagnostics.
+    LogMsg("[ICP5 BLE DEBUG] FFF1_UUID_FULL=" + GuidToShort(rx.Uuid()));
+    LogMsg("[ICP5 BLE DEBUG] FFF1_UUID_SHORT=" + Short16(rx.Uuid()));
+    LogMsg("[ICP5 BLE DEBUG] PROPERTIES_RAW=" +
+           std::to_string(static_cast<int>(props)));
+    LogMsg("[ICP5 BLE DEBUG] CAN_NOTIFY=" + B(hasNotify));
+    LogMsg("[ICP5 BLE DEBUG] CAN_INDICATE=" + B(hasIndicate));
+    LogMsg("[ICP5 BLE DEBUG] CAN_WRITE=" + B(hasWrite));
+    LogMsg("[ICP5 BLE DEBUG] CAN_READ=" + B(hasRead));
+    LogMsg(std::string("[ICP5 BLE DEBUG] CHAR_VALID=") + B(rx != nullptr));
+    if (device) {
+      LogMsg("[ICP5 BLE DEBUG] CONN_STATUS=" +
+             ConnStatusStr(device.ConnectionStatus()));
+    }
+    if (gattSession) {
+      LogMsg(std::string("[ICP5 BLE DEBUG] SESSION_MAINTAIN=") +
+             B(gattSession.MaintainConnection()));
+    }
+
     if (!hasNotify && !hasIndicate) {
       LogMsg("NOTIFY_ERROR stage=props status=NoNotifyNoIndicate");
       throw std::runtime_error("FFF1 supports neither Notify nor Indicate.");
     }
 
-    // Register the ValueChanged handler BEFORE writing the CCCD so no early RX
-    // event is missed. The token is kept alive in the session and revoked once.
-    Log("RX_HANDLER_REGISTER_BEGIN");
-    auto token = rx.ValueChanged(
-        [deviceId](GattCharacteristic const&,
-                   GattValueChangedEventArgs const& args) {
-          auto reader = DataReader::FromBuffer(args.CharacteristicValue());
-          std::vector<uint8_t> data(reader.UnconsumedBufferLength());
-          reader.ReadBytes(data);
-          const int n = ++g_rx_event_count;
-          LogMsg("RX_BYTES count=" + std::to_string(data.size()) +
-                 " event=" + std::to_string(n));
-          EmitNotify(deviceId, data);
-        });
+    Log("FFF1_NOTIFY_BEGIN");
+
+    // Match the working macOS setNotifyValue flow: the CCCD mode is chosen from
+    // the characteristic properties — Notify when present, else Indicate. No
+    // try-both fallback (Indicate is only used when Notify is absent, req 4).
+    const bool useIndicate = !hasNotify;  // hasNotify||hasIndicate guaranteed
+    const auto cccdMode =
+        useIndicate
+            ? GattClientCharacteristicConfigurationDescriptorValue::Indicate
+            : GattClientCharacteristicConfigurationDescriptorValue::Notify;
+    const std::string modeLabel = useIndicate ? "Indicate" : "Notify";
+
+    // Register ValueChanged on the SAME characteristic instance BEFORE the CCCD
+    // write (CoreBluetooth keeps its delegate active before setNotifyValue).
+    // Store the token immediately so it is not destroyed by local lifetime.
+    winrt::event_token token{};
+    try {
+      token = rx.ValueChanged(
+          [deviceId](GattCharacteristic const&,
+                     GattValueChangedEventArgs const& args) {
+            auto reader = DataReader::FromBuffer(args.CharacteristicValue());
+            std::vector<uint8_t> data(reader.UnconsumedBufferLength());
+            reader.ReadBytes(data);
+            const int n = ++g_rx_event_count;
+            LogMsg("RX_EVENT_RECEIVED count=" + std::to_string(n) +
+                   " bytes=" + std::to_string(data.size()));
+            EmitNotify(deviceId, data);
+          });
+    } catch (...) {
+      Log("REGISTER_VALUE_CHANGED_FAIL");
+      throw;
+    }
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       auto it = g_sessions.find(deviceId);
@@ -576,48 +637,19 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
         it->second.rxSubscribed = true;
       }
     }
-    Log("RX_HANDLER_REGISTERED");
+    Log("VALUE_CHANGED_REGISTERED");
 
-    // Brief readiness delay before the CCCD write — the link/GATT session may
-    // not be fully ready immediately after service discovery.
-    co_await winrt::resume_after(std::chrono::milliseconds(200));
+    // Write the CCCD immediately after registration (macOS timing — no delay).
+    LogMsg("CCCD_WRITE_BEGIN mode=" + modeLabel);
+    auto wr = co_await
+        rx.WriteClientCharacteristicConfigurationDescriptorWithResultAsync(
+            cccdMode);
+    LogMsg("CCCD_WRITE_RESULT mode=" + modeLabel + " " + WriteResultStr(wr));
 
-    // Try Notify first, then Indicate (req 1–3).
-    std::vector<std::pair<GattClientCharacteristicConfigurationDescriptorValue,
-                          std::string>>
-        modes;
-    if (hasNotify) {
-      modes.push_back(
-          {GattClientCharacteristicConfigurationDescriptorValue::Notify,
-           "Notify"});
-    }
-    if (hasIndicate) {
-      modes.push_back(
-          {GattClientCharacteristicConfigurationDescriptorValue::Indicate,
-           "Indicate"});
-    }
-
-    bool enabled = false;
-    GattCommunicationStatus lastStatus = GattCommunicationStatus::Unreachable;
-    for (auto const& mode : modes) {
-      LogMsg("CCCD_TRY mode=" + mode.second);
-      lastStatus =
-          co_await rx.WriteClientCharacteristicConfigurationDescriptorAsync(
-              mode.first);
-      LogMsg("CCCD_RESULT mode=" + mode.second +
-             " status=" + CommStatusStr(lastStatus));
-      if (lastStatus == GattCommunicationStatus::Success) {
-        enabled = true;
-        Log(mode.second == "Notify" ? "RX_NOTIFY_ENABLED"
-                                    : "RX_INDICATE_ENABLED");
-        break;
-      }
-    }
-
-    if (!enabled) {
-      // Subscription failed — revoke the handler exactly once, keep the device
-      // selection (Dart re-arms Connect), and surface the exact WinRT status.
-      LogMsg("NOTIFY_ERROR stage=cccd status=" + CommStatusStr(lastStatus));
+    if (wr.Status() != GattCommunicationStatus::Success) {
+      // Revoke exactly once; keep device selection (Dart re-arms Connect);
+      // surface the exact WinRT status + ATT error.
+      LogMsg("NOTIFY_ERROR stage=cccd status=" + WriteResultStr(wr));
       {
         std::lock_guard<std::mutex> lock(g_mutex);
         auto it = g_sessions.find(deviceId);
@@ -632,12 +664,16 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
         }
       }
       throw std::runtime_error("CCCD subscription failed for FFF1: " +
-                               CommStatusStr(lastStatus));
+                               WriteResultStr(wr));
     }
+    Log(useIndicate ? "RX_INDICATE_ENABLED" : "RX_NOTIFY_ENABLED");
   } catch (const winrt::hresult_error& e) {
     has_error = true;
+    char hr[16]{};
+    sprintf_s(hr, "0x%08X", static_cast<uint32_t>(e.code().value));
     err_msg = ToUtf8(e.message());
-    LogMsg("NOTIFY_ERROR stage=hresult status=" + err_msg);
+    LogMsg(std::string("NOTIFY_ERROR stage=hresult hresult=") + hr +
+           " message=" + err_msg);
   } catch (const std::exception& e) {
     has_error = true;
     err_msg = e.what();
