@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstdio>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -78,6 +79,23 @@ std::string ConnStatusStr(BluetoothConnectionStatus s) {
 
 std::string SessionStatusStr(GattSessionStatus s) {
   return s == GattSessionStatus::Active ? "Active" : "Closed";
+}
+
+// Monotonic milliseconds for correlating lifecycle timing across log lines.
+long long NowMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+// Render the ATT protocol error byte from a GATT result's ProtocolError ref.
+std::string AttErr(winrt::Windows::Foundation::IReference<uint8_t> const& e) {
+  if (e) {
+    char buf[16]{};
+    sprintf_s(buf, "0x%02X", static_cast<int>(e.Value()));
+    return buf;
+  }
+  return "none";
 }
 
 // Event-driven bounded wait for the GattSession to reach Active. WinRT's
@@ -552,6 +570,48 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
           "GATT_SESSION_ACTIVE_TIMEOUT: session never became Active for " +
           deviceId);
     }
+    const long long activeMs = NowMs();
+
+    // (req 1) Full state snapshot at the moment the session reports Active.
+    LogMsg("GATT_SESSION_ACTIVE_DETAIL t=" + std::to_string(activeMs) +
+           " session=" + SessionStatusStr(gattSession.SessionStatus()) +
+           " conn=" + ConnStatusStr(device.ConnectionStatus()) +
+           " canMaintain=" + B(gattSession.CanMaintainConnection()) +
+           " maintain=" + B(gattSession.MaintainConnection()) +
+           " device=" + PtrId(device) + " sessionPtr=" + PtrId(gattSession));
+
+    // (req 4) Keep logging SessionStatus transitions AFTER Active (diagnostic;
+    // token intentionally not revoked — the source object lives in g_sessions).
+    {
+      auto prev = std::make_shared<std::atomic<int>>(
+          static_cast<int>(gattSession.SessionStatus()));
+      gattSession.SessionStatusChanged(
+          [prev](GattSession const& s,
+                 GattSessionStatusChangedEventArgs const&) {
+            const int now = static_cast<int>(s.SessionStatus());
+            const int was = prev->exchange(now);
+            LogMsg("GATT_SESSION_STATUS_CHANGED prev=" +
+                   SessionStatusStr(static_cast<GattSessionStatus>(was)) +
+                   " new=" + SessionStatusStr(static_cast<GattSessionStatus>(now)) +
+                   " t=" + std::to_string(NowMs()));
+          });
+    }
+    // (req 5) Temporary diagnostic: BluetoothLEDevice ConnectionStatus changes.
+    {
+      auto prev = std::make_shared<std::atomic<int>>(
+          static_cast<int>(device.ConnectionStatus()));
+      device.ConnectionStatusChanged(
+          [prev](BluetoothLEDevice const& d, IInspectable const&) {
+            const int now = static_cast<int>(d.ConnectionStatus());
+            const int was = prev->exchange(now);
+            LogMsg(
+                "DEVICE_CONNECTION_STATUS_CHANGED prev=" +
+                ConnStatusStr(static_cast<BluetoothConnectionStatus>(was)) +
+                " new=" +
+                ConnStatusStr(static_cast<BluetoothConnectionStatus>(now)) +
+                " t=" + std::to_string(NowMs()));
+          });
+    }
 
     // Discover FFF0 / FFF1 / FFF2 FRESH and Uncached, now that the ATT session
     // is Active. No Cached fallback: the notify target must be an object backed
@@ -560,18 +620,43 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
     const winrt::guid fff2 = ToGuid("fff2");
     const winrt::guid fff1 = ToGuid("fff1");
 
-    Log("UNCACHED_DISCOVERY_AFTER_ACTIVE_BEGIN");
+    // (req 2) State at the start of the Uncached discovery.
+    const long long beginMs = NowMs();
+    LogMsg("UNCACHED_DISCOVERY_AFTER_ACTIVE_BEGIN t=" +
+           std::to_string(beginMs) +
+           " sinceActiveMs=" + std::to_string(beginMs - activeMs) +
+           " session=" + SessionStatusStr(gattSession.SessionStatus()) +
+           " conn=" + ConnStatusStr(device.ConnectionStatus()));
     auto servicesResult = co_await device.GetGattServicesForUuidAsync(
         fff0, BluetoothCacheMode::Uncached);
+    const long long doneMs = NowMs();
     const uint32_t svcCount =
         servicesResult.Status() == GattCommunicationStatus::Success
             ? servicesResult.Services().Size()
             : 0;
+    // (req 3) Full result snapshot with ATT error and timing.
     LogMsg("UNCACHED_DISCOVERY_AFTER_ACTIVE_RESULT status=" +
            CommStatusStr(servicesResult.Status()) +
-           " count=" + std::to_string(svcCount));
+           " attError=" + AttErr(servicesResult.ProtocolError()) +
+           " count=" + std::to_string(svcCount) +
+           " session=" + SessionStatusStr(gattSession.SessionStatus()) +
+           " conn=" + ConnStatusStr(device.ConnectionStatus()) +
+           " callMs=" + std::to_string(doneMs - beginMs));
     if (servicesResult.Status() != GattCommunicationStatus::Success ||
         svcCount == 0) {
+      // (req 6) Failure-point snapshot including MaxPduSize and object identity.
+      std::string maxPdu = "n/a";
+      try {
+        maxPdu = std::to_string(gattSession.MaxPduSize());
+      } catch (...) {
+      }
+      LogMsg("CONNECT_ERROR stage=fff0_uncached_after_active status=" +
+             CommStatusStr(servicesResult.Status()) +
+             " attError=" + AttErr(servicesResult.ProtocolError()) +
+             " session=" + SessionStatusStr(gattSession.SessionStatus()) +
+             " conn=" + ConnStatusStr(device.ConnectionStatus()) +
+             " maxPdu=" + maxPdu + " device=" + PtrId(device) +
+             " sessionPtr=" + PtrId(gattSession));
       throw std::runtime_error(
           "FFF0 Uncached discovery failed after Active: " +
           CommStatusStr(servicesResult.Status()));
