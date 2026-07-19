@@ -76,6 +76,54 @@ std::string ConnStatusStr(BluetoothConnectionStatus s) {
                                                    : "Disconnected";
 }
 
+std::string SessionStatusStr(GattSessionStatus s) {
+  return s == GattSessionStatus::Active ? "Active" : "Closed";
+}
+
+// Event-driven bounded wait for the GattSession to reach Active. WinRT's
+// BluetoothLEDevice.ConnectionStatus can read "Connected" while the ATT session
+// is not usable yet (Uncached GATT returns Unreachable, only Cached metadata
+// succeeds). The real signal that ATT operations will work is
+// GattSession.SessionStatus == Active. We subscribe to SessionStatusChanged and
+// wait on an OS event (no sleep-poll loop); the timeout exists only to fail
+// explicitly, never as an arbitrary delay.
+winrt::Windows::Foundation::IAsyncOperation<bool> WaitSessionActive(
+    GattSession session, std::chrono::milliseconds timeout) {
+  LogMsg(std::string("GATT_SESSION_INITIAL status=") +
+         SessionStatusStr(session.SessionStatus()));
+  if (session.SessionStatus() == GattSessionStatus::Active) {
+    Log("GATT_SESSION_ACTIVE");
+    co_return true;
+  }
+  Log("GATT_SESSION_WAIT_ACTIVE_BEGIN");
+  winrt::handle signal{::CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+  const HANDLE signalHandle = signal.get();
+  auto token = session.SessionStatusChanged(
+      [signalHandle](GattSession const& s,
+                     GattSessionStatusChangedEventArgs const&) {
+        LogMsg(std::string("GATT_SESSION_STATUS_CHANGED status=") +
+               SessionStatusStr(s.SessionStatus()));
+        if (s.SessionStatus() == GattSessionStatus::Active) {
+          ::SetEvent(signalHandle);
+        }
+      });
+  // Guard against the status flipping to Active between the check above and the
+  // handler registration.
+  if (session.SessionStatus() == GattSessionStatus::Active) {
+    ::SetEvent(signalHandle);
+  }
+  const bool signaled = co_await winrt::resume_on_signal(signalHandle, timeout);
+  session.SessionStatusChanged(token);
+  const bool active =
+      signaled && session.SessionStatus() == GattSessionStatus::Active;
+  if (active) {
+    Log("GATT_SESSION_ACTIVE");
+  } else {
+    Log("GATT_SESSION_ACTIVE_TIMEOUT");
+  }
+  co_return active;
+}
+
 // Stable object-identity (ABI pointer) for correlating the same service /
 // characteristic across log lines. Diagnostic only.
 std::string PtrId(winrt::Windows::Foundation::IUnknown const& obj) {
@@ -478,7 +526,8 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
     LogMsg("CONNECT_DEVICE_READY conn=" +
            ConnStatusStr(device.ConnectionStatus()));
 
-    // Keep the link up so service discovery has a live connection.
+    // Open a GattSession and request the OS to establish/maintain the link.
+    // This is required before any Uncached ATT operation will succeed.
     GattSession gattSession{nullptr};
     try {
       gattSession =
@@ -487,144 +536,114 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
       LogMsg(std::string("GATT_SESSION canMaintain=") +
              (gattSession.CanMaintainConnection() ? "true" : "false"));
     } catch (...) {
-      LogMsg("GATT_SESSION creation failed (continuing without it)");
+      throw std::runtime_error("GattSession creation failed for " + deviceId);
     }
 
-    // Wait briefly for readiness, then discover (Uncached, a few attempts).
-    GattDeviceServicesResult servicesResult{nullptr};
-    for (int attempt = 0; attempt < 5; ++attempt) {
-      co_await winrt::resume_after(std::chrono::milliseconds(300));
-      servicesResult =
-          co_await device.GetGattServicesAsync(BluetoothCacheMode::Uncached);
-      const uint32_t count =
-          servicesResult.Status() == GattCommunicationStatus::Success
-              ? servicesResult.Services().Size()
-              : 0;
-      LogMsg("GET_SERVICES attempt=" + std::to_string(attempt) + " status=" +
-             CommStatusStr(servicesResult.Status()) +
-             " count=" + std::to_string(count));
-      if (servicesResult.Status() == GattCommunicationStatus::Success &&
-          count > 0) {
-        break;
-      }
+    // Wait (event-driven, bounded) for the session to actually become Active.
+    // ConnectionStatus=Connected is NOT sufficient: the observed failure was
+    // Uncached GATT returning Unreachable while only Cached metadata succeeded,
+    // which then produced a stale FFF1 whose CCCD write failed with Unreachable.
+    // We refuse to proceed on Cached metadata; ATT operations only run once the
+    // GattSession reports Active.
+    const bool sessionActive =
+        co_await WaitSessionActive(gattSession, std::chrono::seconds(15));
+    if (!sessionActive) {
+      throw std::runtime_error(
+          "GATT_SESSION_ACTIVE_TIMEOUT: session never became Active for " +
+          deviceId);
     }
-    // Cached fallback if uncached never succeeded.
-    if (servicesResult.Status() != GattCommunicationStatus::Success) {
-      auto cached =
-          co_await device.GetGattServicesAsync(BluetoothCacheMode::Cached);
-      LogMsg("GET_SERVICES cached status=" + CommStatusStr(cached.Status()));
-      if (cached.Status() == GattCommunicationStatus::Success) {
-        servicesResult = cached;
-      }
+
+    // Discover FFF0 / FFF1 / FFF2 FRESH and Uncached, now that the ATT session
+    // is Active. No Cached fallback: the notify target must be an object backed
+    // by the live session, never Cached metadata (that is the root cause).
+    const winrt::guid fff0 = ToGuid("fff0");
+    const winrt::guid fff2 = ToGuid("fff2");
+    const winrt::guid fff1 = ToGuid("fff1");
+
+    Log("UNCACHED_DISCOVERY_AFTER_ACTIVE_BEGIN");
+    auto servicesResult = co_await device.GetGattServicesForUuidAsync(
+        fff0, BluetoothCacheMode::Uncached);
+    const uint32_t svcCount =
+        servicesResult.Status() == GattCommunicationStatus::Success
+            ? servicesResult.Services().Size()
+            : 0;
+    LogMsg("UNCACHED_DISCOVERY_AFTER_ACTIVE_RESULT status=" +
+           CommStatusStr(servicesResult.Status()) +
+           " count=" + std::to_string(svcCount));
+    if (servicesResult.Status() != GattCommunicationStatus::Success ||
+        svcCount == 0) {
+      throw std::runtime_error(
+          "FFF0 Uncached discovery failed after Active: " +
+          CommStatusStr(servicesResult.Status()));
     }
-    if (servicesResult.Status() != GattCommunicationStatus::Success) {
-      // Distinguish the failure mode for the caller/logs.
-      throw std::runtime_error("GATT service discovery failed: " +
-                               CommStatusStr(servicesResult.Status()));
+    GattDeviceService service = servicesResult.Services().GetAt(0);
+
+    auto charsResult =
+        co_await service.GetCharacteristicsAsync(BluetoothCacheMode::Uncached);
+    LogMsg("UNCACHED_DISCOVERY_AFTER_ACTIVE_RESULT chars status=" +
+           CommStatusStr(charsResult.Status()) + " count=" +
+           std::to_string(
+               charsResult.Status() == GattCommunicationStatus::Success
+                   ? charsResult.Characteristics().Size()
+                   : 0));
+    if (charsResult.Status() != GattCommunicationStatus::Success) {
+      throw std::runtime_error(
+          "FFF0 characteristics Uncached failed after Active: " +
+          CommStatusStr(charsResult.Status()));
     }
 
     BleSession session;
     session.device = device;
     session.gattSession = gattSession;
+    session.service = service;
 
     EncodableList serviceUuids;
     EncodableList characteristics;
-    const winrt::guid fff0 = ToGuid("fff0");
-    const winrt::guid fff2 = ToGuid("fff2");
-    const winrt::guid fff1 = ToGuid("fff1");
-    for (auto const& service : servicesResult.Services()) {
-      const std::string svcUuid = GuidToShort(service.Uuid());
-      const bool isFff0 = service.Uuid() == fff0;
-      serviceUuids.push_back(EncodableValue(svcUuid));
-      LogMsg(std::string("SERVICE uuid=") + svcUuid + (isFff0 ? " (FFF0)" : ""));
+    serviceUuids.push_back(EncodableValue(GuidToShort(service.Uuid())));
 
-      // Uncached first, then Cached fallback if it failed or came back empty.
-      auto charsResult =
-          co_await service.GetCharacteristicsAsync(BluetoothCacheMode::Uncached);
-      uint32_t charCount =
-          charsResult.Status() == GattCommunicationStatus::Success
-              ? charsResult.Characteristics().Size()
-              : 0;
-      LogMsg("  chars uncached status=" + CommStatusStr(charsResult.Status()) +
-             " count=" + std::to_string(charCount));
-      if (charsResult.Status() != GattCommunicationStatus::Success ||
-          charCount == 0) {
-        auto cached =
-            co_await service.GetCharacteristicsAsync(BluetoothCacheMode::Cached);
-        const uint32_t cachedCount =
-            cached.Status() == GattCommunicationStatus::Success
-                ? cached.Characteristics().Size()
-                : 0;
-        LogMsg("  chars cached status=" + CommStatusStr(cached.Status()) +
-               " count=" + std::to_string(cachedCount));
-        if (cached.Status() == GattCommunicationStatus::Success &&
-            cachedCount > 0) {
-          charsResult = cached;
-        }
+    bool sawFff2 = false;
+    bool sawFff1 = false;
+    for (auto const& ch : charsResult.Characteristics()) {
+      const std::string chUuid = GuidToShort(ch.Uuid());
+      const auto props = ch.CharacteristicProperties();
+      const bool hasRead = HasProp(props, GattCharacteristicProperties::Read);
+      const bool hasWrite = HasProp(props, GattCharacteristicProperties::Write);
+      const bool hasWwr =
+          HasProp(props, GattCharacteristicProperties::WriteWithoutResponse);
+      const bool hasNotify =
+          HasProp(props, GattCharacteristicProperties::Notify);
+      const bool hasIndicate =
+          HasProp(props, GattCharacteristicProperties::Indicate);
+      const bool canWrite = hasWrite || hasWwr;
+      const bool canNotify = hasNotify || hasIndicate;
+
+      EncodableMap c;
+      c[EncodableValue("service")] = EncodableValue(GuidToShort(service.Uuid()));
+      c[EncodableValue("uuid")] = EncodableValue(chUuid);
+      c[EncodableValue("canWrite")] = EncodableValue(canWrite);
+      c[EncodableValue("canNotify")] = EncodableValue(canNotify);
+      characteristics.push_back(EncodableValue(c));
+
+      LogMsg("  CHAR full=" + chUuid + " short=" + Short16(ch.Uuid()) +
+             " props=" + std::to_string(static_cast<int>(props)) +
+             " R=" + B(hasRead) + " W=" + B(hasWrite) + " WWR=" + B(hasWwr) +
+             " N=" + B(hasNotify) + " I=" + B(hasIndicate));
+      if (ch.Uuid() == fff2) {
+        sawFff2 = true;
+        if (canWrite) session.tx = ch;
       }
-      if (charsResult.Status() != GattCommunicationStatus::Success) {
-        if (isFff0) LogMsg("  FFF0 characteristic list empty/unreadable");
-        continue;
-      }
-
-      bool sawFff2 = false;
-      bool sawFff1 = false;
-      for (auto const& ch : charsResult.Characteristics()) {
-        const std::string chUuid = GuidToShort(ch.Uuid());
-        const auto props = ch.CharacteristicProperties();
-        const bool hasRead = HasProp(props, GattCharacteristicProperties::Read);
-        const bool hasWrite = HasProp(props, GattCharacteristicProperties::Write);
-        const bool hasWwr =
-            HasProp(props, GattCharacteristicProperties::WriteWithoutResponse);
-        const bool hasNotify =
-            HasProp(props, GattCharacteristicProperties::Notify);
-        const bool hasIndicate =
-            HasProp(props, GattCharacteristicProperties::Indicate);
-        // Accept FFF2 on Write OR WriteWithoutResponse; FFF1 on Notify OR Indicate.
-        const bool canWrite = hasWrite || hasWwr;
-        const bool canNotify = hasNotify || hasIndicate;
-
-        EncodableMap c;
-        c[EncodableValue("service")] = EncodableValue(svcUuid);
-        c[EncodableValue("uuid")] = EncodableValue(chUuid);
-        c[EncodableValue("canWrite")] = EncodableValue(canWrite);
-        c[EncodableValue("canNotify")] = EncodableValue(canNotify);
-        characteristics.push_back(EncodableValue(c));
-
-        if (isFff0) {
-          LogMsg("  CHAR full=" + chUuid + " short=" + Short16(ch.Uuid()) +
-                 " props=" + std::to_string(static_cast<int>(props)) +
-                 " R=" + B(hasRead) + " W=" + B(hasWrite) + " WWR=" + B(hasWwr) +
-                 " N=" + B(hasNotify) + " I=" + B(hasIndicate));
-          session.service = service;
-          if (ch.Uuid() == fff2) {
-            sawFff2 = true;
-            if (canWrite) {
-              session.tx = ch;
-            } else {
-              LogMsg("  FFF2 present but has neither Write nor WriteWithoutResponse");
-            }
-          }
-          if (ch.Uuid() == fff1) {
-            sawFff1 = true;
-            if (canNotify) {
-              session.rx = ch;
-            } else {
-              LogMsg("  FFF1 present but has neither Notify nor Indicate");
-            }
-          }
-        }
-      }
-      if (isFff0) {
-        LogMsg(std::string("  FFF2 match=") +
-               (session.tx ? "accepted"
-                           : (sawFff2 ? "rejected(no-write)" : "not-found")));
-        LogMsg(std::string("  FFF1 match=") +
-               (session.rx ? "accepted"
-                           : (sawFff1 ? "rejected(no-notify)" : "not-found")));
-        Log("SERVICE_FOUND FFF0");
+      if (ch.Uuid() == fff1) {
+        sawFff1 = true;
+        if (canNotify) session.rx = ch;
       }
     }
+    LogMsg(std::string("  FFF2 match=") +
+           (session.tx ? "accepted"
+                       : (sawFff2 ? "rejected(no-write)" : "not-found")));
+    LogMsg(std::string("  FFF1 match=") +
+           (session.rx ? "accepted"
+                       : (sawFff1 ? "rejected(no-notify)" : "not-found")));
+    Log("SERVICE_FOUND FFF0");
     LogMsg("CONNECT_DISCOVERY_OK services=" +
            std::to_string(serviceUuids.size()) +
            " conn=" + ConnStatusStr(device.ConnectionStatus()) +
@@ -636,16 +655,20 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
       g_sessions[deviceId] = session;
     }
 
-    // Subscribe to FFF1 NOW, on the still-live discovery connection. The active
-    // subscription keeps the link up so the connection does not drop before the
-    // handshake (the cause of the later EnableNotify GetGattServices Unreachable).
-    bool subscribedNow = false;
-    if (session.rx != nullptr) {
-      subscribedNow = co_await SubscribeFff1(deviceId, session.rx);
-    } else {
+    // Subscribe to FFF1 NOW, on the Active session with the freshly-discovered
+    // Uncached characteristic. If this fails we return a hard error so Dart does
+    // NOT proceed to EnableNotify and re-acquire on a dead session.
+    if (session.rx == nullptr) {
       Log("CONNECT_SUBSCRIBE_FFF1_FAILED reason=no-fff1-characteristic");
+      throw std::runtime_error("FFF1 notify characteristic not found on FFF0");
     }
+    const bool subscribedNow = co_await SubscribeFff1(deviceId, session.rx);
     LogMsg(std::string("CONNECT_RETURN subscribed=") + B(subscribedNow));
+    if (!subscribedNow) {
+      throw std::runtime_error(
+          "FFF1 notify subscription failed during connect (see "
+          "CONNECT_SUBSCRIBE_FFF1_CCCD_RESULT)");
+    }
 
     EncodableMap profile;
     profile[EncodableValue("services")] = EncodableValue(serviceUuids);
@@ -693,177 +716,15 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
         co_return;
       }
     }
-    Log("ENABLE_NOTIFY_FALLBACK_REACQUIRE_BEGIN");
-
-    // Fallback (only if the connect-time subscription didn't take): the FFF1
-    // characteristic
-    // cached during connect is stale — its underlying connection is released
-    // after service discovery, so the later CCCD write cannot reach the device
-    // even though discovery succeeded. macOS avoids this because CoreBluetooth
-    // keeps ONE continuous connected session across discover→setNotifyValue.
-    //
-    // Fix: from the maintained BluetoothLEDevice, re-acquire the FFF0 service and
-    // FFF1 characteristic FRESH (Uncached) right before subscribing, retrying
-    // until the link is actually reachable. This guarantees the CCCD write goes
-    // through a LIVE connection and a non-stale characteristic object.
-    BluetoothLEDevice device{nullptr};
-    GattSession gattSession{nullptr};
-    {
-      std::lock_guard<std::mutex> lock(g_mutex);
-      auto it = g_sessions.find(deviceId);
-      if (it == g_sessions.end() || !it->second.device) {
-        throw std::runtime_error("No live BLE session for " + deviceId);
-      }
-      device = it->second.device;
-      gattSession = it->second.gattSession;
-    }
-
-    const winrt::guid fff0Guid = ToGuid("fff0");
-    const winrt::guid fff1Guid = ToGuid("fff1");
-    GattCharacteristic rx{nullptr};
-    GattDeviceService service{nullptr};
-    std::string reacquire = "no-attempt";
-    for (int attempt = 0; attempt < 5 && rx == nullptr; ++attempt) {
-      LogMsg("[ICP5 BLE DEBUG] REACQUIRE attempt=" + std::to_string(attempt) +
-             " conn=" + ConnStatusStr(device.ConnectionStatus()));
-      auto svcRes = co_await device.GetGattServicesForUuidAsync(
-          fff0Guid, BluetoothCacheMode::Uncached);
-      if (svcRes.Status() != GattCommunicationStatus::Success ||
-          svcRes.Services().Size() == 0) {
-        reacquire = "service=" + CommStatusStr(svcRes.Status());
-        co_await winrt::resume_after(std::chrono::milliseconds(300));
-        continue;
-      }
-      service = svcRes.Services().GetAt(0);
-      auto chRes = co_await service.GetCharacteristicsForUuidAsync(
-          fff1Guid, BluetoothCacheMode::Uncached);
-      if (chRes.Status() != GattCommunicationStatus::Success ||
-          chRes.Characteristics().Size() == 0) {
-        reacquire = "char=" + CommStatusStr(chRes.Status());
-        co_await winrt::resume_after(std::chrono::milliseconds(300));
-        continue;
-      }
-      rx = chRes.Characteristics().GetAt(0);
-      reacquire = "ok";
-    }
-    LogMsg("ENABLE_NOTIFY_FALLBACK_REACQUIRE_RESULT serviceStatus=" + reacquire);
-    if (rx == nullptr) {
-      LogMsg("NOTIFY_ERROR stage=reacquire status=" + reacquire);
-      throw std::runtime_error(
-          "Could not re-acquire FFF1 on a live connection: " + reacquire);
-    }
-    // Refresh the session with the live service/characteristic objects.
-    {
-      std::lock_guard<std::mutex> lock(g_mutex);
-      auto it = g_sessions.find(deviceId);
-      if (it != g_sessions.end()) {
-        it->second.service = service;
-        it->second.rx = rx;
-      }
-    }
-
-    const auto props = rx.CharacteristicProperties();
-    const bool hasNotify = HasProp(props, GattCharacteristicProperties::Notify);
-    const bool hasIndicate =
-        HasProp(props, GattCharacteristicProperties::Indicate);
-    const bool hasWrite = HasProp(props, GattCharacteristicProperties::Write) ||
-        HasProp(props, GattCharacteristicProperties::WriteWithoutResponse);
-    const bool hasRead = HasProp(props, GattCharacteristicProperties::Read);
-
-    // Exact FFF1 characteristic diagnostics.
-    LogMsg("[ICP5 BLE DEBUG] FFF1_UUID_FULL=" + GuidToShort(rx.Uuid()));
-    LogMsg("[ICP5 BLE DEBUG] FFF1_UUID_SHORT=" + Short16(rx.Uuid()));
-    LogMsg("[ICP5 BLE DEBUG] PROPERTIES_RAW=" +
-           std::to_string(static_cast<int>(props)));
-    LogMsg("[ICP5 BLE DEBUG] CAN_NOTIFY=" + B(hasNotify));
-    LogMsg("[ICP5 BLE DEBUG] CAN_INDICATE=" + B(hasIndicate));
-    LogMsg("[ICP5 BLE DEBUG] CAN_WRITE=" + B(hasWrite));
-    LogMsg("[ICP5 BLE DEBUG] CAN_READ=" + B(hasRead));
-    LogMsg(std::string("[ICP5 BLE DEBUG] CHAR_VALID=") + B(rx != nullptr));
-    if (device) {
-      LogMsg("[ICP5 BLE DEBUG] CONN_STATUS=" +
-             ConnStatusStr(device.ConnectionStatus()));
-    }
-    if (gattSession) {
-      LogMsg(std::string("[ICP5 BLE DEBUG] SESSION_MAINTAIN=") +
-             B(gattSession.MaintainConnection()));
-    }
-
-    if (!hasNotify && !hasIndicate) {
-      LogMsg("NOTIFY_ERROR stage=props status=NoNotifyNoIndicate");
-      throw std::runtime_error("FFF1 supports neither Notify nor Indicate.");
-    }
-
-    Log("FFF1_NOTIFY_BEGIN");
-
-    // Match the working macOS setNotifyValue flow: the CCCD mode is chosen from
-    // the characteristic properties — Notify when present, else Indicate. No
-    // try-both fallback (Indicate is only used when Notify is absent, req 4).
-    const bool useIndicate = !hasNotify;  // hasNotify||hasIndicate guaranteed
-    const auto cccdMode =
-        useIndicate
-            ? GattClientCharacteristicConfigurationDescriptorValue::Indicate
-            : GattClientCharacteristicConfigurationDescriptorValue::Notify;
-    const std::string modeLabel = useIndicate ? "Indicate" : "Notify";
-
-    // Register ValueChanged on the SAME characteristic instance BEFORE the CCCD
-    // write (CoreBluetooth keeps its delegate active before setNotifyValue).
-    // Store the token immediately so it is not destroyed by local lifetime.
-    winrt::event_token token{};
-    try {
-      token = rx.ValueChanged(
-          [deviceId](GattCharacteristic const&,
-                     GattValueChangedEventArgs const& args) {
-            auto reader = DataReader::FromBuffer(args.CharacteristicValue());
-            std::vector<uint8_t> data(reader.UnconsumedBufferLength());
-            reader.ReadBytes(data);
-            const int n = ++g_rx_event_count;
-            LogMsg("RX_EVENT_RECEIVED count=" + std::to_string(n) +
-                   " bytes=" + std::to_string(data.size()));
-            EmitNotify(deviceId, data);
-          });
-    } catch (...) {
-      Log("REGISTER_VALUE_CHANGED_FAIL");
-      throw;
-    }
-    {
-      std::lock_guard<std::mutex> lock(g_mutex);
-      auto it = g_sessions.find(deviceId);
-      if (it != g_sessions.end()) {
-        it->second.rxToken = token;
-        it->second.rxSubscribed = true;
-      }
-    }
-    Log("VALUE_CHANGED_REGISTERED");
-
-    // Write the CCCD immediately after registration (macOS timing — no delay).
-    LogMsg("CCCD_WRITE_BEGIN mode=" + modeLabel);
-    auto wr = co_await
-        rx.WriteClientCharacteristicConfigurationDescriptorWithResultAsync(
-            cccdMode);
-    LogMsg("CCCD_WRITE_RESULT mode=" + modeLabel + " " + WriteResultStr(wr));
-
-    if (wr.Status() != GattCommunicationStatus::Success) {
-      // Revoke exactly once; keep device selection (Dart re-arms Connect);
-      // surface the exact WinRT status + ATT error.
-      LogMsg("NOTIFY_ERROR stage=cccd status=" + WriteResultStr(wr));
-      {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        auto it = g_sessions.find(deviceId);
-        if (it != g_sessions.end() && it->second.rxSubscribed &&
-            it->second.rx) {
-          try {
-            it->second.rx.ValueChanged(it->second.rxToken);
-          } catch (...) {
-          }
-          it->second.rxSubscribed = false;
-          Log("RX_HANDLER_REVOKED");
-        }
-      }
-      throw std::runtime_error("CCCD subscription failed for FFF1: " +
-                               WriteResultStr(wr));
-    }
-    Log(useIndicate ? "RX_INDICATE_ENABLED" : "RX_NOTIFY_ENABLED");
+    // No re-acquire fallback. Connect performs discovery + subscription only on
+    // an Active GattSession and returns a hard error otherwise, so reaching here
+    // without rxSubscribed means the live session is gone. Re-acquiring FFF1 on a
+    // dead session is exactly what produced the "service=Unreachable" loop, so we
+    // fail clearly instead and let Dart re-run Connect from a clean state.
+    Log("ENABLE_NOTIFY_NO_ACTIVE_SUBSCRIPTION");
+    throw std::runtime_error(
+        "FFF1 notify was not established on an Active session during connect; "
+        "reconnect required (no re-acquire on a dead session)");
   } catch (const winrt::hresult_error& e) {
     has_error = true;
     char hr[16]{};
