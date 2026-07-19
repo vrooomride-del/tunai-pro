@@ -136,7 +136,9 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     super.dispose();
   }
 
-  bool get _showBluetooth => widget.isMacOS ?? Platform.isMacOS;
+  // Show the ICP5 BLE option where a BLE backend exists: macOS (flutter_blue_plus)
+  // or Windows (WinRT). USBi and ICP5 USB are unchanged and always shown.
+  bool get _showBluetooth => (widget.isMacOS ?? Platform.isMacOS) || Platform.isWindows;
 
   List<DspTransport> get _transports => [
         UsbiDspTransport(

@@ -106,6 +106,9 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   // ── ADAU1701 ICP5 tuning transports (USB + BLE shared with connection panel)
   late final Icp5UsbTransport _adau1701UsbTransport;
   late final Icp5BluetoothTransport _adau1701BleTransport;
+  // True only for a tab-created (macOS local) BLE transport; the Windows BLE
+  // transport is owned by adau1701Icp5BleWindowsContextProvider.
+  bool _ownsBleTransport = true;
   Timer? _tuningRefreshTimer;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
@@ -320,12 +323,23 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     // close it. (ADAU1466 USBi + BLE ICP5 paths are unaffected.)
     _adau1701UsbTransport =
         ref.read(adau1701Icp5UsbContextProvider).transport as Icp5UsbTransport;
-    // 3 s timeout gives the DSP firmware margin to respond after back-to-back
-    // page reads; the default 1 s is tight for BLE with ATT Write Response.
-    _adau1701BleTransport = Icp5BluetoothTransport(
-      readTimeout: const Duration(seconds: 3),
-      writeTimeout: const Duration(seconds: 3),
-    );
+    // ADAU1701 ICP5 BLE transport. On Windows it is the shared WinRT-backed BLE
+    // context (provider-owned; not closed here) so Hardware and future Deploy
+    // consumers share one BLE connection. On macOS it stays the local
+    // flutter_blue_plus transport, owned and closed by this tab (unchanged).
+    // 3 s timeout gives the DSP firmware margin after back-to-back page reads.
+    if (Platform.isWindows) {
+      _adau1701BleTransport =
+          ref.read(adau1701Icp5BleWindowsContextProvider).transport
+              as Icp5BluetoothTransport;
+      _ownsBleTransport = false;
+    } else {
+      _adau1701BleTransport = Icp5BluetoothTransport(
+        readTimeout: const Duration(seconds: 3),
+        writeTimeout: const Duration(seconds: 3),
+      );
+      _ownsBleTransport = true;
+    }
     // Periodic rebuild so the tuning panel's key reflects the active transport
     // (USB vs BLE) without needing a callback from TransportConnectionPanel.
     _tuningRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -361,7 +375,9 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     _tuningRefreshTimer?.cancel();
     // _adau1701UsbTransport is owned by adau1701Icp5UsbContextProvider — do not
     // close it here; the Deploy Apply flow shares the same instance.
-    _adau1701BleTransport.close();
+    // On Windows the BLE transport is likewise provider-owned (shared); only
+    // close the macOS local BLE transport this tab created.
+    if (_ownsBleTransport) _adau1701BleTransport.close();
     super.dispose();
   }
 
