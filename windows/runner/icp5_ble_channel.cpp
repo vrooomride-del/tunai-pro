@@ -329,6 +329,81 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
   }
 }
 
+// Subscribes to FFF1 notifications on an already-live connection. An active
+// notification subscription is what keeps an unpaired WinRT BLE connection
+// alive (BluetoothLEDevice + GattSession.MaintainConnection alone do not hold
+// it). Registers ValueChanged then writes the CCCD (Notify, or Indicate only if
+// Notify is absent). Returns true on Success. Revokes on failure.
+winrt::Windows::Foundation::IAsyncOperation<bool> SubscribeFff1(
+    std::string deviceId, GattCharacteristic rx) {
+  const auto props = rx.CharacteristicProperties();
+  const bool hasNotify = HasProp(props, GattCharacteristicProperties::Notify);
+  const bool hasIndicate =
+      HasProp(props, GattCharacteristicProperties::Indicate);
+  LogMsg("FFF1_PROPS raw=" + std::to_string(static_cast<int>(props)) +
+         " notify=" + B(hasNotify) + " indicate=" + B(hasIndicate));
+  if (!hasNotify && !hasIndicate) {
+    LogMsg("NOTIFY_ERROR stage=props status=NoNotifyNoIndicate");
+    co_return false;
+  }
+  const bool useIndicate = !hasNotify;
+  const std::string modeLabel = useIndicate ? "Indicate" : "Notify";
+
+  Log("FFF1_NOTIFY_BEGIN");
+  winrt::event_token token{};
+  try {
+    token = rx.ValueChanged(
+        [deviceId](GattCharacteristic const&,
+                   GattValueChangedEventArgs const& args) {
+          auto reader = DataReader::FromBuffer(args.CharacteristicValue());
+          std::vector<uint8_t> data(reader.UnconsumedBufferLength());
+          reader.ReadBytes(data);
+          const int n = ++g_rx_event_count;
+          LogMsg("RX_EVENT_RECEIVED count=" + std::to_string(n) +
+                 " bytes=" + std::to_string(data.size()));
+          EmitNotify(deviceId, data);
+        });
+  } catch (...) {
+    Log("REGISTER_VALUE_CHANGED_FAIL");
+    co_return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto it = g_sessions.find(deviceId);
+    if (it != g_sessions.end()) {
+      it->second.rx = rx;
+      it->second.rxToken = token;
+      it->second.rxSubscribed = true;
+    }
+  }
+  Log("VALUE_CHANGED_REGISTERED");
+
+  const auto mode =
+      useIndicate
+          ? GattClientCharacteristicConfigurationDescriptorValue::Indicate
+          : GattClientCharacteristicConfigurationDescriptorValue::Notify;
+  LogMsg("CCCD_WRITE_BEGIN mode=" + modeLabel);
+  auto wr = co_await
+      rx.WriteClientCharacteristicConfigurationDescriptorWithResultAsync(mode);
+  LogMsg("CCCD_WRITE_RESULT mode=" + modeLabel + " " + WriteResultStr(wr));
+  if (wr.Status() != GattCommunicationStatus::Success) {
+    LogMsg("NOTIFY_ERROR stage=cccd status=" + WriteResultStr(wr));
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto it = g_sessions.find(deviceId);
+    if (it != g_sessions.end() && it->second.rxSubscribed && it->second.rx) {
+      try {
+        it->second.rx.ValueChanged(it->second.rxToken);
+      } catch (...) {
+      }
+      it->second.rxSubscribed = false;
+      Log("RX_HANDLER_REVOKED");
+    }
+    co_return false;
+  }
+  Log(useIndicate ? "RX_INDICATE_ENABLED" : "RX_NOTIFY_ENABLED");
+  co_return true;
+}
+
 winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
                                MethodResultPtr result) {
   apartment_context ui;
@@ -524,6 +599,15 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
       g_sessions[deviceId] = session;
     }
 
+    // Subscribe to FFF1 NOW, on the still-live discovery connection. The active
+    // subscription keeps the link up so the connection does not drop before the
+    // handshake (the cause of the later EnableNotify GetGattServices Unreachable).
+    if (session.rx != nullptr) {
+      Log("CONNECT_SUBSCRIBE_FFF1");
+      bool ok = co_await SubscribeFff1(deviceId, session.rx);
+      LogMsg(std::string("CONNECT_SUBSCRIBE_FFF1_RESULT ok=") + B(ok));
+    }
+
     EncodableMap profile;
     profile[EncodableValue("services")] = EncodableValue(serviceUuids);
     profile[EncodableValue("characteristics")] =
@@ -549,7 +633,21 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
   bool has_error = false;
   std::string err_msg;
   try {
-    // ROOT CAUSE of status=Unreachable/attError=none: the FFF1 characteristic
+    // Fast path: Connect already subscribed FFF1 on the live discovery
+    // connection (which keeps the link alive), so nothing to redo here.
+    {
+      std::lock_guard<std::mutex> lock(g_mutex);
+      auto it = g_sessions.find(deviceId);
+      if (it != g_sessions.end() && it->second.rxSubscribed) {
+        LogMsg("[ICP5 BLE DEBUG] NOTIFY_ALREADY_ENABLED");
+        co_await ui;
+        result->Success();
+        co_return;
+      }
+    }
+
+    // Fallback (only if the connect-time subscription didn't take): the FFF1
+    // characteristic
     // cached during connect is stale — its underlying connection is released
     // after service discovery, so the later CCCD write cannot reach the device
     // even though discovery succeeded. macOS avoids this because CoreBluetooth
