@@ -83,6 +83,18 @@ std::string SessionStatusStr(GattSessionStatus s) {
   return s == GattSessionStatus::Active ? "Active" : "Closed";
 }
 
+std::string UnpairStatusStr(DeviceUnpairingResultStatus s) {
+  switch (s) {
+    case DeviceUnpairingResultStatus::Unpaired: return "Unpaired";
+    case DeviceUnpairingResultStatus::AlreadyUnpaired: return "AlreadyUnpaired";
+    case DeviceUnpairingResultStatus::OperationAlreadyInProgress:
+      return "OperationAlreadyInProgress";
+    case DeviceUnpairingResultStatus::AccessDenied: return "AccessDenied";
+    case DeviceUnpairingResultStatus::Failed: return "Failed";
+    default: return "Unknown";
+  }
+}
+
 std::string PairStatusStr(DevicePairingResultStatus s) {
   switch (s) {
     case DevicePairingResultStatus::Paired: return "Paired";
@@ -565,44 +577,48 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
     LogMsg("CONNECT_DEVICE_READY conn=" +
            ConnStatusStr(device.ConnectionStatus()));
 
-    // Ensure the device is bonded before any GATT access. On Windows the
+    // Establish a FRESH just-works bond before any GATT access. On Windows the
     // confirmed failure signature (session Active->Closed with error=Success,
     // ATT MTU never negotiated=23, vendor FFF0 read Unreachable) is Windows
-    // tearing down the GATT session for an UNBONDED link to a custom service.
-    // macOS (CoreBluetooth) does not require this; Windows does. We attempt a
-    // just-works (ConfirmOnly) bond here and leave the rest of the connect flow
-    // (GattSession / Active wait / Uncached discovery) unchanged.
+    // tearing down the GATT session for a link that is not backed by a LIVE
+    // authenticated pairing. A persisted bond alone is NOT sufficient on
+    // reconnect: it was verified on-device that an already-paired device still
+    // fails (GATT_SESSION_INITIAL=Closed -> Active -> Closed), whereas a device
+    // paired fresh in the same connect succeeds (GATT_SESSION_INITIAL=Active,
+    // discovery Success). macOS/CoreBluetooth does not require this. So if a
+    // stale bond exists we unpair it and re-pair, reproducing the proven-working
+    // fresh-pairing path every connect. The rest of the flow is unchanged.
     try {
       auto pairing = device.DeviceInformation().Pairing();
       LogMsg(std::string("PAIR_BEGIN isPaired=") + B(pairing.IsPaired()) +
              " canPair=" + B(pairing.CanPair()));
-      if (!pairing.IsPaired() && pairing.CanPair()) {
-        auto custom = pairing.Custom();
-        auto ceremonyToken = custom.PairingRequested(
-            [](DeviceInformationCustomPairing const&,
-               DevicePairingRequestedEventArgs const& args) {
-              LogMsg(std::string("PAIR_REQUESTED kind=") +
-                     std::to_string(static_cast<int>(args.PairingKind())));
-              // Just-works pairing: accept the ConfirmOnly ceremony.
-              if (args.PairingKind() == DevicePairingKinds::ConfirmOnly) {
-                args.Accept();
-              }
-            });
-        auto pairResult = co_await custom.PairAsync(
-            DevicePairingKinds::ConfirmOnly, DevicePairingProtectionLevel::None);
-        custom.PairingRequested(ceremonyToken);
-        // Success criterion is PairAsync's own result status; do NOT re-read
-        // IsPaired() here — it can still report the pre-pairing cached value
-        // immediately after a successful bond (observed isPairedNow=0 while the
-        // bond in fact succeeded and all subsequent GATT worked).
-        LogMsg(std::string("PAIR_RESULT status=") +
-               PairStatusStr(pairResult.Status()) + " statusRaw=" +
-               std::to_string(static_cast<int>(pairResult.Status())));
-      } else {
-        LogMsg("PAIR_SKIP reason=" +
-               std::string(pairing.IsPaired() ? "already-paired"
-                                              : "cannot-pair"));
+      if (pairing.IsPaired()) {
+        auto unpair = co_await pairing.UnpairAsync();
+        LogMsg(std::string("PAIR_UNPAIR status=") +
+               UnpairStatusStr(unpair.Status()));
       }
+      // Attempt the fresh bond unconditionally via Custom (do not gate on the
+      // possibly-stale CanPair()/IsPaired() cache after an unpair).
+      auto custom = pairing.Custom();
+      auto ceremonyToken = custom.PairingRequested(
+          [](DeviceInformationCustomPairing const&,
+             DevicePairingRequestedEventArgs const& args) {
+            LogMsg(std::string("PAIR_REQUESTED kind=") +
+                   std::to_string(static_cast<int>(args.PairingKind())));
+            // Just-works pairing: accept the ConfirmOnly ceremony.
+            if (args.PairingKind() == DevicePairingKinds::ConfirmOnly) {
+              args.Accept();
+            }
+          });
+      auto pairResult = co_await custom.PairAsync(
+          DevicePairingKinds::ConfirmOnly, DevicePairingProtectionLevel::None);
+      custom.PairingRequested(ceremonyToken);
+      // Success criterion is PairAsync's own result status; do NOT re-read
+      // IsPaired() here — it can still report the pre-pairing cached value
+      // immediately after a successful bond.
+      LogMsg(std::string("PAIR_RESULT status=") +
+             PairStatusStr(pairResult.Status()) + " statusRaw=" +
+             std::to_string(static_cast<int>(pairResult.Status())));
     } catch (const winrt::hresult_error& pe) {
       char hr[16]{};
       sprintf_s(hr, "0x%08X", static_cast<uint32_t>(pe.code().value));
