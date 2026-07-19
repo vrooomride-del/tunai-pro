@@ -23,6 +23,19 @@ add_executable(${BINARY_NAME} WIN32
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
+# The ADAU1701 ICP5 BLE native channel (icp5_ble_channel.cpp) uses C++/WinRT
+# coroutines (co_await). Standard coroutines require C++20; under the default
+# C++17 MSVC reports C3773/C3312 ("co_await is a non-conforming extension").
+# Override the standard to C++20 AFTER apply_standard_settings so it wins.
+# No /await flag is needed with /std:c++20 (that flag is for the pre-C++20
+# experimental coroutines).
+set_property(TARGET ${BINARY_NAME} PROPERTY CXX_STANDARD 20)
+set_property(TARGET ${BINARY_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+target_compile_features(${BINARY_NAME} PRIVATE cxx_std_20)
+if(MSVC)
+  target_compile_options(${BINARY_NAME} PRIVATE "/std:c++20")
+endif()
+
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MAJOR=${FLUTTER_VERSION_MAJOR}")
