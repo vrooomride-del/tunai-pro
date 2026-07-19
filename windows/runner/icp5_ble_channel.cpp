@@ -72,6 +72,17 @@ std::string ConnStatusStr(BluetoothConnectionStatus s) {
                                                    : "Disconnected";
 }
 
+// Stable object-identity (ABI pointer) for correlating the same service /
+// characteristic across log lines. Diagnostic only.
+std::string PtrId(winrt::Windows::Foundation::IUnknown const& obj) {
+  if (!obj) return "null";
+  char buf[24]{};
+  sprintf_s(buf, "0x%llX",
+            static_cast<unsigned long long>(
+                reinterpret_cast<uintptr_t>(winrt::get_abi(obj))));
+  return buf;
+}
+
 // Renders a GattWriteResult: communication status + the exact ATT protocol
 // error byte when present (e.g. 0x05 InsufficientAuthentication, 0x0F
 // InsufficientEncryption → device requires pairing/encryption).
@@ -349,6 +360,18 @@ winrt::Windows::Foundation::IAsyncOperation<bool> SubscribeFff1(
   const bool useIndicate = !hasNotify;
   const std::string modeLabel = useIndicate ? "Indicate" : "Notify";
 
+  // Identity + live connection status right before we subscribe.
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto it = g_sessions.find(deviceId);
+    const std::string conn =
+        (it != g_sessions.end() && it->second.device)
+            ? ConnStatusStr(it->second.device.ConnectionStatus())
+            : "no-device";
+    LogMsg("CONNECT_SUBSCRIBE_FFF1_BEGIN key=" + deviceId + " rx=" + PtrId(rx) +
+           " conn=" + conn + " mode=" + modeLabel);
+  }
+
   Log("FFF1_NOTIFY_BEGIN");
   winrt::event_token token{};
   try {
@@ -363,8 +386,12 @@ winrt::Windows::Foundation::IAsyncOperation<bool> SubscribeFff1(
                  " bytes=" + std::to_string(data.size()));
           EmitNotify(deviceId, data);
         });
+  } catch (const winrt::hresult_error& e) {
+    LogMsg(std::string("CONNECT_SUBSCRIBE_FFF1_FAILED reason=handler ") +
+           ToUtf8(e.message()));
+    co_return false;
   } catch (...) {
-    Log("REGISTER_VALUE_CHANGED_FAIL");
+    Log("CONNECT_SUBSCRIBE_FFF1_FAILED reason=handler");
     co_return false;
   }
   {
@@ -376,7 +403,7 @@ winrt::Windows::Foundation::IAsyncOperation<bool> SubscribeFff1(
       it->second.rxSubscribed = true;
     }
   }
-  Log("VALUE_CHANGED_REGISTERED");
+  Log("CONNECT_SUBSCRIBE_FFF1_VALUE_HANDLER_ATTACHED");
 
   const auto mode =
       useIndicate
@@ -385,9 +412,9 @@ winrt::Windows::Foundation::IAsyncOperation<bool> SubscribeFff1(
   LogMsg("CCCD_WRITE_BEGIN mode=" + modeLabel);
   auto wr = co_await
       rx.WriteClientCharacteristicConfigurationDescriptorWithResultAsync(mode);
-  LogMsg("CCCD_WRITE_RESULT mode=" + modeLabel + " " + WriteResultStr(wr));
+  LogMsg("CONNECT_SUBSCRIBE_FFF1_CCCD_RESULT status=" + WriteResultStr(wr));
   if (wr.Status() != GattCommunicationStatus::Success) {
-    LogMsg("NOTIFY_ERROR stage=cccd status=" + WriteResultStr(wr));
+    LogMsg("CONNECT_SUBSCRIBE_FFF1_FAILED reason=cccd " + WriteResultStr(wr));
     std::lock_guard<std::mutex> lock(g_mutex);
     auto it = g_sessions.find(deviceId);
     if (it != g_sessions.end() && it->second.rxSubscribed && it->second.rx) {
@@ -401,6 +428,7 @@ winrt::Windows::Foundation::IAsyncOperation<bool> SubscribeFff1(
     co_return false;
   }
   Log(useIndicate ? "RX_INDICATE_ENABLED" : "RX_NOTIFY_ENABLED");
+  Log("CONNECT_SUBSCRIBE_FFF1_SUCCESS");
   co_return true;
 }
 
@@ -413,7 +441,7 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
   Log("CONNECT_START");
   try {
     const uint64_t address = std::stoull(deviceId);
-    LogMsg("CONNECT deviceId=" + deviceId + " address=" +
+    LogMsg("CONNECT_BEGIN key=" + deviceId + " address=" +
            std::to_string(address));
 
     // Use the advertised address type first (Random for most peripherals incl.
@@ -443,7 +471,8 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
     }
     LogMsg("DEVICE Name=" + ToUtf8(device.Name()) +
            " Id=" + ToUtf8(device.DeviceId()));
-    LogMsg("CONN_STATUS " + ConnStatusStr(device.ConnectionStatus()));
+    LogMsg("CONNECT_DEVICE_READY conn=" +
+           ConnStatusStr(device.ConnectionStatus()));
 
     // Keep the link up so service discovery has a live connection.
     GattSession gattSession{nullptr};
@@ -592,6 +621,10 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
         Log("SERVICE_FOUND FFF0");
       }
     }
+    LogMsg("CONNECT_DISCOVERY_OK services=" +
+           std::to_string(serviceUuids.size()) +
+           " conn=" + ConnStatusStr(device.ConnectionStatus()) +
+           " fff1=" + PtrId(session.rx));
     LogMsg("SERVICE_TOTAL count=" + std::to_string(serviceUuids.size()));
 
     {
@@ -602,11 +635,13 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
     // Subscribe to FFF1 NOW, on the still-live discovery connection. The active
     // subscription keeps the link up so the connection does not drop before the
     // handshake (the cause of the later EnableNotify GetGattServices Unreachable).
+    bool subscribedNow = false;
     if (session.rx != nullptr) {
-      Log("CONNECT_SUBSCRIBE_FFF1");
-      bool ok = co_await SubscribeFff1(deviceId, session.rx);
-      LogMsg(std::string("CONNECT_SUBSCRIBE_FFF1_RESULT ok=") + B(ok));
+      subscribedNow = co_await SubscribeFff1(deviceId, session.rx);
+    } else {
+      Log("CONNECT_SUBSCRIBE_FFF1_FAILED reason=no-fff1-characteristic");
     }
+    LogMsg(std::string("CONNECT_RETURN subscribed=") + B(subscribedNow));
 
     EncodableMap profile;
     profile[EncodableValue("services")] = EncodableValue(serviceUuids);
@@ -632,19 +667,29 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
   apartment_context ui;
   bool has_error = false;
   std::string err_msg;
+  LogMsg("ENABLE_NOTIFY_BEGIN key=" + deviceId);
   try {
     // Fast path: Connect already subscribed FFF1 on the live discovery
     // connection (which keeps the link alive), so nothing to redo here.
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       auto it = g_sessions.find(deviceId);
-      if (it != g_sessions.end() && it->second.rxSubscribed) {
-        LogMsg("[ICP5 BLE DEBUG] NOTIFY_ALREADY_ENABLED");
+      const bool found = it != g_sessions.end();
+      LogMsg(std::string("ENABLE_NOTIFY_SESSION_FOUND found=") + B(found) +
+             " subscribed=" +
+             B(found ? it->second.rxSubscribed : false) + " conn=" +
+             ((found && it->second.device)
+                  ? ConnStatusStr(it->second.device.ConnectionStatus())
+                  : "no-device"));
+      if (found && it->second.rxSubscribed) {
+        Log("ENABLE_NOTIFY_ALREADY_SUBSCRIBED");
         co_await ui;
+        LogMsg("ENABLE_NOTIFY_RETURN result=success-cached");
         result->Success();
         co_return;
       }
     }
+    Log("ENABLE_NOTIFY_FALLBACK_REACQUIRE_BEGIN");
 
     // Fallback (only if the connect-time subscription didn't take): the FFF1
     // characteristic
@@ -697,7 +742,7 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
       rx = chRes.Characteristics().GetAt(0);
       reacquire = "ok";
     }
-    LogMsg("[ICP5 BLE DEBUG] REACQUIRE_RESULT " + reacquire);
+    LogMsg("ENABLE_NOTIFY_FALLBACK_REACQUIRE_RESULT serviceStatus=" + reacquire);
     if (rx == nullptr) {
       LogMsg("NOTIFY_ERROR stage=reacquire status=" + reacquire);
       throw std::runtime_error(
@@ -828,6 +873,8 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
     LogMsg(std::string("NOTIFY_ERROR stage=exception status=") + e.what());
   }
   co_await ui;
+  LogMsg(std::string("ENABLE_NOTIFY_RETURN result=") +
+         (has_error ? ("error:" + err_msg) : "success-fallback"));
   if (has_error) {
     result->Error("notify", err_msg);
   } else {
