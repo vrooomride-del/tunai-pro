@@ -549,20 +549,70 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
   bool has_error = false;
   std::string err_msg;
   try {
-    // Use the SAME FFF1 characteristic instance discovered during connect, plus
-    // the maintained device/session (kept alive in the session map).
-    GattCharacteristic rx{nullptr};
+    // ROOT CAUSE of status=Unreachable/attError=none: the FFF1 characteristic
+    // cached during connect is stale — its underlying connection is released
+    // after service discovery, so the later CCCD write cannot reach the device
+    // even though discovery succeeded. macOS avoids this because CoreBluetooth
+    // keeps ONE continuous connected session across discover→setNotifyValue.
+    //
+    // Fix: from the maintained BluetoothLEDevice, re-acquire the FFF0 service and
+    // FFF1 characteristic FRESH (Uncached) right before subscribing, retrying
+    // until the link is actually reachable. This guarantees the CCCD write goes
+    // through a LIVE connection and a non-stale characteristic object.
     BluetoothLEDevice device{nullptr};
     GattSession gattSession{nullptr};
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       auto it = g_sessions.find(deviceId);
-      if (it == g_sessions.end() || !it->second.rx) {
-        throw std::runtime_error("No RX (FFF1) characteristic for " + deviceId);
+      if (it == g_sessions.end() || !it->second.device) {
+        throw std::runtime_error("No live BLE session for " + deviceId);
       }
-      rx = it->second.rx;
       device = it->second.device;
       gattSession = it->second.gattSession;
+    }
+
+    const winrt::guid fff0Guid = ToGuid("fff0");
+    const winrt::guid fff1Guid = ToGuid("fff1");
+    GattCharacteristic rx{nullptr};
+    GattDeviceService service{nullptr};
+    std::string reacquire = "no-attempt";
+    for (int attempt = 0; attempt < 5 && rx == nullptr; ++attempt) {
+      LogMsg("[ICP5 BLE DEBUG] REACQUIRE attempt=" + std::to_string(attempt) +
+             " conn=" + ConnStatusStr(device.ConnectionStatus()));
+      auto svcRes = co_await device.GetGattServicesForUuidAsync(
+          fff0Guid, BluetoothCacheMode::Uncached);
+      if (svcRes.Status() != GattCommunicationStatus::Success ||
+          svcRes.Services().Size() == 0) {
+        reacquire = "service=" + CommStatusStr(svcRes.Status());
+        co_await winrt::resume_after(std::chrono::milliseconds(300));
+        continue;
+      }
+      service = svcRes.Services().GetAt(0);
+      auto chRes = co_await service.GetCharacteristicsForUuidAsync(
+          fff1Guid, BluetoothCacheMode::Uncached);
+      if (chRes.Status() != GattCommunicationStatus::Success ||
+          chRes.Characteristics().Size() == 0) {
+        reacquire = "char=" + CommStatusStr(chRes.Status());
+        co_await winrt::resume_after(std::chrono::milliseconds(300));
+        continue;
+      }
+      rx = chRes.Characteristics().GetAt(0);
+      reacquire = "ok";
+    }
+    LogMsg("[ICP5 BLE DEBUG] REACQUIRE_RESULT " + reacquire);
+    if (rx == nullptr) {
+      LogMsg("NOTIFY_ERROR stage=reacquire status=" + reacquire);
+      throw std::runtime_error(
+          "Could not re-acquire FFF1 on a live connection: " + reacquire);
+    }
+    // Refresh the session with the live service/characteristic objects.
+    {
+      std::lock_guard<std::mutex> lock(g_mutex);
+      auto it = g_sessions.find(deviceId);
+      if (it != g_sessions.end()) {
+        it->second.service = service;
+        it->second.rx = rx;
+      }
     }
 
     const auto props = rx.CharacteristicProperties();
