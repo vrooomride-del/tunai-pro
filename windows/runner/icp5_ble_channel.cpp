@@ -12,12 +12,14 @@
 
 #include <flutter/event_stream_handler_functions.h>
 
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -139,6 +141,7 @@ std::mutex g_mutex;
 std::map<std::string, BleSession> g_sessions;  // keyed by deviceId (BT address)
 std::mutex g_sink_mutex;
 std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> g_notify_sink;
+std::atomic<int> g_rx_event_count{0};  // RX ValueChanged events since launch
 
 void EmitNotify(const std::string& deviceId, const std::vector<uint8_t>& data) {
   std::lock_guard<std::mutex> lock(g_sink_mutex);
@@ -536,25 +539,27 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
       rx = it->second.rx;
     }
 
-    // Use Notify when supported, otherwise Indicate (req 7).
-    const auto rxProps = rx.CharacteristicProperties();
-    const auto cccd =
-        HasProp(rxProps, GattCharacteristicProperties::Notify)
-            ? GattClientCharacteristicConfigurationDescriptorValue::Notify
-            : GattClientCharacteristicConfigurationDescriptorValue::Indicate;
-    auto status =
-        co_await rx.WriteClientCharacteristicConfigurationDescriptorAsync(cccd);
-    if (status != GattCommunicationStatus::Success) {
-      throw std::runtime_error("Failed to enable notifications on FFF1.");
+    const auto props = rx.CharacteristicProperties();
+    const bool hasNotify = HasProp(props, GattCharacteristicProperties::Notify);
+    const bool hasIndicate =
+        HasProp(props, GattCharacteristicProperties::Indicate);
+    LogMsg("FFF1 props=" + std::to_string(static_cast<int>(props)) +
+           " Notify=" + B(hasNotify) + " Indicate=" + B(hasIndicate));
+    if (!hasNotify && !hasIndicate) {
+      throw std::runtime_error("FFF1 supports neither Notify nor Indicate.");
     }
 
+    // Register the ValueChanged handler BEFORE writing the CCCD so no early RX
+    // event is missed, and keep the token alive for the whole session.
     auto token = rx.ValueChanged(
         [deviceId](GattCharacteristic const&,
                    GattValueChangedEventArgs const& args) {
           auto reader = DataReader::FromBuffer(args.CharacteristicValue());
           std::vector<uint8_t> data(reader.UnconsumedBufferLength());
           reader.ReadBytes(data);
-          Log("RX_BYTES");
+          const int n = ++g_rx_event_count;
+          LogMsg("RX_EVENT #" + std::to_string(n) +
+                 " bytes=" + std::to_string(data.size()));
           EmitNotify(deviceId, data);
         });
     {
@@ -565,7 +570,55 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
         it->second.rxSubscribed = true;
       }
     }
-    Log("RX_NOTIFY_ENABLED");
+    Log("RX_HANDLER_REGISTERED");
+
+    // Try Notify first, then Indicate (req 1–3).
+    std::vector<std::pair<GattClientCharacteristicConfigurationDescriptorValue,
+                          std::string>>
+        modes;
+    if (hasNotify) {
+      modes.push_back(
+          {GattClientCharacteristicConfigurationDescriptorValue::Notify,
+           "Notify"});
+    }
+    if (hasIndicate) {
+      modes.push_back(
+          {GattClientCharacteristicConfigurationDescriptorValue::Indicate,
+           "Indicate"});
+    }
+
+    bool enabled = false;
+    GattCommunicationStatus lastStatus = GattCommunicationStatus::Unreachable;
+    for (auto const& mode : modes) {
+      LogMsg("CCCD_WRITE mode=" + mode.second);
+      lastStatus =
+          co_await rx.WriteClientCharacteristicConfigurationDescriptorAsync(
+              mode.first);
+      LogMsg("CCCD_RESULT mode=" + mode.second +
+             " status=" + CommStatusStr(lastStatus));
+      if (lastStatus == GattCommunicationStatus::Success) {
+        enabled = true;
+        Log(mode.second == "Notify" ? "RX_NOTIFY_ENABLED"
+                                    : "RX_INDICATE_ENABLED");
+        break;
+      }
+    }
+
+    if (!enabled) {
+      // Subscription failed — revoke the handler exactly once and do NOT let the
+      // caller proceed to the handshake.
+      std::lock_guard<std::mutex> lock(g_mutex);
+      auto it = g_sessions.find(deviceId);
+      if (it != g_sessions.end() && it->second.rxSubscribed && it->second.rx) {
+        try {
+          it->second.rx.ValueChanged(it->second.rxToken);
+        } catch (...) {
+        }
+        it->second.rxSubscribed = false;
+      }
+      throw std::runtime_error("CCCD subscription failed for FFF1: " +
+                               CommStatusStr(lastStatus));
+    }
   } catch (const winrt::hresult_error& e) {
     has_error = true;
     err_msg = ToUtf8(e.message());
