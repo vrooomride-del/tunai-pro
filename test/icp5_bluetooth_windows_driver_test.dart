@@ -209,6 +209,41 @@ void main() {
     });
   });
 
+  group('retry after service-discovery failure', () {
+    test('FFF0-missing connect fails, selection re-selectable for retry',
+        () async {
+      final backend = _FakeBackend(
+        devices: const [WinBleDevice(id: 'AA', name: 'WONDOM ICP5')],
+        // Connected but no FFF0 service → open() throws "FFF0 not found".
+        profileFor: (id) => const WinBleGattProfile(
+            deviceId: 'AA', serviceUuids: ['1800'], characteristics: []),
+      );
+      final driver = WindowsIcp5BluetoothDriver(
+        backend: backend,
+        isWindowsOverride: () => true,
+        scanTimeout: const Duration(milliseconds: 20),
+        connectTimeout: const Duration(milliseconds: 20),
+      );
+      final transport = Icp5BluetoothTransport(
+        driver: driver,
+        readTimeout: const Duration(milliseconds: 40),
+        writeTimeout: const Duration(milliseconds: 40),
+      );
+
+      await transport.discover();
+      expect(transport.selectedPort, 'AA'); // single WONDOM auto-selected
+
+      final r = await transport.open();
+      expect(r.success, isFalse); // FFF0 missing → connect fails, no crash
+      expect(transport.selectedPort, isNull); // close() cleared it
+
+      // The device is still enumerated, so a retry selection re-arms Connect.
+      expect(transport.selectEnumeratedPort('AA'), isTrue);
+      expect(transport.selectedPort, 'AA');
+      await transport.close();
+    });
+  });
+
   group('parser schema', () {
     test('WinBleDevice accepts deviceId+advertisedName and legacy id+name', () {
       // deviceId/advertisedName schema

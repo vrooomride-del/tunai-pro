@@ -1034,9 +1034,13 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   }
 
   Future<void> _connectBluetooth() async {
+    // Remember the selected device so a failed connect (which closes the
+    // transport and clears its selectedPort) can re-select it and keep the
+    // Connect button enabled for a retry.
+    final selectedBefore = _icp5Bluetooth.selectedPort;
     setState(() {
       _working = true;
-      _bluetoothError = null;
+      _bluetoothError = null; // clear any stale FFF0 / service-discovery error
       _bluetoothState = Icp5BluetoothUiState.connecting;
     });
     await Future<void>.delayed(Duration.zero);
@@ -1044,15 +1048,22 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     setState(() => _bluetoothState = Icp5BluetoothUiState.handshakePending);
     final result = await _icp5Bluetooth.open();
     if (!mounted) return;
+    final passed = result.success &&
+        _icp5Bluetooth.handshakeComplete &&
+        _icp5Bluetooth.detectedProfile == 'DSP1701.100.00.01';
     setState(() {
       _working = false;
-      if (result.success &&
-          _icp5Bluetooth.handshakeComplete &&
-          _icp5Bluetooth.detectedProfile == 'DSP1701.100.00.01') {
+      if (passed) {
         _bluetoothState = Icp5BluetoothUiState.passHandshake;
       } else {
         _bluetoothError = result.message;
         _bluetoothState = _classifyBluetoothFailure(result.message);
+        // Re-arm the selection so Connect re-enables for another attempt.
+        if (!_icp5Bluetooth.isConnected &&
+            _icp5Bluetooth.selectedPort == null &&
+            selectedBefore != null) {
+          _icp5Bluetooth.selectEnumeratedPort(selectedBefore);
+        }
       }
     });
   }

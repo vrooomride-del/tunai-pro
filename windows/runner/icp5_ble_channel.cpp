@@ -50,6 +50,43 @@ std::string ToUtf8(winrt::hstring const& value) {
   return winrt::to_string(value);
 }
 
+std::string CommStatusStr(GattCommunicationStatus s) {
+  switch (s) {
+    case GattCommunicationStatus::Success:
+      return "Success";
+    case GattCommunicationStatus::Unreachable:
+      return "Unreachable";
+    case GattCommunicationStatus::ProtocolError:
+      return "ProtocolError";
+    case GattCommunicationStatus::AccessDenied:
+      return "AccessDenied";
+    default:
+      return "Unknown";
+  }
+}
+
+std::string ConnStatusStr(BluetoothConnectionStatus s) {
+  return s == BluetoothConnectionStatus::Connected ? "Connected"
+                                                   : "Disconnected";
+}
+
+std::string AddrTypeStr(BluetoothAddressType t) {
+  switch (t) {
+    case BluetoothAddressType::Public:
+      return "Public";
+    case BluetoothAddressType::Random:
+      return "Random";
+    default:
+      return "Unspecified";
+  }
+}
+
+// Bluetooth address type captured per device during the advertisement scan, so
+// connect() uses the SAME type the device advertised (many peripherals — incl.
+// the WONDOM ICP5 — use Random; connecting as Public yields zero services).
+std::mutex g_addr_mutex;
+std::map<std::string, BluetoothAddressType> g_addr_types;
+
 // Builds a 128-bit GATT UUID from a Dart-supplied short ("fff0") or full
 // ("0000fff0-0000-1000-8000-00805f9b34fb") uuid string.
 winrt::guid ToGuid(const std::string& uuid) {
@@ -75,6 +112,7 @@ std::string GuidToShort(winrt::guid const& g) {
 
 struct BleSession {
   BluetoothLEDevice device{nullptr};
+  GattSession gattSession{nullptr};    // keeps the link alive (MaintainConnection)
   GattDeviceService service{nullptr};
   GattCharacteristic tx{nullptr};      // FFF2 write
   GattCharacteristic rx{nullptr};      // FFF1 notify
@@ -194,6 +232,11 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
       const bool connectable =
           type == BluetoothLEAdvertisementType::ConnectableUndirected ||
           type == BluetoothLEAdvertisementType::ConnectableDirected;
+      // Remember the advertised address type so connect() uses the right one.
+      {
+        std::lock_guard<std::mutex> alock(g_addr_mutex);
+        g_addr_types[id] = args.BluetoothAddressType();
+      }
       std::string name = ToUtf8(args.Advertisement().LocalName());
       std::lock_guard<std::mutex> lock(*foundMutex);
       auto& seen = (*found)[id];
@@ -257,30 +300,103 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
   Log("CONNECT_START");
   try {
     const uint64_t address = std::stoull(deviceId);
-    auto device = co_await BluetoothLEDevice::FromBluetoothAddressAsync(address);
-    if (!device) {
-      throw std::runtime_error("Device not found for address " + deviceId);
-    }
-    Log("CONNECTED");
+    LogMsg("CONNECT deviceId=" + deviceId + " address=" +
+           std::to_string(address));
 
-    auto servicesResult =
-        co_await device.GetGattServicesAsync(BluetoothCacheMode::Uncached);
+    // Use the advertised address type first (Random for most peripherals incl.
+    // WONDOM ICP5); fall back to the other type if creation/discovery fails.
+    std::vector<BluetoothAddressType> typesToTry;
+    {
+      std::lock_guard<std::mutex> alock(g_addr_mutex);
+      auto it = g_addr_types.find(deviceId);
+      if (it != g_addr_types.end()) typesToTry.push_back(it->second);
+    }
+    typesToTry.push_back(BluetoothAddressType::Random);
+    typesToTry.push_back(BluetoothAddressType::Public);
+
+    BluetoothLEDevice device{nullptr};
+    for (auto t : typesToTry) {
+      device =
+          co_await BluetoothLEDevice::FromBluetoothAddressAsync(address, t);
+      if (device) {
+        LogMsg("DEVICE_CREATED addrType=" + AddrTypeStr(t));
+        break;
+      }
+      LogMsg("DEVICE_CREATE_FAILED addrType=" + AddrTypeStr(t));
+    }
+    if (!device) {
+      throw std::runtime_error("BluetoothLEDevice creation failed for " +
+                               deviceId + " (address unreachable/unknown type)");
+    }
+    LogMsg("DEVICE Name=" + ToUtf8(device.Name()) +
+           " Id=" + ToUtf8(device.DeviceId()));
+    LogMsg("CONN_STATUS " + ConnStatusStr(device.ConnectionStatus()));
+
+    // Keep the link up so service discovery has a live connection.
+    GattSession gattSession{nullptr};
+    try {
+      gattSession =
+          co_await GattSession::FromDeviceIdAsync(device.BluetoothDeviceId());
+      gattSession.MaintainConnection(true);
+      LogMsg(std::string("GATT_SESSION canMaintain=") +
+             (gattSession.CanMaintainConnection() ? "true" : "false"));
+    } catch (...) {
+      LogMsg("GATT_SESSION creation failed (continuing without it)");
+    }
+
+    // Wait briefly for readiness, then discover (Uncached, a few attempts).
+    GattDeviceServicesResult servicesResult{nullptr};
+    for (int attempt = 0; attempt < 5; ++attempt) {
+      co_await winrt::resume_after(std::chrono::milliseconds(300));
+      servicesResult =
+          co_await device.GetGattServicesAsync(BluetoothCacheMode::Uncached);
+      const uint32_t count =
+          servicesResult.Status() == GattCommunicationStatus::Success
+              ? servicesResult.Services().Size()
+              : 0;
+      LogMsg("GET_SERVICES attempt=" + std::to_string(attempt) + " status=" +
+             CommStatusStr(servicesResult.Status()) +
+             " count=" + std::to_string(count));
+      if (servicesResult.Status() == GattCommunicationStatus::Success &&
+          count > 0) {
+        break;
+      }
+    }
+    // Cached fallback if uncached never succeeded.
     if (servicesResult.Status() != GattCommunicationStatus::Success) {
-      throw std::runtime_error("GATT service discovery failed.");
+      auto cached =
+          co_await device.GetGattServicesAsync(BluetoothCacheMode::Cached);
+      LogMsg("GET_SERVICES cached status=" + CommStatusStr(cached.Status()));
+      if (cached.Status() == GattCommunicationStatus::Success) {
+        servicesResult = cached;
+      }
+    }
+    if (servicesResult.Status() != GattCommunicationStatus::Success) {
+      // Distinguish the failure mode for the caller/logs.
+      throw std::runtime_error("GATT service discovery failed: " +
+                               CommStatusStr(servicesResult.Status()));
     }
 
     BleSession session;
     session.device = device;
+    session.gattSession = gattSession;
 
     EncodableList serviceUuids;
     EncodableList characteristics;
+    const winrt::guid fff0 = ToGuid("fff0");
+    const winrt::guid fff2 = ToGuid("fff2");
+    const winrt::guid fff1 = ToGuid("fff1");
     for (auto const& service : servicesResult.Services()) {
       const std::string svcUuid = GuidToShort(service.Uuid());
       serviceUuids.push_back(EncodableValue(svcUuid));
+      LogMsg("SERVICE uuid=" + svcUuid);  // log EVERY service, even non-FFF0
 
       auto charsResult =
           co_await service.GetCharacteristicsAsync(BluetoothCacheMode::Uncached);
-      if (charsResult.Status() != GattCommunicationStatus::Success) continue;
+      if (charsResult.Status() != GattCommunicationStatus::Success) {
+        LogMsg("  chars status=" + CommStatusStr(charsResult.Status()));
+        continue;
+      }
       for (auto const& ch : charsResult.Characteristics()) {
         const std::string chUuid = GuidToShort(ch.Uuid());
         const auto props = ch.CharacteristicProperties();
@@ -300,17 +416,18 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
         characteristics.push_back(EncodableValue(c));
 
         // Cache FFF0/FFF2/FFF1 handles for later write/notify.
-        const winrt::guid fff0 = ToGuid("fff0");
-        const winrt::guid fff2 = ToGuid("fff2");
-        const winrt::guid fff1 = ToGuid("fff1");
         if (service.Uuid() == fff0) {
+          LogMsg("  CHAR uuid=" + chUuid + " write=" +
+                 (canWrite ? "true" : "false") + " notify=" +
+                 (canNotify ? "true" : "false"));
           session.service = service;
           if (ch.Uuid() == fff2) session.tx = ch;
           if (ch.Uuid() == fff1) session.rx = ch;
         }
       }
-      if (session.service) Log("SERVICE_FOUND");
+      if (service.Uuid() == fff0) Log("SERVICE_FOUND FFF0");
     }
+    LogMsg("SERVICE_TOTAL count=" + std::to_string(serviceUuids.size()));
 
     {
       std::lock_guard<std::mutex> lock(g_mutex);
@@ -450,6 +567,13 @@ void Disconnect(const std::string& deviceId) {
     }
   }
   if (s.service) s.service.Close();
+  if (s.gattSession) {
+    try {
+      s.gattSession.MaintainConnection(false);
+      s.gattSession.Close();
+    } catch (...) {
+    }
+  }
   if (s.device) s.device.Close();
   g_sessions.erase(it);
 }
