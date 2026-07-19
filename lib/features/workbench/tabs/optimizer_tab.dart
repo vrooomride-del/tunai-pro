@@ -9,7 +9,11 @@ import '../../../core/pro_project_store.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../core/pro_optimizer_data.dart';
 import '../../../core/pro_optimizer_engine.dart';
+import '../../../core/pro_simulation_optimizer.dart';
+import '../../../core/pro_target_curve.dart';
+import '../../../core/adau1701_peq_response.dart';
 import '../../../shared/pro_widgets.dart';
+import '../widgets/optimizer_preview_graph.dart';
 
 class OptimizerTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -218,7 +222,28 @@ class _OptimizerTabState extends ConsumerState<OptimizerTab> {
 
         // Active run summary
         if (activeRun != null) ...[
-          _RunSummary(run: activeRun, optimizer: optimizer),
+          _RunSummary(
+              run: activeRun,
+              optimizer: optimizer,
+              scores:
+                  project == null ? null : _projectScores(project, activeRun)),
+          const SizedBox(height: 12),
+
+          // Before/After response preview
+          Builder(builder: (_) {
+            final curves =
+                project == null ? null : _buildPreviewCurves(project, activeRun);
+            if (curves == null) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: OptimizerPreviewGraph(
+                freqs: curves.freqs,
+                target: curves.target,
+                before: curves.before,
+                after: curves.after,
+              ),
+            );
+          }),
           const SizedBox(height: 16),
 
           // Suggestion list
@@ -425,12 +450,160 @@ class _SmallBtn extends StatelessWidget {
   );
 }
 
+// ── Score projection (UI/reporting only) ─────────────────────────────────────
+// Recomputes the aggregate before/after target-match scores from current
+// project state via the deterministic ProSimulationOptimizer. Read-only: it
+// does not alter the engine, the run, or the suggestion lifecycle.
+
+class _ScoreProjection {
+  final double before;
+  final double after;
+  final OptimizerConfidence? confidence;
+  const _ScoreProjection(
+      {required this.before, required this.after, this.confidence});
+
+  double get delta => after - before;
+  bool get hasData => before != after || confidence != null;
+}
+
+_ScoreProjection? _projectScores(ProProject project, OptimizerRunResult run) {
+  // Scores are meaningful only when PEQ was in the run's scope.
+  final scope = run.config.scope;
+  final peqInScope =
+      scope == OptimizerScope.peq || scope == OptimizerScope.fullSystem;
+  if (!peqInScope) return null;
+
+  final drivers = project.acousticState.driverChannels;
+  if (drivers.isEmpty) return null;
+
+  var sumBefore = 0.0;
+  var sumAfter = 0.0;
+  var n = 0;
+  for (final driver in drivers) {
+    final currentPeq = project.tuningState.peqChannels.firstWhere(
+        (c) => c.channelId == driver.id,
+        orElse: () => PeqChannelState.empty(driver.id));
+    final result = ProSimulationOptimizer.optimizeDriver(
+      driver: driver,
+      currentPeq: currentPeq,
+      target: project.acousticState.targetCurve.selectedPreset,
+      config: run.config,
+      nextId: () => 'proj',
+    );
+    sumBefore += result.before.score;
+    sumAfter += result.after.score;
+    n++;
+  }
+  if (n == 0) return null;
+
+  // Overall confidence = the weakest confidence among this run's PEQ
+  // suggestions (matches what the suggestion cards report).
+  OptimizerConfidence? confidence;
+  for (final s in run.suggestions) {
+    if (s.type != OptimizerSuggestionType.addPeqBand) continue;
+    if (confidence == null || s.confidence.index < confidence.index) {
+      confidence = s.confidence;
+    }
+  }
+
+  return _ScoreProjection(
+    before: sumBefore / n,
+    after: sumAfter / n,
+    confidence: confidence,
+  );
+}
+
+// ── Before/After preview curves (UI/reporting only) ──────────────────────────
+// Builds three magnitude curves for the preview graph, reusing ProTargetCurve
+// and ProSimulationOptimizer. Read-only: no optimization or lifecycle change.
+
+class _PreviewCurves {
+  final List<double> freqs;
+  final List<double> target;
+  final List<double> before;
+  final List<double> after;
+  const _PreviewCurves(
+      {required this.freqs,
+      required this.target,
+      required this.before,
+      required this.after});
+}
+
+_PreviewCurves? _buildPreviewCurves(ProProject project, OptimizerRunResult run) {
+  final scope = run.config.scope;
+  final peqInScope =
+      scope == OptimizerScope.peq || scope == OptimizerScope.fullSystem;
+  if (!peqInScope) return null;
+
+  final drivers = project.acousticState.driverChannels;
+  if (drivers.isEmpty) return null;
+
+  final freqs = ProSimulationOptimizer.previewFrequencies();
+  final target =
+      ProTargetCurve.curve(project.acousticState.targetCurve.selectedPreset, freqs);
+
+  final beforeSum = List<double>.filled(freqs.length, 0.0);
+  final afterSum = List<double>.filled(freqs.length, 0.0);
+  var n = 0;
+
+  for (final driver in drivers) {
+    final currentPeq = project.tuningState.peqChannels.firstWhere(
+        (c) => c.channelId == driver.id,
+        orElse: () => PeqChannelState.empty(driver.id));
+
+    final currentBands = <PeqResponseBand>[
+      for (final b in currentPeq.bands)
+        if (b.enabled)
+          PeqResponseBand(frequencyHz: b.frequencyHz, gainDb: b.gainDb, q: b.q),
+    ];
+
+    final result = ProSimulationOptimizer.optimizeDriver(
+      driver: driver,
+      currentPeq: currentPeq,
+      target: project.acousticState.targetCurve.selectedPreset,
+      config: run.config,
+      nextId: () => 'preview',
+    );
+    final proposedBands = <PeqResponseBand>[
+      for (final s in result.suggestions)
+        if (s.type == OptimizerSuggestionType.addPeqBand &&
+            s.proposedFrequencyHz != null &&
+            s.proposedGainDb != null)
+          PeqResponseBand(
+              frequencyHz: s.proposedFrequencyHz!,
+              gainDb: s.proposedGainDb!,
+              q: s.proposedQ ?? 1.0),
+    ];
+
+    final before = ProSimulationOptimizer.simulatedResponse(
+        driver: driver, bands: currentBands, freqs: freqs);
+    final after = ProSimulationOptimizer.simulatedResponse(
+        driver: driver, bands: [...currentBands, ...proposedBands], freqs: freqs);
+
+    for (var i = 0; i < freqs.length; i++) {
+      beforeSum[i] += before[i];
+      afterSum[i] += after[i];
+    }
+    n++;
+  }
+  if (n == 0) return null;
+
+  return _PreviewCurves(
+    freqs: freqs,
+    target: target,
+    before: [for (final v in beforeSum) v / n],
+    after: [for (final v in afterSum) v / n],
+  );
+}
+
 // ── Run Summary ───────────────────────────────────────────────────────────────
 
 class _RunSummary extends StatelessWidget {
   final OptimizerRunResult run;
   final OptimizerProjectState optimizer;
-  const _RunSummary({required this.run, required this.optimizer});
+  final _ScoreProjection? scores;
+  const _RunSummary(
+      {required this.run, required this.optimizer, this.scores});
 
   @override
   Widget build(BuildContext context) => Container(
@@ -444,6 +617,38 @@ class _RunSummary extends StatelessWidget {
       Text('ACTIVE RUN', style: proLabel(size: 9, spacing: 2)),
       const SizedBox(height: 8),
       Text(run.summary, style: proSubtitle(size: 10)),
+      if (scores != null && scores!.hasData) ...[
+        const SizedBox(height: 10),
+        Text('SIMULATED TARGET MATCH', style: proLabel(size: 8, spacing: 1.5)),
+        const SizedBox(height: 6),
+        Wrap(spacing: 10, runSpacing: 8, children: [
+          _ScoreChip(label: 'BEFORE', value: scores!.before.round().toString()),
+          _ScoreChip(
+              label: 'AFTER',
+              value: scores!.after.round().toString(),
+              color: kProGreen),
+          _ScoreChip(
+              label: 'IMPROVEMENT',
+              value:
+                  '${scores!.delta >= 0 ? '+' : ''}${scores!.delta.round()}',
+              color: scores!.delta > 0.5
+                  ? kProGreen
+                  : (scores!.delta < -0.5 ? kProAmber : null)),
+          if (scores!.confidence != null)
+            _ScoreChip(
+                label: 'CONFIDENCE',
+                value: scores!.confidence!.label.toUpperCase(),
+                color: switch (scores!.confidence!) {
+                  OptimizerConfidence.high => kProGreen,
+                  OptimizerConfidence.medium => kProAmber,
+                  OptimizerConfidence.low => null,
+                }),
+        ]),
+        const SizedBox(height: 6),
+        Text('Simulation projection (electrical + measured magnitude). '
+            'Not a measured verification.',
+            style: proSubtitle(size: 9, color: Colors.white30)),
+      ],
       const SizedBox(height: 10),
       Wrap(spacing: 10, runSpacing: 8, children: [
         _SmallChip(label: 'TOTAL', value: '${optimizer.totalSuggestionCount}'),
@@ -480,6 +685,28 @@ class _SmallChip extends StatelessWidget {
       Text(label, style: proLabel(size: 8, spacing: 1)),
       const SizedBox(height: 2),
       Text(value, style: proValue(size: 11, color: color ?? Colors.white54)),
+    ]),
+  );
+}
+
+class _ScoreChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? color;
+  const _ScoreChip({required this.label, required this.value, this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+    decoration: BoxDecoration(
+      color: kProBg,
+      border: Border.all(color: kProBorder),
+      borderRadius: BorderRadius.circular(3),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: proLabel(size: 8, spacing: 1)),
+      const SizedBox(height: 3),
+      Text(value, style: proValue(size: 15, color: color ?? Colors.white70)),
     ]),
   );
 }

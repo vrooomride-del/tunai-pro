@@ -35,6 +35,7 @@ import 'operational_master_volume_control.dart';
 import 'transport_connection_panel.dart';
 import 'adau1701_icp5_tuning_panel.dart';
 import '../../../core/transport/icp5_transports.dart';
+import '../../../core/deploy/pro_hardware_context_provider.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -313,7 +314,12 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   void initState() {
     super.initState();
     _usbiDeviceOpen = widget.initialUsbiDeviceOpen;
-    _adau1701UsbTransport = Icp5UsbTransport();
+    // Shared ADAU1701 ICP5 USB transport — the same instance the Deploy Apply
+    // flow uses, so connecting here makes the Deploy context ready. The provider
+    // owns its lifecycle (closed on provider dispose), so this tab must not
+    // close it. (ADAU1466 USBi + BLE ICP5 paths are unaffected.)
+    _adau1701UsbTransport =
+        ref.read(adau1701Icp5UsbContextProvider).transport as Icp5UsbTransport;
     // 3 s timeout gives the DSP firmware margin to respond after back-to-back
     // page reads; the default 1 s is tight for BLE with ATT Write Response.
     _adau1701BleTransport = Icp5BluetoothTransport(
@@ -353,7 +359,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
       (_usbiNativeBackend as ProUsbiWindowsNativeBackend).closeDevice();
     }
     _tuningRefreshTimer?.cancel();
-    _adau1701UsbTransport.close();
+    // _adau1701UsbTransport is owned by adau1701Icp5UsbContextProvider — do not
+    // close it here; the Deploy Apply flow shares the same instance.
     _adau1701BleTransport.close();
     super.dispose();
   }

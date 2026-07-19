@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
@@ -8,6 +9,8 @@ import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../core/pro_protection_data.dart';
 import '../../../core/pro_optimizer_data.dart';
+import '../../../core/pro_tuning_report_data.dart';
+import '../../../core/pro_tuning_report_json.dart';
 import '../../../core/pro_export_data.dart';
 import '../../../core/pro_dsp_target_data.dart';
 import '../../../core/pro_simulation_data.dart';
@@ -59,6 +62,22 @@ class ReportTab extends ConsumerWidget {
         // Project summary
         if (project != null) ...[
           _ProjectSummaryCard(project: project),
+          const SizedBox(height: 16),
+        ],
+
+        // Unified tuning summary — rendered from a single frozen snapshot.
+        // The same snapshot backs the JSON export action below.
+        if (project != null) ...[
+          Builder(builder: (context) {
+            final report = buildTuningReport(project, mStore);
+            return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _ReportExportBar(report: report),
+                  const SizedBox(height: 12),
+                  _TuningSummaryCard(report: report),
+                ]);
+          }),
           const SizedBox(height: 16),
         ],
 
@@ -251,6 +270,322 @@ class _ProjectSummaryCard extends StatelessWidget {
       Text(value, style: proValue(size: 11, color: Colors.white60)),
     ]),
   );
+}
+
+// ── Report Export Bar ─────────────────────────────────────────────────────────
+// Generates a JSON artifact from the frozen TuningReportData snapshot and shows
+// it in a copyable dialog. Presentation only — the serializer is pure and no
+// file is written to disk (clipboard copy only).
+
+class _ReportExportBar extends StatelessWidget {
+  final TuningReportData report;
+  const _ReportExportBar({required this.report});
+
+  String _timestamp(DateTime dt) {
+    final l = dt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${l.year}-${two(l.month)}-${two(l.day)} ${two(l.hour)}:${two(l.minute)}';
+  }
+
+  void _showJson(BuildContext context) {
+    final json = encodeTuningReportJson(report);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: kProSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+          side: const BorderSide(color: kProBorder),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 560),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.data_object_outlined, color: kProAccent, size: 15),
+                    const SizedBox(width: 8),
+                    Text('TUNING REPORT · JSON', style: proLabel(size: 10, spacing: 1.5)),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white38, size: 16),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                    ),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text(
+                      'Generated ${_timestamp(report.generatedAt)}  ·  schema v${report.schemaVersion}  ·  ${tuningReportFileName(report)}',
+                      style: proSubtitle(size: 10, color: Colors.white38)),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: kProBg,
+                        border: Border.all(color: kProBorder),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: SingleChildScrollView(
+                        child: SelectableText(
+                          json,
+                          style: const TextStyle(
+                              fontFamily: 'monospace', fontSize: 11, color: Colors.white70),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.copy_outlined, size: 14, color: kProAccent),
+                      label: Text('Copy JSON',
+                          style: proLabel(size: 10, color: kProAccent, spacing: 0.5)),
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: json));
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                            content: Text('Report JSON copied to clipboard'),
+                            duration: Duration(seconds: 2),
+                          ));
+                        }
+                      },
+                    ),
+                  ]),
+                ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(children: [
+          const Icon(Icons.description_outlined, color: Colors.white38, size: 14),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('REPORT ARTIFACT', style: proLabel(size: 9, spacing: 1.5)),
+              const SizedBox(height: 2),
+              Text(
+                  'JSON · schema v${report.schemaVersion} · generated ${_timestamp(report.generatedAt)}',
+                  style: proSubtitle(size: 10, color: Colors.white38)),
+            ]),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.data_object_outlined, size: 14, color: kProAccent),
+            label: Text('Generate JSON',
+                style: proLabel(size: 10, color: kProAccent, spacing: 0.5)),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: kProBorder),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            onPressed: () => _showJson(context),
+          ),
+        ]),
+      );
+}
+
+// ── Unified Tuning Summary ────────────────────────────────────────────────────
+// Renders entirely from a frozen TuningReportData snapshot (buildTuningReport).
+// The same snapshot model is intended to back the report UI, future JSON export,
+// and future PDF export — a single source of truth. Presentation only.
+
+class _TuningSummaryCard extends StatelessWidget {
+  final TuningReportData report;
+  const _TuningSummaryCard({required this.report});
+
+  Color _phaseColor(String status) => switch (status) {
+        'good' => kProGreen,
+        'check' => kProAmber,
+        'misalign' => kProRed,
+        _ => Colors.white38,
+      };
+
+  Color _confidenceColor(String confidence) => switch (confidence) {
+        'high' => kProGreen,
+        'medium' => kProAmber,
+        'low' => Colors.white38,
+        _ => Colors.white38,
+      };
+
+  String _timestamp(DateTime dt) {
+    final l = dt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${l.year}-${two(l.month)}-${two(l.day)} ${two(l.hour)}:${two(l.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = report.measurement;
+    final total = m.totalDrivers;
+    final imported = m.frdImportedCount;
+    final phase = report.phaseAlignment;
+    final opt = report.optimizer;
+
+    final frdLabel = total == 0
+        ? 'No drivers'
+        : imported >= total
+            ? 'Complete'
+            : imported == 0
+                ? 'None'
+                : 'Partial';
+    final frdColor = total == 0
+        ? Colors.white38
+        : imported >= total
+            ? kProGreen
+            : imported == 0
+                ? kProRed
+                : kProAmber;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.tune_outlined, color: kProAccent.withValues(alpha: 0.6), size: 14),
+          const SizedBox(width: 8),
+          Text('TUNING SUMMARY', style: proLabel(size: 9, spacing: 1.8)),
+          const Spacer(),
+          Text('SIMULATION', style: proLabel(size: 8, color: Colors.white24)),
+        ]),
+        const SizedBox(height: 4),
+        Text('Generated ${_timestamp(report.generatedAt)}  ·  snapshot v${report.schemaVersion}',
+            style: proSubtitle(size: 9, color: Colors.white30)),
+        const SizedBox(height: 12),
+
+        // 1. Target curve
+        _section('TARGET CURVE'),
+        _row('Selected preset', report.targetCurve.presetLabel),
+
+        // 2. Measurement
+        _section('MEASUREMENT'),
+        Row(children: [
+          SizedBox(width: 150, child: Text('FRD availability', style: proLabel(size: 10, spacing: 0.3))),
+          Text('$imported / $total drivers',
+              style: proValue(size: 11, color: Colors.white60)),
+          const SizedBox(width: 8),
+          ProStatusPill(label: frdLabel, color: frdColor),
+        ]),
+        if (m.hasMissingMeasurements)
+          _row('Missing measurements', '${total - imported} channel(s)'),
+        _row('Measurement sessions',
+            '${m.completedSessionCount} / ${m.sessionCount} completed'),
+        _row('Accepted points', '${m.acceptedPoints} / ${m.totalPoints}'),
+
+        // 3. Crossover
+        _section('CROSSOVER'),
+        _row('XO channels configured', '${report.crossover.configuredChannels}'),
+        _row('HPF / LPF',
+            '${report.crossover.hpfCount} / ${report.crossover.lpfCount}'),
+        _row('Polarity inverted', '${report.crossover.polarityInvertedCount}'),
+
+        // 3b. PEQ
+        _section('PEQ'),
+        _row('Active / total bands',
+            '${report.peq.activeBands} / ${report.peq.totalBands}'),
+        _row('PEQ channels', '${report.peq.channelCount}'),
+
+        // 4. Phase alignment
+        _section('PHASE ALIGNMENT'),
+        if (phase.pairs.isEmpty)
+          Text('No crossover pairs within ±1 octave to analyze.',
+              style: proSubtitle(size: 10))
+        else
+          ...phase.pairs.map((p) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(children: [
+                  SizedBox(
+                    width: 150,
+                    child: Text('${p.lowLabel} × ${p.highLabel}',
+                        style: proLabel(size: 10, spacing: 0.3),
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                  Text('${p.crossoverHz.round()} Hz  ·  Δ${p.phaseDiffDeg.round()}°',
+                      style: proValue(size: 11, color: Colors.white60)),
+                  const SizedBox(width: 8),
+                  ProStatusPill(
+                      label: p.status.toUpperCase(), color: _phaseColor(p.status)),
+                ]),
+              )),
+        if (phase.electricalOnly) ...[
+          const SizedBox(height: 4),
+          Text('Electrical phase simulation — measured acoustic phase not included.',
+              style: proSubtitle(size: 9, color: Colors.white30)),
+        ],
+
+        // 5. Optimizer result (target-match projection)
+        _section('OPTIMIZER RESULT'),
+        if (opt.beforeScore == null || opt.afterScore == null)
+          Text('No drivers available for target-match projection.',
+              style: proSubtitle(size: 10))
+        else ...[
+          Wrap(spacing: 10, runSpacing: 8, children: [
+            _MiniChip(label: 'BEFORE', value: '${opt.beforeScore!.round()}'),
+            _MiniChip(label: 'AFTER', value: '${opt.afterScore!.round()}', color: kProGreen),
+            _MiniChip(
+                label: 'IMPROVEMENT',
+                value: '${(opt.improvement ?? 0) >= 0 ? '+' : ''}${(opt.improvement ?? 0).round()}',
+                color: (opt.improvement ?? 0) > 0.5
+                    ? kProGreen
+                    : ((opt.improvement ?? 0) < -0.5 ? kProAmber : null)),
+            if (opt.confidence != null)
+              _MiniChip(
+                  label: 'CONFIDENCE',
+                  value: opt.confidence!.toUpperCase(),
+                  color: _confidenceColor(opt.confidence!)),
+          ]),
+          if (opt.simulatedProjection) ...[
+            const SizedBox(height: 4),
+            Text('Simulated target match (electrical + measured magnitude). '
+                'Not a measured verification.',
+                style: proSubtitle(size: 9, color: Colors.white30)),
+          ],
+        ],
+
+        // Snapshot warnings
+        if (report.warnings.isNotEmpty) ...[
+          _section('WARNINGS'),
+          ...report.warnings.map((w) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(w, style: proSubtitle(size: 10))),
+                ]),
+              )),
+        ],
+      ]),
+    );
+  }
+
+  Widget _section(String label) => Padding(
+        padding: const EdgeInsets.only(top: 12, bottom: 4),
+        child: Text(label, style: proLabel(size: 9, color: kProAccent, spacing: 1.5)),
+      );
+
+  Widget _row(String label, String value) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          SizedBox(width: 150, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
+          Text(value, style: proValue(size: 11, color: Colors.white60)),
+        ]),
+      );
 }
 
 class _MeasurementSummaryCard extends StatelessWidget {

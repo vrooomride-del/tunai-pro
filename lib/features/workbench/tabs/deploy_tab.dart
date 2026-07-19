@@ -10,6 +10,10 @@ import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_deploy_package_data.dart';
 import '../../../core/pro_deploy_package_engine.dart';
+import '../../../core/pro_export_data.dart';
+import '../../../core/deploy/pro_hardware_capability.dart';
+import '../../../core/deploy/pro_hardware_context_provider.dart';
+import '../widgets/hardware_apply_flow.dart';
 import '../../../shared/pro_widgets.dart';
 
 class DeployTab extends ConsumerStatefulWidget {
@@ -211,6 +215,19 @@ class _DeployTabState extends ConsumerState<DeployTab> {
           const SizedBox(height: 20),
         ],
 
+        // ── C2: Hardware apply (gated approve → apply workflow) ──────────────
+        if (project != null && project.exportState.activePackage != null) ...[
+          const _SectionHeader('HARDWARE APPLY', Icons.memory_outlined),
+          const SizedBox(height: 8),
+          HardwareApplyFlow(
+            exportPackage: project.exportState.activePackage!,
+            profile: _hardwareProfileFor(
+                project.exportState.activePackage!.targetPlatform),
+            contextFactory: () => ref.read(adau1701Icp5UsbContextProvider),
+          ),
+          const SizedBox(height: 20),
+        ],
+
         // ── D: Package history ───────────────────────────────────────────────
         if (deployState.packages.isNotEmpty) ...[
           const _SectionHeader('PACKAGE HISTORY', Icons.history_outlined),
@@ -313,6 +330,14 @@ class _DeployTabState extends ConsumerState<DeployTab> {
     );
   }
 }
+
+// Maps an export target platform to a hardware capability profile for the
+// review-only apply preview. Defaults to the ADAU1701 ICP5 profile; the
+// ADAU1466 developer profile assumes nothing writable.
+HardwareDeviceProfile _hardwareProfileFor(DspTargetPlatform target) =>
+    target == DspTargetPlatform.adau1466
+        ? HardwareDeviceProfiles.adau1466Developer
+        : HardwareDeviceProfiles.adau1701Icp5;
 
 // ── _ReadinessPanel ───────────────────────────────────────────────────────────
 

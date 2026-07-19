@@ -6,6 +6,7 @@ import 'pro_acoustic_data.dart';
 import 'pro_tuning_data.dart';
 import 'pro_protection_data.dart';
 import 'pro_optimizer_data.dart';
+import 'pro_simulation_optimizer.dart';
 
 OptimizerRunResult runDraftOptimizer({
   required MeasurementProjectState acousticState,
@@ -75,38 +76,23 @@ OptimizerRunResult runDraftOptimizer({
   final doXo = config.scope == OptimizerScope.crossover ||
       config.scope == OptimizerScope.fullSystem;
 
-  // PEQ draft suggestions per channel
+  // PEQ suggestions per channel — error-driven simulation optimizer.
+  // (Falls back to a role-based placeholder only if the optimizer engine
+  // yields nothing, e.g. an exhausted band budget on an unmeasured channel.)
   if (doPeq) {
     for (final driver in acousticState.driverChannels) {
-      if (!driver.hasFrd) { continue; }
-      final existingBands = tuningState.peqChannels
-          .firstWhere((c) => c.channelId == driver.id,
-              orElse: () => PeqChannelState.empty(driver.id))
-          .bands
-          .length;
-      if (existingBands >= config.maxPeqBandsPerChannel) { continue; }
+      final currentPeq = tuningState.peqChannels.firstWhere(
+          (c) => c.channelId == driver.id,
+          orElse: () => PeqChannelState.empty(driver.id));
 
-      // Role-based placeholder frequency
-      final freq = _placeholderFreq(driver.role);
-      final gain = _placeholderGain(config.mode);
-      final confidence = acousticState.importedFrdCount == acousticState.totalDrivers
-          ? OptimizerConfidence.medium
-          : OptimizerConfidence.low;
-
-      suggestions.add(OptimizerSuggestion(
-        id: nextId(),
-        type: OptimizerSuggestionType.addPeqBand,
-        confidence: confidence,
-        channelId: driver.id,
-        title: 'Review response shaping for ${driver.name}',
-        description: 'Draft PEQ band at ${freq.toStringAsFixed(0)} Hz '
-            '(${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(1)} dB, Q 1.0).',
-        reason: 'Draft suggestion based on target/measurement readiness. '
-            'Final optimizer will refine this.',
-        proposedFrequencyHz: freq,
-        proposedGainDb: gain,
-        proposedQ: 1.0,
-      ));
+      final result = ProSimulationOptimizer.optimizeDriver(
+        driver: driver,
+        currentPeq: currentPeq,
+        target: acousticState.targetCurve.selectedPreset,
+        config: config,
+        nextId: nextId,
+      );
+      suggestions.addAll(result.suggestions);
     }
   }
 
@@ -157,25 +143,6 @@ OptimizerRunResult runDraftOptimizer({
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-double _placeholderFreq(DriverRole role) => switch (role) {
-  DriverRole.woofer          => 120.0,
-  DriverRole.coaxWoofer      => 120.0,
-  DriverRole.subwoofer       => 60.0,
-  DriverRole.midrange        => 800.0,
-  DriverRole.tweeter         => 3500.0,
-  DriverRole.coaxTweeter     => 3500.0,
-  DriverRole.fullrange       => 1000.0,
-  DriverRole.passiveRadiator => 100.0,
-  DriverRole.unknown         => 1000.0,
-};
-
-double _placeholderGain(OptimizerMode mode) => switch (mode) {
-  OptimizerMode.conservative => 1.5,
-  OptimizerMode.balanced     => 2.5,
-  OptimizerMode.aggressive   => 3.5,
-  OptimizerMode.manualReview => 0.0,
-};
 
 double _hpfPlaceholder(OptimizerMode mode) => switch (mode) {
   OptimizerMode.conservative => 40.0,
