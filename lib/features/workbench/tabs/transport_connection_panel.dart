@@ -338,8 +338,12 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                 ? null
                 : (value) {
                     if (value == null) return;
+                    debugPrint('[ICP5 Windows BLE UI] selectedDeviceId=$value');
                     setState(() {
                       _icp5Bluetooth.selectEnumeratedPort(value);
+                      // Clear any stale service-discovery / FFF0 error so a fresh
+                      // connect on the newly selected device starts clean.
+                      _bluetoothError = null;
                       _bluetoothState = Icp5BluetoothUiState.deviceFound;
                     });
                   },

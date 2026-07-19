@@ -96,14 +96,18 @@ Icp5UsbTransport _transport(WindowsIcp5BluetoothDriver driver) =>
 
 void main() {
   group('discovery', () {
-    test('lists connectable devices, sorted by RSSI', () async {
+    test('lists all devices sorted by RSSI; ICP5 is the auto-selected match',
+        () async {
       final backend = _FakeBackend(devices: const [
         WinBleDevice(id: 'AA', name: 'Wondom ICP5', rssi: -70),
         WinBleDevice(id: 'BB', name: 'Other', rssi: -40),
         WinBleDevice(id: 'CC', name: 'NonConn', connectable: false),
       ]);
       final result = await _driver(backend).discover();
-      expect(result.matches.map((d) => d.portName), ['BB', 'AA']); // -40 first
+      // All devices shown, strongest RSSI first (null RSSI last).
+      expect(result.allPorts.map((d) => d.portName), ['BB', 'AA', 'CC']);
+      // Only the single WONDOM/ICP5 device is auto-selected.
+      expect(result.matches.map((d) => d.portName), ['AA']);
       expect(result.error, isNull);
       expect(result.source, contains('Windows'));
     });
@@ -114,12 +118,14 @@ void main() {
       expect(result.error, contains('adapter is not on'));
     });
 
-    test('no connectable devices → fail closed', () async {
+    test('a non-connectable non-ICP5 device is still listed, none auto-selected',
+        () async {
       final result = await _driver(_FakeBackend(devices: const [
         WinBleDevice(id: 'CC', connectable: false),
       ])).discover();
-      expect(result.matches, isEmpty);
-      expect(result.error, contains('No connectable'));
+      expect(result.allPorts, hasLength(1)); // listed (connectable is advisory)
+      expect(result.matches, isEmpty); // not ICP5 → no auto-select
+      expect(result.error, isNull);
     });
 
     test('a hung native scan still completes with a timeout error (UI recovers)',
@@ -141,7 +147,75 @@ void main() {
     test('empty scan yields a clear no-devices message, not a hang', () async {
       final result = await _driver(_FakeBackend(devices: const [])).discover();
       expect(result.matches, isEmpty);
-      expect(result.error, contains('No connectable BLE devices found'));
+      expect(result.error, contains('No BLE devices found'));
+    });
+  });
+
+  group('scan result → selection', () {
+    test('all scanned devices are listed even if connectable=false', () async {
+      final result = await _driver(_FakeBackend(devices: const [
+        WinBleDevice(id: 'AA', name: 'WONDOM ICP5', rssi: -60),
+        WinBleDevice(id: 'BB', name: 'Random', rssi: -50, connectable: false),
+      ])).discover();
+      // Both appear in the selector (allPorts), not filtered on connectable.
+      expect(result.allPorts.map((d) => d.portName), containsAll(['AA', 'BB']));
+    });
+
+    test('exactly one WONDOM match is auto-selected', () async {
+      final result = await _driver(_FakeBackend(devices: const [
+        WinBleDevice(id: 'AA', name: 'WONDOM ICP5', rssi: -60),
+        WinBleDevice(id: 'BB', name: 'Some Speaker', rssi: -40),
+      ])).discover();
+      expect(result.matches, hasLength(1));
+      expect(result.matches.single.portName, 'AA');
+      expect(result.matches.single.friendlyName, 'WONDOM ICP5');
+    });
+
+    test('multiple ICP5 matches → no auto-select (manual required)', () async {
+      final result = await _driver(_FakeBackend(devices: const [
+        WinBleDevice(id: 'AA', name: 'WONDOM ICP5'),
+        WinBleDevice(id: 'BB', name: 'ICP5 spare'),
+      ])).discover();
+      expect(result.allPorts, hasLength(2));
+      expect(result.matches, isEmpty); // ambiguous → do not auto-select
+    });
+
+    test('no ICP5 match → devices listed but none auto-selected', () async {
+      final result = await _driver(_FakeBackend(devices: const [
+        WinBleDevice(id: 'AA', name: 'Mouse'),
+        WinBleDevice(id: 'BB', name: 'Keyboard'),
+      ])).discover();
+      expect(result.allPorts, hasLength(2));
+      expect(result.matches, isEmpty);
+    });
+
+    test('display name priority uses advertised name when not ICP5', () async {
+      final result = await _driver(_FakeBackend(devices: const [
+        WinBleDevice(id: 'AA', name: '', advertisedName: 'JAB4-BLE'),
+      ])).discover();
+      expect(result.allPorts.single.friendlyName, 'JAB4-BLE');
+    });
+  });
+
+  group('connect guard', () {
+    test('open() with empty deviceId fails closed (no native connect)',
+        () async {
+      final backend = _FakeBackend();
+      await expectLater(
+          _driver(backend).open(''), throwsA(isA<StateError>()));
+      await expectLater(
+          _driver(backend).open('   '), throwsA(isA<StateError>()));
+      expect(backend.connects, 0);
+    });
+  });
+
+  group('parser schema', () {
+    test('WinBleDevice accepts deviceId+advertisedName and legacy id+name', () {
+      // deviceId/advertisedName schema
+      const a = WinBleDevice(
+          id: 'X', name: 'WONDOM ICP5', advertisedName: 'WONDOM ICP5', rssi: -50);
+      expect(a.id, 'X');
+      expect(a.advertisedName, 'WONDOM ICP5');
     });
   });
 

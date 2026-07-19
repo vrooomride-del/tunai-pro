@@ -21,11 +21,13 @@ import 'icp5_serial_driver.dart';
 class WinBleDevice {
   final String id; // stable remote identifier (also the "portName")
   final String? name;
+  final String? advertisedName;
   final int? rssi;
   final bool connectable;
   const WinBleDevice({
     required this.id,
     this.name,
+    this.advertisedName,
     this.rssi,
     this.connectable = true,
   });
@@ -134,26 +136,38 @@ class WindowsIcp5BluetoothDriver implements Icp5SerialDriver {
           .scan(scanTimeout)
           .timeout(scanTimeout + const Duration(seconds: 2));
       debugPrint('[ICP5 BLE win] SCAN_RESULT parsed count=${scanned.length}');
-      final connectable = scanned.where((d) => d.connectable).toList();
-      final ports = [
-        for (final d in connectable)
-          Icp5SerialDevice(
-            portName: d.id,
-            productName: (d.name?.trim().isEmpty ?? true) ? null : d.name,
-            friendlyName:
-                (d.name?.trim().isEmpty ?? true) ? 'Unnamed BLE device' : d.name,
-            instanceId: d.id,
-            rssi: d.rssi,
-            enumerationSource: discoverySource,
-          ),
-      ]..sort((a, b) => (b.rssi ?? -999).compareTo(a.rssi ?? -999));
-      debugPrint('[ICP5 BLE win] scanned=${scanned.length} '
-          'connectable=${ports.length}');
+
+      // Show ALL discovered devices in the selector — the WinRT "connectable"
+      // advertisement bit is unreliable for peripherals like the WONDOM ICP5, so
+      // filtering on it would drop the real device. `connectable` is advisory.
+      final ports = <Icp5SerialDevice>[];
+      for (final d in scanned) {
+        debugPrint('[ICP5 BLE win] DEVICE deviceId=${d.id} name=${d.name ?? '-'} '
+            'advertisedName=${d.advertisedName ?? '-'} rssi=${d.rssi ?? '-'} '
+            'connectable=${d.connectable}');
+        ports.add(Icp5SerialDevice(
+          portName: d.id,
+          productName: (d.name?.trim().isEmpty ?? true) ? null : d.name,
+          friendlyName: _displayName(d),
+          instanceId: d.id,
+          rssi: d.rssi,
+          enumerationSource: discoverySource,
+        ));
+      }
+      ports.sort((a, b) => (b.rssi ?? -999).compareTo(a.rssi ?? -999));
+
+      // Auto-select ONLY when exactly one device positively matches the
+      // WONDOM/ICP5 identity; otherwise require an explicit manual selection.
+      final icp5 = ports.where(_looksLikeIcp5).toList();
+      final matches = icp5.length == 1 ? icp5 : const <Icp5SerialDevice>[];
+      debugPrint('[ICP5 BLE win] allPorts=${ports.length} '
+          'icp5Matches=${icp5.length} autoSelect=${matches.length}');
+
       return Icp5DiscoveryResult(
         source: discoverySource,
         allPorts: ports,
-        matches: ports,
-        error: ports.isEmpty ? 'No connectable BLE devices found.' : null,
+        matches: matches,
+        error: ports.isEmpty ? 'No BLE devices found.' : null,
       );
     } on TimeoutException {
       return _fail('BLE scan timed out before devices were listed.');
@@ -162,13 +176,38 @@ class WindowsIcp5BluetoothDriver implements Icp5SerialDriver {
     }
   }
 
+  /// Display name priority: WONDOM/ICP5-identified name → advertised name →
+  /// advertised local name → deviceId.
+  static String _displayName(WinBleDevice d) {
+    final name = d.name?.trim();
+    final adv = d.advertisedName?.trim();
+    if (name != null && name.isNotEmpty && _matchesIcp5Text(name)) return name;
+    if (adv != null && adv.isNotEmpty) return adv;
+    if (name != null && name.isNotEmpty) return name;
+    return d.id;
+  }
+
+  static bool _matchesIcp5Text(String? value) {
+    final n = (value ?? '').toUpperCase();
+    return n.contains('WONDOM') || n.contains('ICP5');
+  }
+
+  static bool _looksLikeIcp5(Icp5SerialDevice p) =>
+      _matchesIcp5Text(p.friendlyName) || _matchesIcp5Text(p.productName);
+
   @override
   Future<Icp5SerialConnection> open(String portName) async {
     if (!platformSupported) {
       throw UnsupportedError(
           'ICP5 BLE (Windows) is unavailable on this platform.');
     }
-    debugPrint('[ICP5 BLE win] connect deviceId=$portName');
+    // Fail closed: never invoke native connect without an explicit selection.
+    if (portName.trim().isEmpty) {
+      debugPrint('[ICP5 BLE win] CONNECT_GUARD blocked: empty deviceId');
+      throw StateError(
+          'Connect blocked: no BLE device selected (empty deviceId).');
+    }
+    debugPrint('[ICP5 BLE win] CONNECT_INVOKE deviceId=$portName');
     final profile = await _backend.connect(portName, connectTimeout);
 
     // Service FFF0 must be present.
@@ -304,9 +343,12 @@ class _MethodChannelWindowsBleBackend implements WindowsBleBackend {
       for (final entry in raw ?? const [])
         () {
           final m = Map<Object?, Object?>.from(entry as Map);
+          // Accept the native schema; `id`/`deviceId` and `name`/`advertisedName`
+          // are both tolerated so a schema tweak on either side never breaks it.
           return WinBleDevice(
-            id: m['id'] as String? ?? '',
+            id: (m['deviceId'] ?? m['id']) as String? ?? '',
             name: m['name'] as String?,
+            advertisedName: (m['advertisedName'] ?? m['name']) as String?,
             rssi: (m['rssi'] as num?)?.toInt(),
             connectable: m['connectable'] as bool? ?? true,
           );

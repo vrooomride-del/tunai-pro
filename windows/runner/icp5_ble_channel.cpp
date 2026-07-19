@@ -213,15 +213,21 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
     {
       std::lock_guard<std::mutex> lock(*foundMutex);
       for (const auto& [id, seen] : *found) {
+        // Stable device map schema consumed by the Dart parser:
+        //   deviceId:string, id:string (alias), name:string, advertisedName:string,
+        //   rssi:int, connectable:bool
         EncodableMap d;
-        d[EncodableValue("id")] = EncodableValue(id);
-        if (!seen.name.empty())
-          d[EncodableValue("name")] = EncodableValue(seen.name);
+        d[EncodableValue("deviceId")] = EncodableValue(id);
+        d[EncodableValue("id")] = EncodableValue(id);  // back-compat alias
+        d[EncodableValue("name")] = EncodableValue(seen.name);
+        d[EncodableValue("advertisedName")] = EncodableValue(seen.name);
         d[EncodableValue("rssi")] = EncodableValue(seen.rssi);
         d[EncodableValue("connectable")] = EncodableValue(seen.connectable);
         devices.push_back(EncodableValue(d));
-        LogMsg("DEVICE_FOUND id=" + id + " name=" + seen.name +
-               " rssi=" + std::to_string(seen.rssi));
+        LogMsg("DEVICE_FOUND deviceId=" + id + " name=" + seen.name +
+               " advertisedName=" + seen.name +
+               " rssi=" + std::to_string(seen.rssi) +
+               " connectable=" + (seen.connectable ? "true" : "false"));
       }
     }
     LogMsg("SCAN_RESULT count=" + std::to_string(devices.size()));
