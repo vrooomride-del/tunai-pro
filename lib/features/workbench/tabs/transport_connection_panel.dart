@@ -996,22 +996,37 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   }
 
   Future<void> _scanBluetooth() async {
+    debugPrint('[ICP5 Windows BLE UI] scan begin');
+    // Clear any stale error (e.g. a previous "FFF0 not found") on a new scan.
     setState(() {
       _working = true;
       _bluetoothError = null;
       _bluetoothState = Icp5BluetoothUiState.scanning;
     });
-    final result = await _icp5Bluetooth.discover();
-    if (!mounted) return;
-    setState(() {
-      _working = false;
-      _bluetoothError = result.error;
-      if (result.matches.isNotEmpty) {
-        _bluetoothState = Icp5BluetoothUiState.deviceFound;
-      } else {
-        _bluetoothState = _classifyBluetoothFailure(result.error);
-      }
-    });
+    var parsedCount = 0;
+    try {
+      final result = await _icp5Bluetooth.discover();
+      parsedCount = result.matches.length;
+      if (!mounted) return;
+      setState(() {
+        _working = false;
+        _bluetoothError = result.error;
+        _bluetoothState = result.matches.isNotEmpty
+            ? Icp5BluetoothUiState.deviceFound
+            : _classifyBluetoothFailure(result.error);
+      });
+    } catch (error) {
+      // discover() is designed to never throw, but guard anyway so the UI can
+      // never remain stuck in the scanning state.
+      if (!mounted) return;
+      setState(() {
+        _working = false;
+        _bluetoothError = 'BLE scan failed: $error';
+        _bluetoothState = _classifyBluetoothFailure(_bluetoothError);
+      });
+    }
+    debugPrint('[ICP5 Windows BLE UI] scan end; parsed count=$parsedCount; '
+        'scanning=false');
   }
 
   Future<void> _connectBluetooth() async {

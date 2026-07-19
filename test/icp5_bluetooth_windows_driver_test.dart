@@ -12,6 +12,7 @@ class _FakeBackend implements WindowsBleBackend {
   List<WinBleDevice> devices;
   WinBleGattProfile Function(String id)? profileFor;
   Object? connectError;
+  bool hangScan;
 
   int connects = 0;
   int disconnects = 0;
@@ -25,13 +26,17 @@ class _FakeBackend implements WindowsBleBackend {
     this.devices = const [],
     this.profileFor,
     this.connectError,
+    this.hangScan = false,
   });
 
   @override
   Future<bool> isAdapterOn() async => adapterOn;
 
   @override
-  Future<List<WinBleDevice>> scan(Duration timeout) async => devices;
+  Future<List<WinBleDevice>> scan(Duration timeout) {
+    if (hangScan) return Completer<List<WinBleDevice>>().future; // never completes
+    return Future.value(devices);
+  }
 
   @override
   Future<WinBleGattProfile> connect(String deviceId, Duration timeout) async {
@@ -115,6 +120,28 @@ void main() {
       ])).discover();
       expect(result.matches, isEmpty);
       expect(result.error, contains('No connectable'));
+    });
+
+    test('a hung native scan still completes with a timeout error (UI recovers)',
+        () async {
+      final driver = WindowsIcp5BluetoothDriver(
+        backend: _FakeBackend(hangScan: true),
+        isWindowsOverride: () => true,
+        scanTimeout: const Duration(milliseconds: 20),
+      );
+      // Must resolve well within the 2 s guard margin — never hang forever.
+      final result = await driver.discover().timeout(
+          const Duration(seconds: 4),
+          onTimeout: () =>
+              throw StateError('discover() did not complete — UI would stick'));
+      expect(result.matches, isEmpty);
+      expect(result.error, contains('timed out'));
+    });
+
+    test('empty scan yields a clear no-devices message, not a hang', () async {
+      final result = await _driver(_FakeBackend(devices: const [])).discover();
+      expect(result.matches, isEmpty);
+      expect(result.error, contains('No connectable BLE devices found'));
     });
   });
 

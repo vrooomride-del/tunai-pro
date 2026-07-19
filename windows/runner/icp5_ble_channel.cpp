@@ -41,6 +41,11 @@ void Log(const char* tag) {
                          .c_str());
 }
 
+void LogMsg(const std::string& message) {
+  OutputDebugStringA(
+      (std::string("[ICP5 windows BLE lifecycle] ") + message + "\n").c_str());
+}
+
 std::string ToUtf8(winrt::hstring const& value) {
   return winrt::to_string(value);
 }
@@ -180,7 +185,7 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
 
     BluetoothLEAdvertisementWatcher watcher;
     watcher.ScanningMode(BluetoothLEScanningMode::Active);
-    watcher.Received([found, foundMutex](
+    auto receivedToken = watcher.Received([found, foundMutex](
                          BluetoothLEAdvertisementWatcher const&,
                          BluetoothLEAdvertisementReceivedEventArgs const& args) {
       const uint64_t address = args.BluetoothAddress();
@@ -199,7 +204,11 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
 
     watcher.Start();
     co_await winrt::resume_after(std::chrono::milliseconds(timeoutMs));
+    // Always stop the watcher and drop the Received handler so the scan ends
+    // deterministically within timeoutMs.
     watcher.Stop();
+    watcher.Received(receivedToken);
+    Log("SCAN_STOP");
 
     {
       std::lock_guard<std::mutex> lock(*foundMutex);
@@ -211,9 +220,11 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
         d[EncodableValue("rssi")] = EncodableValue(seen.rssi);
         d[EncodableValue("connectable")] = EncodableValue(seen.connectable);
         devices.push_back(EncodableValue(d));
-        Log("DEVICE_FOUND");
+        LogMsg("DEVICE_FOUND id=" + id + " name=" + seen.name +
+               " rssi=" + std::to_string(seen.rssi));
       }
     }
+    LogMsg("SCAN_RESULT count=" + std::to_string(devices.size()));
   } catch (const winrt::hresult_error& e) {
     has_error = true;
     err_msg = ToUtf8(e.message());
@@ -222,7 +233,9 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
     err_msg = e.what();
   }
   co_await ui;
+  // Reply exactly once — success (possibly empty) or a precise error.
   if (has_error) {
+    LogMsg("SCAN_ERROR " + err_msg);
     result->Error("scan", err_msg);
   } else {
     result->Success(EncodableValue(devices));

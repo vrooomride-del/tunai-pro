@@ -121,10 +121,19 @@ class WindowsIcp5BluetoothDriver implements Icp5SerialDriver {
       return _fail('ICP5 BLE (Windows) is unavailable on this platform.');
     }
     try {
-      if (!await _backend.isAdapterOn()) {
-        return _fail('Bluetooth adapter is not on.');
+      // Guard both backend calls with a Dart-side timeout so discover() ALWAYS
+      // completes even if the native WinRT coroutine never replies — otherwise
+      // the UI would stay stuck in the scanning state forever.
+      final adapterOn = await _backend
+          .isAdapterOn()
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
+      if (!adapterOn) {
+        return _fail('Bluetooth adapter is not on (or the check timed out).');
       }
-      final scanned = await _backend.scan(scanTimeout);
+      final scanned = await _backend
+          .scan(scanTimeout)
+          .timeout(scanTimeout + const Duration(seconds: 2));
+      debugPrint('[ICP5 BLE win] SCAN_RESULT parsed count=${scanned.length}');
       final connectable = scanned.where((d) => d.connectable).toList();
       final ports = [
         for (final d in connectable)
