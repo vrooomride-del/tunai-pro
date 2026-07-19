@@ -13,6 +13,7 @@ add_executable(${BINARY_NAME} WIN32
   "win32_window.cpp"
   "usbi_channel.cpp"
   "icp5_serial_channel.cpp"
+  "icp5_ble_channel.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
   "runner.exe.manifest"
@@ -38,6 +39,8 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 # USBi WinUSB native channel
 target_link_libraries(${BINARY_NAME} PRIVATE "winusb.lib" "setupapi.lib" "cfgmgr32.lib")
+# ADAU1701 ICP5 BLE native channel (C++/WinRT: Windows.Devices.Bluetooth)
+target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.

@@ -5,6 +5,7 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "usbi_channel.h"
 #include "icp5_serial_channel.h"
+#include "icp5_ble_channel.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -32,6 +33,9 @@ bool FlutterWindow::OnCreate() {
   UsbiChannel::Register(
       flutter_controller_->engine()->messenger());
   Icp5SerialChannel::Register(
+      flutter_controller_->engine()->messenger());
+  // Register ADAU1701 ICP5 BLE WinRT MethodChannel/EventChannel ("tunai/icp5_ble")
+  Icp5BleChannel::Register(
       flutter_controller_->engine()->messenger());
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
