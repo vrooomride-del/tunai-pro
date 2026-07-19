@@ -9,6 +9,14 @@ import 'icp5_raw_state_read.dart';
 import 'icp5_bluetooth_driver.dart';
 import 'icp5_serial_driver.dart';
 
+/// Platform-specific tag for the ICP5 connect lifecycle logs. macOS keeps its
+/// proven `[ICP5 mac lifecycle]` tag unchanged; Windows gets its own.
+String _icp5LifecycleTag() => switch (defaultTargetPlatform) {
+      TargetPlatform.windows => 'ICP5 windows lifecycle',
+      TargetPlatform.macOS => 'ICP5 mac lifecycle',
+      _ => 'ICP5 lifecycle',
+    };
+
 class Icp5MasterVolumeResult {
   final bool success;
   final bool wasActualWrite;
@@ -252,7 +260,7 @@ class Icp5UsbTransport
         return _fail(DspTransportFailure.ackFailed,
             'ICP5 identity handshake write was incomplete.');
       }
-      debugPrint('[ICP5 mac lifecycle] HANDSHAKE_START');
+      debugPrint('[${_icp5LifecycleTag()}] HANDSHAKE_START');
       final identity = await handshakeFuture;
       _handshakeResponse = null;
       final profile = Icp5FrameCodec.parseIdentity(identity);
@@ -264,12 +272,13 @@ class Icp5UsbTransport
       _handshakeComplete = true;
       _profile = profile;
       _state = DspConnectionState.connected;
+      debugPrint('[${_icp5LifecycleTag()}] HANDSHAKE_PASS');
       return const DspTransportResult(
           success: true,
           failure: DspTransportFailure.none,
           message: 'ICP5 connected · ADAU1701 profile proven.');
     } on TimeoutException {
-      debugPrint('[ICP5 mac lifecycle] TIMEOUT');
+      debugPrint('[${_icp5LifecycleTag()}] TIMEOUT');
       await close();
       return _fail(
           DspTransportFailure.ackFailed, 'ICP5 identity handshake timed out.');

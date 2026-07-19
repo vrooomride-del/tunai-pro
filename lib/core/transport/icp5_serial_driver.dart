@@ -166,6 +166,7 @@ class WindowsIcp5SerialDriver implements Icp5SerialDriver {
     if (!platformSupported) {
       throw UnsupportedError('ICP5 USB Phase B is Windows-only.');
     }
+    debugPrint('[ICP5 windows lifecycle] OPEN port=$portName');
     final port = SerialPort(portName);
     if (!port.openReadWrite()) {
       final error = SerialPort.lastError;
@@ -173,13 +174,25 @@ class WindowsIcp5SerialDriver implements Icp5SerialDriver {
       throw StateError(
           'Cannot exclusively open $portName: ${error?.message ?? 'unknown serial error'}');
     }
-    final config = SerialPortConfig()
-      ..baudRate = 115200
-      ..bits = 8
-      ..parity = SerialPortParity.none
-      ..stopBits = 1;
-    port.config = config;
-    config.dispose();
+    // OWNERSHIP: `SerialPort.config =` transfers ownership of the config to the
+    // port, which frees it in `dispose()`. Manually disposing it here was a
+    // double-free (sp_free_config). Do NOT dispose the config ourselves.
+    try {
+      final config = SerialPortConfig()
+        ..baudRate = 115200
+        ..bits = 8
+        ..parity = SerialPortParity.none
+        ..stopBits = 1;
+      port.config = config; // port now owns `config`; do not dispose it here.
+    } catch (error) {
+      try {
+        port.close();
+      } catch (_) {}
+      try {
+        port.dispose(); // frees the port and any config it took ownership of
+      } catch (_) {}
+      throw StateError('Cannot configure $portName: $error');
+    }
     return _LibSerialConnection(port);
   }
 }
@@ -494,19 +507,118 @@ class _MacSerialConnection implements Icp5SerialConnection {
   }
 }
 
+/// Windows ICP5 serial connection.
+///
+/// Applies the same lifecycle-safety concept proven on macOS ([_MacSerialConnection]):
+/// the libserialport [SerialPortReader] runs a background isolate looping on the
+/// raw `sp_port*`; `close()` must (1) be idempotent, (2) bridge the reader through
+/// an owned controller so the transport never tears the reader down directly,
+/// (3) close the native port BEFORE freeing it so the isolate leaves its loop,
+/// then (4) `dispose()` exactly once after a settle. Concept reused, not copied —
+/// tags/logs are Windows-specific. The macOS path is untouched.
 class _LibSerialConnection implements Icp5SerialConnection {
+  static const int _readerPollTimeoutMs = 50;
+  static const Duration _readerExitSettle = Duration(milliseconds: 250);
+
   final SerialPort _port;
-  late final SerialPortReader _reader = SerialPortReader(_port);
+  SerialPortReader? _reader;
+  StreamController<List<int>>? _controller;
+  StreamSubscription<Uint8List>? _readerSub;
+  bool _closed = false;
+  bool _lateCallbackLogged = false;
+
   _LibSerialConnection(this._port);
+
   @override
-  Stream<List<int>> get bytes => _reader.stream.map((data) => data.toList());
+  Stream<List<int>> get bytes {
+    final existing = _controller;
+    if (existing != null) return existing.stream;
+
+    final controller = StreamController<List<int>>();
+    _controller = controller;
+    final reader = SerialPortReader(_port, timeout: _readerPollTimeoutMs);
+    _reader = reader;
+    debugPrint('[ICP5 windows lifecycle] READER_START');
+    _readerSub = reader.stream.listen(
+      (data) {
+        if (_closed || controller.isClosed) {
+          _logLateOnce();
+          return;
+        }
+        controller.add(data.toList());
+      },
+      onError: (Object error, StackTrace stack) {
+        if (_closed || controller.isClosed) {
+          _logLateOnce();
+          return;
+        }
+        controller.addError(error, stack);
+      },
+      onDone: () {
+        if (!controller.isClosed) controller.close();
+      },
+      cancelOnError: false,
+    );
+    return controller.stream;
+  }
+
+  void _logLateOnce() {
+    if (_lateCallbackLogged) return;
+    _lateCallbackLogged = true;
+    debugPrint('[ICP5 windows lifecycle] LATE_CALLBACK_DROPPED');
+  }
+
   @override
-  Future<int> write(List<int> bytes, Duration timeout) => Future<int>(() =>
-      _port.write(Uint8List.fromList(bytes), timeout: timeout.inMilliseconds));
+  Future<int> write(List<int> bytes, Duration timeout) async {
+    if (_closed) throw StateError('ICP5 serial port is closed.');
+    try {
+      return await Future<int>(() => _port.write(
+          Uint8List.fromList(bytes),
+          timeout: timeout.inMilliseconds));
+    } catch (error) {
+      throw StateError('ICP5 serial write failed: $error');
+    }
+  }
+
   @override
   Future<void> close() async {
-    _reader.close();
-    _port.close();
-    _port.dispose();
+    if (_closed) return; // idempotent — never double close/dispose
+    _closed = true;
+    debugPrint('[ICP5 windows lifecycle] CLOSE_REQUEST');
+
+    try {
+      await _readerSub?.cancel();
+    } catch (_) {}
+    _readerSub = null;
+    debugPrint('[ICP5 windows lifecycle] SUB_CANCEL');
+
+    try {
+      _reader?.close();
+    } catch (_) {}
+    _reader = null;
+    debugPrint('[ICP5 windows lifecycle] READER_CLOSE');
+
+    // Close the native handle first so the reader isolate's sp_input_waiting()
+    // returns < 0 and its loop exits — WITHOUT freeing the struct it reads.
+    try {
+      _port.close();
+    } catch (_) {}
+    debugPrint('[ICP5 windows lifecycle] PORT_CLOSE');
+
+    // Let the isolate leave its loop before freeing the native port struct.
+    await Future<void>.delayed(_readerExitSettle);
+
+    try {
+      final controller = _controller;
+      if (controller != null && !controller.isClosed) {
+        await controller.close();
+      }
+    } catch (_) {}
+    _controller = null;
+
+    try {
+      _port.dispose();
+    } catch (_) {}
+    debugPrint('[ICP5 windows lifecycle] PORT_DISPOSE');
   }
 }

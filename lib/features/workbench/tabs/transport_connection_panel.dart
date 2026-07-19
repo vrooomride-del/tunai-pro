@@ -106,20 +106,33 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   // Evidence report — populated after every preflight-gated write attempt.
   Adau1701DeploymentReport? _deploymentReport;
 
+  // Ownership: only transports this panel CREATED may be closed here. An
+  // injected transport (the shared ADAU1701 ICP5 USB context transport passed by
+  // the Hardware tab, also used by Deploy Apply) is owned by its provider —
+  // closing it on panel dispose would tear down a shared connection and, with a
+  // concurrent timeout-close, race the same native port teardown.
+  bool _ownsUsb = false;
+  bool _ownsBluetooth = false;
+
   @override
   void initState() {
     super.initState();
-    _icp5Usb = widget.icp5UsbTransport ??
-        Icp5UsbTransport(onDspWriteStop: widget.onDspWriteStop);
-    _icp5Bluetooth = widget.icp5BluetoothTransport ??
+    final injectedUsb = widget.icp5UsbTransport;
+    _ownsUsb = injectedUsb == null;
+    _icp5Usb =
+        injectedUsb ?? Icp5UsbTransport(onDspWriteStop: widget.onDspWriteStop);
+    final injectedBluetooth = widget.icp5BluetoothTransport;
+    _ownsBluetooth = injectedBluetooth == null;
+    _icp5Bluetooth = injectedBluetooth ??
         Icp5BluetoothTransport(onDspWriteStop: widget.onDspWriteStop);
     _preflightGate = Adau1701PeqDeploymentGate(transport: _icp5Usb);
   }
 
   @override
   void dispose() {
-    _icp5Usb.close();
-    _icp5Bluetooth.close();
+    // Never close injected/shared transports — only ones created here.
+    if (_ownsUsb) _icp5Usb.close();
+    if (_ownsBluetooth) _icp5Bluetooth.close();
     super.dispose();
   }
 
