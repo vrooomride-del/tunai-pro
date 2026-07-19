@@ -16,6 +16,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -130,25 +131,43 @@ std::vector<uint8_t> GetBytes(const EncodableMap& m, const char* key) {
 
 // ── WinRT async operations (fire-and-forget, reply on the captured apartment) ──
 
+// NOTE on coroutine exception handling: C++20 forbids `co_await` inside a catch
+// block (C2304). Every handler below captures success/error state inside the
+// try/catch, then performs the single `co_await ui;` (apartment dispatch) and
+// the result reply AFTER the try/catch. Error conditions inside the try throw
+// so they land in the same catch — no `co_await` ever sits in a catch.
+
 winrt::fire_and_forget AdapterOn(MethodResultPtr result) {
   apartment_context ui;
+  bool on = false;
+  bool has_error = false;
+  std::string err_msg;
   try {
     auto radio = co_await BluetoothAdapter::GetDefaultAsync();
-    bool on = false;
     if (radio) {
       auto r = co_await radio.GetRadioAsync();
       on = r && r.State() == RadioState::On;
     }
-    co_await ui;
-    result->Success(EncodableValue(on));
   } catch (const winrt::hresult_error& e) {
-    co_await ui;
-    result->Error("adapter", ToUtf8(e.message()));
+    has_error = true;
+    err_msg = ToUtf8(e.message());
+  } catch (const std::exception& e) {
+    has_error = true;
+    err_msg = e.what();
+  }
+  co_await ui;
+  if (has_error) {
+    result->Error("adapter", err_msg);
+  } else {
+    result->Success(EncodableValue(on));
   }
 }
 
 winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
   apartment_context ui;
+  EncodableList devices;
+  bool has_error = false;
+  std::string err_msg;
   Log("SCAN_START");
   try {
     struct Seen {
@@ -182,7 +201,6 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
     co_await winrt::resume_after(std::chrono::milliseconds(timeoutMs));
     watcher.Stop();
 
-    EncodableList devices;
     {
       std::lock_guard<std::mutex> lock(*foundMutex);
       for (const auto& [id, seen] : *found) {
@@ -196,34 +214,40 @@ winrt::fire_and_forget Scan(int timeoutMs, MethodResultPtr result) {
         Log("DEVICE_FOUND");
       }
     }
-    co_await ui;
-    result->Success(EncodableValue(devices));
   } catch (const winrt::hresult_error& e) {
-    co_await ui;
-    result->Error("scan", ToUtf8(e.message()));
+    has_error = true;
+    err_msg = ToUtf8(e.message());
+  } catch (const std::exception& e) {
+    has_error = true;
+    err_msg = e.what();
+  }
+  co_await ui;
+  if (has_error) {
+    result->Error("scan", err_msg);
+  } else {
+    result->Success(EncodableValue(devices));
   }
 }
 
 winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
                                MethodResultPtr result) {
   apartment_context ui;
+  EncodableValue payload;
+  bool has_error = false;
+  std::string err_msg;
   Log("CONNECT_START");
   try {
     const uint64_t address = std::stoull(deviceId);
     auto device = co_await BluetoothLEDevice::FromBluetoothAddressAsync(address);
     if (!device) {
-      co_await ui;
-      result->Error("connect", "Device not found for address " + deviceId);
-      co_return;
+      throw std::runtime_error("Device not found for address " + deviceId);
     }
     Log("CONNECTED");
 
     auto servicesResult =
         co_await device.GetGattServicesAsync(BluetoothCacheMode::Uncached);
     if (servicesResult.Status() != GattCommunicationStatus::Success) {
-      co_await ui;
-      result->Error("connect", "GATT service discovery failed.");
-      co_return;
+      throw std::runtime_error("GATT service discovery failed.");
     }
 
     BleSession session;
@@ -278,25 +302,33 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
     profile[EncodableValue("services")] = EncodableValue(serviceUuids);
     profile[EncodableValue("characteristics")] =
         EncodableValue(characteristics);
-    co_await ui;
-    result->Success(EncodableValue(profile));
+    payload = EncodableValue(profile);
   } catch (const winrt::hresult_error& e) {
-    co_await ui;
-    result->Error("connect", ToUtf8(e.message()));
+    has_error = true;
+    err_msg = ToUtf8(e.message());
+  } catch (const std::exception& e) {
+    has_error = true;
+    err_msg = e.what();
+  }
+  co_await ui;
+  if (has_error) {
+    result->Error("connect", err_msg);
+  } else {
+    result->Success(payload);
   }
 }
 
 winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result) {
   apartment_context ui;
+  bool has_error = false;
+  std::string err_msg;
   try {
     GattCharacteristic rx{nullptr};
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       auto it = g_sessions.find(deviceId);
       if (it == g_sessions.end() || !it->second.rx) {
-        co_await ui;
-        result->Error("notify", "No RX (FFF1) characteristic for " + deviceId);
-        co_return;
+        throw std::runtime_error("No RX (FFF1) characteristic for " + deviceId);
       }
       rx = it->second.rx;
     }
@@ -304,9 +336,7 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
     auto status = co_await rx.WriteClientCharacteristicConfigurationDescriptorAsync(
         GattClientCharacteristicConfigurationDescriptorValue::Notify);
     if (status != GattCommunicationStatus::Success) {
-      co_await ui;
-      result->Error("notify", "Failed to enable notifications on FFF1.");
-      co_return;
+      throw std::runtime_error("Failed to enable notifications on FFF1.");
     }
 
     auto token = rx.ValueChanged(
@@ -327,26 +357,33 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
       }
     }
     Log("RX_NOTIFY_ENABLED");
-    co_await ui;
-    result->Success();
   } catch (const winrt::hresult_error& e) {
-    co_await ui;
-    result->Error("notify", ToUtf8(e.message()));
+    has_error = true;
+    err_msg = ToUtf8(e.message());
+  } catch (const std::exception& e) {
+    has_error = true;
+    err_msg = e.what();
+  }
+  co_await ui;
+  if (has_error) {
+    result->Error("notify", err_msg);
+  } else {
+    result->Success();
   }
 }
 
 winrt::fire_and_forget Write(std::string deviceId, std::vector<uint8_t> data,
                              MethodResultPtr result) {
   apartment_context ui;
+  bool has_error = false;
+  std::string err_msg;
   try {
     GattCharacteristic tx{nullptr};
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       auto it = g_sessions.find(deviceId);
       if (it == g_sessions.end() || !it->second.tx) {
-        co_await ui;
-        result->Error("write", "No TX (FFF2) characteristic for " + deviceId);
-        co_return;
+        throw std::runtime_error("No TX (FFF2) characteristic for " + deviceId);
       }
       tx = it->second.tx;
     }
@@ -363,15 +400,21 @@ winrt::fire_and_forget Write(std::string deviceId, std::vector<uint8_t> data,
     Log("TX_WRITE");
     auto status =
         co_await tx.WriteValueAsync(writer.DetachBuffer(), option);
-    co_await ui;
-    if (status == GattCommunicationStatus::Success) {
-      result->Success(EncodableValue(static_cast<int>(data.size())));
-    } else {
-      result->Error("write", "GATT write did not succeed.");
+    if (status != GattCommunicationStatus::Success) {
+      throw std::runtime_error("GATT write did not succeed.");
     }
   } catch (const winrt::hresult_error& e) {
-    co_await ui;
-    result->Error("write", ToUtf8(e.message()));
+    has_error = true;
+    err_msg = ToUtf8(e.message());
+  } catch (const std::exception& e) {
+    has_error = true;
+    err_msg = e.what();
+  }
+  co_await ui;
+  if (has_error) {
+    result->Error("write", err_msg);
+  } else {
+    result->Success(EncodableValue(static_cast<int>(data.size())));
   }
 }
 
