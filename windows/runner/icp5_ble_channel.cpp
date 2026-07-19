@@ -144,6 +144,10 @@ std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> g_notify_sink;
 std::atomic<int> g_rx_event_count{0};  // RX ValueChanged events since launch
 
 void EmitNotify(const std::string& deviceId, const std::vector<uint8_t>& data) {
+  // Called from the WinRT ValueChanged thread-pool thread. The Flutter Windows
+  // EventSink forwards through the BinaryMessenger, which posts to the platform
+  // task runner, so delivery is marshalled to the platform thread by the
+  // embedder. The g_sink_mutex guards against a concurrent OnCancel.
   std::lock_guard<std::mutex> lock(g_sink_mutex);
   if (!g_notify_sink) return;
   EncodableList bytes;
@@ -543,14 +547,16 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
     const bool hasNotify = HasProp(props, GattCharacteristicProperties::Notify);
     const bool hasIndicate =
         HasProp(props, GattCharacteristicProperties::Indicate);
-    LogMsg("FFF1 props=" + std::to_string(static_cast<int>(props)) +
-           " Notify=" + B(hasNotify) + " Indicate=" + B(hasIndicate));
+    LogMsg("FFF1_PROPS raw=" + std::to_string(static_cast<int>(props)) +
+           " notify=" + B(hasNotify) + " indicate=" + B(hasIndicate));
     if (!hasNotify && !hasIndicate) {
+      LogMsg("NOTIFY_ERROR stage=props status=NoNotifyNoIndicate");
       throw std::runtime_error("FFF1 supports neither Notify nor Indicate.");
     }
 
     // Register the ValueChanged handler BEFORE writing the CCCD so no early RX
-    // event is missed, and keep the token alive for the whole session.
+    // event is missed. The token is kept alive in the session and revoked once.
+    Log("RX_HANDLER_REGISTER_BEGIN");
     auto token = rx.ValueChanged(
         [deviceId](GattCharacteristic const&,
                    GattValueChangedEventArgs const& args) {
@@ -558,8 +564,8 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
           std::vector<uint8_t> data(reader.UnconsumedBufferLength());
           reader.ReadBytes(data);
           const int n = ++g_rx_event_count;
-          LogMsg("RX_EVENT #" + std::to_string(n) +
-                 " bytes=" + std::to_string(data.size()));
+          LogMsg("RX_BYTES count=" + std::to_string(data.size()) +
+                 " event=" + std::to_string(n));
           EmitNotify(deviceId, data);
         });
     {
@@ -571,6 +577,10 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
       }
     }
     Log("RX_HANDLER_REGISTERED");
+
+    // Brief readiness delay before the CCCD write — the link/GATT session may
+    // not be fully ready immediately after service discovery.
+    co_await winrt::resume_after(std::chrono::milliseconds(200));
 
     // Try Notify first, then Indicate (req 1–3).
     std::vector<std::pair<GattClientCharacteristicConfigurationDescriptorValue,
@@ -590,7 +600,7 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
     bool enabled = false;
     GattCommunicationStatus lastStatus = GattCommunicationStatus::Unreachable;
     for (auto const& mode : modes) {
-      LogMsg("CCCD_WRITE mode=" + mode.second);
+      LogMsg("CCCD_TRY mode=" + mode.second);
       lastStatus =
           co_await rx.WriteClientCharacteristicConfigurationDescriptorAsync(
               mode.first);
@@ -605,16 +615,21 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
     }
 
     if (!enabled) {
-      // Subscription failed — revoke the handler exactly once and do NOT let the
-      // caller proceed to the handshake.
-      std::lock_guard<std::mutex> lock(g_mutex);
-      auto it = g_sessions.find(deviceId);
-      if (it != g_sessions.end() && it->second.rxSubscribed && it->second.rx) {
-        try {
-          it->second.rx.ValueChanged(it->second.rxToken);
-        } catch (...) {
+      // Subscription failed — revoke the handler exactly once, keep the device
+      // selection (Dart re-arms Connect), and surface the exact WinRT status.
+      LogMsg("NOTIFY_ERROR stage=cccd status=" + CommStatusStr(lastStatus));
+      {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        auto it = g_sessions.find(deviceId);
+        if (it != g_sessions.end() && it->second.rxSubscribed &&
+            it->second.rx) {
+          try {
+            it->second.rx.ValueChanged(it->second.rxToken);
+          } catch (...) {
+          }
+          it->second.rxSubscribed = false;
+          Log("RX_HANDLER_REVOKED");
         }
-        it->second.rxSubscribed = false;
       }
       throw std::runtime_error("CCCD subscription failed for FFF1: " +
                                CommStatusStr(lastStatus));
@@ -622,9 +637,11 @@ winrt::fire_and_forget EnableNotify(std::string deviceId, MethodResultPtr result
   } catch (const winrt::hresult_error& e) {
     has_error = true;
     err_msg = ToUtf8(e.message());
+    LogMsg("NOTIFY_ERROR stage=hresult status=" + err_msg);
   } catch (const std::exception& e) {
     has_error = true;
     err_msg = e.what();
+    LogMsg(std::string("NOTIFY_ERROR stage=exception status=") + e.what());
   }
   co_await ui;
   if (has_error) {
@@ -688,9 +705,11 @@ void Disconnect(const std::string& deviceId) {
   BleSession& s = it->second;
   if (s.rxSubscribed && s.rx) {
     try {
-      s.rx.ValueChanged(s.rxToken);
+      s.rx.ValueChanged(s.rxToken);  // revoke exactly once
+      Log("RX_HANDLER_REVOKED");
     } catch (...) {
     }
+    s.rxSubscribed = false;
   }
   if (s.service) s.service.Close();
   if (s.gattSession) {
