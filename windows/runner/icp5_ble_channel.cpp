@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -38,15 +39,18 @@ using flutter::EncodableValue;
 using MethodResultPtr =
     std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>;
 
-void Log(const char* tag) {
-  OutputDebugStringA((std::string("[ICP5 windows BLE lifecycle] ") + tag + "\n")
-                         .c_str());
+// Emit to BOTH the Win32 debugger (DebugView / VS Output) AND stdout so the
+// lines are visible in the `flutter run -d windows` terminal without a debugger.
+void LogLine(const std::string& line) {
+  const std::string full = "[ICP5 windows BLE lifecycle] " + line + "\n";
+  OutputDebugStringA(full.c_str());
+  fputs(full.c_str(), stdout);
+  fflush(stdout);
 }
 
-void LogMsg(const std::string& message) {
-  OutputDebugStringA(
-      (std::string("[ICP5 windows BLE lifecycle] ") + message + "\n").c_str());
-}
+void Log(const char* tag) { LogLine(tag); }
+
+void LogMsg(const std::string& message) { LogLine(message); }
 
 std::string ToUtf8(winrt::hstring const& value) {
   return winrt::to_string(value);
