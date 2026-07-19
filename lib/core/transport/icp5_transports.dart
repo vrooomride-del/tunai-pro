@@ -252,6 +252,7 @@ class Icp5UsbTransport
         return _fail(DspTransportFailure.ackFailed,
             'ICP5 identity handshake write was incomplete.');
       }
+      debugPrint('[ICP5 mac lifecycle] HANDSHAKE_START');
       final identity = await handshakeFuture;
       _handshakeResponse = null;
       final profile = Icp5FrameCodec.parseIdentity(identity);
@@ -268,6 +269,7 @@ class Icp5UsbTransport
           failure: DspTransportFailure.none,
           message: 'ICP5 connected · ADAU1701 profile proven.');
     } on TimeoutException {
+      debugPrint('[ICP5 mac lifecycle] TIMEOUT');
       await close();
       return _fail(
           DspTransportFailure.ackFailed, 'ICP5 identity handshake timed out.');

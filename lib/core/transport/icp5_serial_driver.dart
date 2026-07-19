@@ -276,7 +276,7 @@ class MacIcp5SerialDriver implements Icp5SerialDriver {
           'ICP5 USB macOS serial driver is unavailable on this platform.');
     }
     if (_openOverride != null) return _openOverride!(portName);
-    debugPrint('[ICP5 macOS] open() port=$portName');
+    debugPrint('[ICP5 mac lifecycle] OPEN port=$portName');
     final port = SerialPort(portName);
     if (!port.openReadWrite()) {
       final error = SerialPort.lastError;
@@ -365,17 +365,24 @@ Icp5SerialDriver defaultIcp5UsbSerialDriver() =>
 ///  - idempotent, exception-safe [close] with reader-before-port teardown.
 /// Windows keeps using [_LibSerialConnection] unchanged.
 class _MacSerialConnection implements Icp5SerialConnection {
-  /// Time allowed for the libserialport reader isolate to fully exit after
-  /// [SerialPortReader.close] before the native port is freed. Without this
-  /// settle, a subsequent reopen of the same `/dev/cu.*` can race a still-live
-  /// isolate/native handle (EXC_BAD_ACCESS on reconnect).
-  static const Duration _readerSettleDelay = Duration(milliseconds: 120);
+  /// Reader poll timeout. The libserialport reader runs a background isolate
+  /// looping on `sp_wait(timeout)` over the raw `sp_port*`. `Isolate.kill()`
+  /// cannot interrupt a blocking native `sp_wait`, so a *short* timeout is what
+  /// lets the isolate promptly observe a closed port and exit its loop.
+  static const int _readerPollTimeoutMs = 50;
+
+  /// Settle window AFTER `sp_close` (so `sp_input_waiting` returns < 0 and the
+  /// isolate loop exits) and BEFORE `sp_free_port`. Comfortably exceeds
+  /// [_readerPollTimeoutMs] so the isolate has left the loop before the native
+  /// port struct is freed — this is what prevents the EXC_BAD_ACCESS.
+  static const Duration _readerExitSettle = Duration(milliseconds: 250);
 
   final SerialPort _port;
   SerialPortReader? _reader;
   StreamController<List<int>>? _controller;
   StreamSubscription<Uint8List>? _readerSub;
   bool _closed = false;
+  bool _lateCallbackLogged = false;
 
   _MacSerialConnection(this._port);
 
@@ -388,17 +395,29 @@ class _MacSerialConnection implements Icp5SerialConnection {
 
     final controller = StreamController<List<int>>();
     _controller = controller;
-    final reader = SerialPortReader(_port);
+    // Short poll timeout so the reader isolate can exit quickly on close.
+    final reader = SerialPortReader(_port, timeout: _readerPollTimeoutMs);
     _reader = reader;
-    debugPrint('[ICP5 macOS] reader started');
+    debugPrint('[ICP5 mac lifecycle] READER_START');
     _readerSub = reader.stream.listen(
       (data) {
-        if (_closed || controller.isClosed) return; // no delivery after close
+        if (_closed || controller.isClosed) {
+          if (!_lateCallbackLogged) {
+            _lateCallbackLogged = true;
+            debugPrint('[ICP5 mac lifecycle] LATE_CALLBACK_DROPPED');
+          }
+          return; // never touch a closing/closed controller
+        }
         controller.add(data.toList());
       },
       onError: (Object error, StackTrace stack) {
-        // Swallow native serial errors after close; surface them otherwise.
-        if (_closed || controller.isClosed) return;
+        if (_closed || controller.isClosed) {
+          if (!_lateCallbackLogged) {
+            _lateCallbackLogged = true;
+            debugPrint('[ICP5 mac lifecycle] LATE_CALLBACK_DROPPED');
+          }
+          return;
+        }
         controller.addError(error, stack);
       },
       onDone: () {
@@ -429,26 +448,36 @@ class _MacSerialConnection implements Icp5SerialConnection {
   Future<void> close() async {
     if (_closed) return; // idempotent — never double close/dispose
     _closed = true;
-    debugPrint('[ICP5 macOS] close requested');
+    debugPrint('[ICP5 mac lifecycle] CLOSE_REQUEST');
 
-    // 1. Stop receiving native callbacks first.
+    // 1. Cancel our subscription. This fires the reader controller's onCancel
+    //    (_cancelRead → ReceivePort.close + Isolate.kill request).
     try {
       await _readerSub?.cancel();
     } catch (_) {}
     _readerSub = null;
-    debugPrint('[ICP5 macOS] subscription cancelled');
+    debugPrint('[ICP5 mac lifecycle] SUB_CANCEL');
 
-    // 2. Tear down the reader isolate before touching the native port handle.
+    // 2. Close the reader's own stream controller.
     try {
       _reader?.close();
     } catch (_) {}
     _reader = null;
+    debugPrint('[ICP5 mac lifecycle] READER_CLOSE');
 
-    // 3. Let the reader isolate fully exit before freeing the native port, so a
-    //    subsequent reopen never races a live isolate/handle.
-    await Future<void>.delayed(_readerSettleDelay);
+    // 3. Close the native OS handle FIRST. sp_close makes the isolate's next
+    //    sp_input_waiting() return < 0, so its `while (bytes >= 0)` loop exits
+    //    and the isolate terminates — WITHOUT freeing the struct it still reads.
+    try {
+      _port.close();
+    } catch (_) {}
+    debugPrint('[ICP5 mac lifecycle] PORT_CLOSE');
 
-    // 4. Close our controller so downstream listeners complete cleanly.
+    // 4. Wait for the isolate to leave its loop (> poll timeout) before freeing
+    //    the native port struct. This ordering is the crash fix.
+    await Future<void>.delayed(_readerExitSettle);
+
+    // 5. Close our controller so downstream listeners complete cleanly.
     try {
       final controller = _controller;
       if (controller != null && !controller.isClosed) {
@@ -457,14 +486,11 @@ class _MacSerialConnection implements Icp5SerialConnection {
     } catch (_) {}
     _controller = null;
 
-    // 5. Release the OS handle, then free the native object.
-    try {
-      _port.close();
-    } catch (_) {}
+    // 6. Now free the native port struct — the reader isolate is gone.
     try {
       _port.dispose();
     } catch (_) {}
-    debugPrint('[ICP5 macOS] port disposed');
+    debugPrint('[ICP5 mac lifecycle] PORT_DISPOSE');
   }
 }
 
