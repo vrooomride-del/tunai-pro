@@ -81,6 +81,25 @@ std::string SessionStatusStr(GattSessionStatus s) {
   return s == GattSessionStatus::Active ? "Active" : "Closed";
 }
 
+// BluetoothError enum -> string. GattSessionStatusChangedEventArgs.Error is a
+// BluetoothError (Windows 10 1709+), so this is the most specific error info the
+// SDK exposes for a session status transition.
+std::string BtErrStr(BluetoothError e) {
+  switch (e) {
+    case BluetoothError::Success: return "Success";
+    case BluetoothError::RadioNotAvailable: return "RadioNotAvailable";
+    case BluetoothError::ResourceInUse: return "ResourceInUse";
+    case BluetoothError::DeviceNotConnected: return "DeviceNotConnected";
+    case BluetoothError::OtherError: return "OtherError";
+    case BluetoothError::DisabledByPolicy: return "DisabledByPolicy";
+    case BluetoothError::NotSupported: return "NotSupported";
+    case BluetoothError::DisabledByUser: return "DisabledByUser";
+    case BluetoothError::ConsentRequired: return "ConsentRequired";
+    case BluetoothError::TransportNotSupported: return "TransportNotSupported";
+    default: return "Unknown";
+  }
+}
+
 // Monotonic milliseconds for correlating lifecycle timing across log lines.
 long long NowMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -580,20 +599,40 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
            " maintain=" + B(gattSession.MaintainConnection()) +
            " device=" + PtrId(device) + " sessionPtr=" + PtrId(gattSession));
 
-    // (req 4) Keep logging SessionStatus transitions AFTER Active (diagnostic;
-    // token intentionally not revoked — the source object lives in g_sessions).
+    // (req 1/4) Keep logging SessionStatus transitions AFTER Active with the
+    // full error info the SDK exposes (diagnostic; token intentionally not
+    // revoked — the source object lives in g_sessions). Also records the last
+    // BluetoothError so CONNECT_FINAL_STATE can report it.
+    auto prevStatus = std::make_shared<std::atomic<int>>(
+        static_cast<int>(gattSession.SessionStatus()));
+    auto lastSessionError = std::make_shared<std::atomic<int>>(
+        static_cast<int>(BluetoothError::Success));
+    const std::string devPtr = PtrId(device);
+    const std::string sesPtr = PtrId(gattSession);
     {
-      auto prev = std::make_shared<std::atomic<int>>(
-          static_cast<int>(gattSession.SessionStatus()));
+      auto dev = device;
       gattSession.SessionStatusChanged(
-          [prev](GattSession const& s,
-                 GattSessionStatusChangedEventArgs const&) {
+          [prevStatus, lastSessionError, dev, devPtr, sesPtr](
+              GattSession const& s,
+              GattSessionStatusChangedEventArgs const& args) {
             const int now = static_cast<int>(s.SessionStatus());
-            const int was = prev->exchange(now);
-            LogMsg("GATT_SESSION_STATUS_CHANGED prev=" +
-                   SessionStatusStr(static_cast<GattSessionStatus>(was)) +
-                   " new=" + SessionStatusStr(static_cast<GattSessionStatus>(now)) +
-                   " t=" + std::to_string(NowMs()));
+            const int was = prevStatus->exchange(now);
+            const BluetoothError err = args.Error();
+            lastSessionError->store(static_cast<int>(err));
+            std::string maxPdu = "n/a";
+            try {
+              maxPdu = std::to_string(s.MaxPduSize());
+            } catch (...) {
+            }
+            LogMsg(
+                "GATT_SESSION_STATUS_CHANGED prev=" +
+                SessionStatusStr(static_cast<GattSessionStatus>(was)) +
+                " new=" + SessionStatusStr(static_cast<GattSessionStatus>(now)) +
+                " error=" + BtErrStr(err) +
+                " errorRaw=" + std::to_string(static_cast<int>(err)) +
+                " conn=" + ConnStatusStr(dev.ConnectionStatus()) +
+                " maxPdu=" + maxPdu + " t=" + std::to_string(NowMs()) +
+                " device=" + devPtr + " sessionPtr=" + sesPtr);
           });
     }
     // (req 5) Temporary diagnostic: BluetoothLEDevice ConnectionStatus changes.
@@ -657,6 +696,12 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
              " conn=" + ConnStatusStr(device.ConnectionStatus()) +
              " maxPdu=" + maxPdu + " device=" + PtrId(device) +
              " sessionPtr=" + PtrId(gattSession));
+      // (req 4) Final state snapshot at Connect exit, incl. last session error.
+      LogMsg("CONNECT_FINAL_STATE session=" +
+             SessionStatusStr(gattSession.SessionStatus()) +
+             " conn=" + ConnStatusStr(device.ConnectionStatus()) +
+             " maxPdu=" + maxPdu + " lastSessionError=" +
+             BtErrStr(static_cast<BluetoothError>(lastSessionError->load())));
       throw std::runtime_error(
           "FFF0 Uncached discovery failed after Active: " +
           CommStatusStr(servicesResult.Status()));
