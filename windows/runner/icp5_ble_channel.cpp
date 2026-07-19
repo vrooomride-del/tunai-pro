@@ -7,6 +7,7 @@
 #include <winrt/Windows.Devices.Bluetooth.h>
 #include <winrt/Windows.Devices.Bluetooth.Advertisement.h>
 #include <winrt/Windows.Devices.Bluetooth.GenericAttributeProfile.h>
+#include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Devices.Radios.h>
 #include <winrt/Windows.Storage.Streams.h>
 
@@ -31,6 +32,7 @@ using namespace winrt::Windows::Foundation;
 using namespace winrt::Windows::Devices::Bluetooth;
 using namespace winrt::Windows::Devices::Bluetooth::Advertisement;
 using namespace winrt::Windows::Devices::Bluetooth::GenericAttributeProfile;
+using namespace winrt::Windows::Devices::Enumeration;
 using namespace winrt::Windows::Devices::Radios;
 using namespace winrt::Windows::Storage::Streams;
 
@@ -96,6 +98,32 @@ std::string BtErrStr(BluetoothError e) {
     case BluetoothError::DisabledByUser: return "DisabledByUser";
     case BluetoothError::ConsentRequired: return "ConsentRequired";
     case BluetoothError::TransportNotSupported: return "TransportNotSupported";
+    default: return "Unknown";
+  }
+}
+
+std::string PairStatusStr(DevicePairingResultStatus s) {
+  switch (s) {
+    case DevicePairingResultStatus::Paired: return "Paired";
+    case DevicePairingResultStatus::AlreadyPaired: return "AlreadyPaired";
+    case DevicePairingResultStatus::NotReadyToPair: return "NotReadyToPair";
+    case DevicePairingResultStatus::NotPaired: return "NotPaired";
+    case DevicePairingResultStatus::ConnectionRejected: return "ConnectionRejected";
+    case DevicePairingResultStatus::TooManyConnections: return "TooManyConnections";
+    case DevicePairingResultStatus::HardwareFailure: return "HardwareFailure";
+    case DevicePairingResultStatus::AuthenticationTimeout: return "AuthenticationTimeout";
+    case DevicePairingResultStatus::AuthenticationNotAllowed: return "AuthenticationNotAllowed";
+    case DevicePairingResultStatus::AuthenticationFailure: return "AuthenticationFailure";
+    case DevicePairingResultStatus::NoSupportedProfiles: return "NoSupportedProfiles";
+    case DevicePairingResultStatus::ProtectionLevelCouldNotBeMet: return "ProtectionLevelCouldNotBeMet";
+    case DevicePairingResultStatus::AccessDenied: return "AccessDenied";
+    case DevicePairingResultStatus::InvalidCeremonyData: return "InvalidCeremonyData";
+    case DevicePairingResultStatus::PairingCanceled: return "PairingCanceled";
+    case DevicePairingResultStatus::OperationAlreadyInProgress: return "OperationAlreadyInProgress";
+    case DevicePairingResultStatus::RequiredHandlerNotRegistered: return "RequiredHandlerNotRegistered";
+    case DevicePairingResultStatus::RejectedByHandler: return "RejectedByHandler";
+    case DevicePairingResultStatus::RemoteDeviceHasAssociation: return "RemoteDeviceHasAssociation";
+    case DevicePairingResultStatus::Failed: return "Failed";
     default: return "Unknown";
   }
 }
@@ -562,6 +590,48 @@ winrt::fire_and_forget Connect(std::string deviceId, int /*timeoutMs*/,
            " Id=" + ToUtf8(device.DeviceId()));
     LogMsg("CONNECT_DEVICE_READY conn=" +
            ConnStatusStr(device.ConnectionStatus()));
+
+    // Ensure the device is bonded before any GATT access. On Windows the
+    // confirmed failure signature (session Active->Closed with error=Success,
+    // ATT MTU never negotiated=23, vendor FFF0 read Unreachable) is Windows
+    // tearing down the GATT session for an UNBONDED link to a custom service.
+    // macOS (CoreBluetooth) does not require this; Windows does. We attempt a
+    // just-works (ConfirmOnly) bond here and leave the rest of the connect flow
+    // (GattSession / Active wait / Uncached discovery) unchanged.
+    try {
+      auto pairing = device.DeviceInformation().Pairing();
+      LogMsg(std::string("PAIR_BEGIN isPaired=") + B(pairing.IsPaired()) +
+             " canPair=" + B(pairing.CanPair()));
+      if (!pairing.IsPaired() && pairing.CanPair()) {
+        auto custom = pairing.Custom();
+        auto ceremonyToken = custom.PairingRequested(
+            [](DeviceInformationCustomPairing const&,
+               DevicePairingRequestedEventArgs const& args) {
+              LogMsg(std::string("PAIR_REQUESTED kind=") +
+                     std::to_string(static_cast<int>(args.PairingKind())));
+              // Just-works pairing: accept the ConfirmOnly ceremony.
+              if (args.PairingKind() == DevicePairingKinds::ConfirmOnly) {
+                args.Accept();
+              }
+            });
+        auto pairResult = co_await custom.PairAsync(
+            DevicePairingKinds::ConfirmOnly, DevicePairingProtectionLevel::None);
+        custom.PairingRequested(ceremonyToken);
+        LogMsg(std::string("PAIR_RESULT status=") +
+               PairStatusStr(pairResult.Status()) + " statusRaw=" +
+               std::to_string(static_cast<int>(pairResult.Status())) +
+               " isPairedNow=" + B(device.DeviceInformation().Pairing().IsPaired()));
+      } else {
+        LogMsg("PAIR_SKIP reason=" +
+               std::string(pairing.IsPaired() ? "already-paired"
+                                              : "cannot-pair"));
+      }
+    } catch (const winrt::hresult_error& pe) {
+      char hr[16]{};
+      sprintf_s(hr, "0x%08X", static_cast<uint32_t>(pe.code().value));
+      LogMsg(std::string("PAIR_ERROR hresult=") + hr + " message=" +
+             ToUtf8(pe.message()));
+    }
 
     // Open a GattSession and request the OS to establish/maintain the link.
     // This is required before any Uncached ATT operation will succeed.
