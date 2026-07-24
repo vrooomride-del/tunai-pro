@@ -172,11 +172,26 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             completedSteps: List.unmodifiable(completedSteps),
           );
         case ProPlanCompleted(:final outcome):
+          final loopVerdict =
+              _extractVerdict(pid, store, outcome.loopResultRef);
+          final beforeRef = completedSteps
+              .where((r) =>
+                  r.toolId == ProOrchestratorToolId.measurementAnalyze)
+              .firstOrNull
+              ?.outputRef;
+          final loopPhase = loopVerdict != null
+              ? ProClosedLoopPhase.evaluated
+              : (applyResult != null &&
+                      applyResult.status != TuningApplyStatus.notPermitted)
+                  ? ProClosedLoopPhase.awaitingMeasurement
+                  : null;
           state = ProGuidedAiCompleted(
             outcome: outcome,
             explanation: explanation,
-            loopVerdict: _extractVerdict(pid, store, outcome.loopResultRef),
+            loopVerdict: loopVerdict,
             applyResult: applyResult,
+            beforeMeasurementRef: beforeRef,
+            loopPhase: loopPhase,
           );
         case ProPlanFailed(:final outcome):
           state = ProGuidedAiFailed(outcome.terminationReason ?? '실행 실패');

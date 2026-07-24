@@ -191,6 +191,10 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 const SizedBox(height: 16),
                 if (aiState.applyResult != null)
                   _ApplyResultCard(result: aiState.applyResult!),
+                if (aiState.loopPhase != null) ...[
+                  const SizedBox(height: 12),
+                  _LoopPhaseCard(phase: aiState.loopPhase!),
+                ],
                 if (aiState.loopVerdict != null) ...[
                   const SizedBox(height: 12),
                   _VerdictCard(verdict: aiState.loopVerdict!),
@@ -436,6 +440,37 @@ class _VerdictCard extends StatelessWidget {
         Text('Closed Loop: $label',
             style: TextStyle(
                 color: color, fontSize: 13, fontWeight: FontWeight.w500)),
+      ],
+    );
+  }
+}
+
+class _LoopPhaseCard extends StatelessWidget {
+  final ProClosedLoopPhase phase;
+  const _LoopPhaseCard({required this.phase});
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, label, color) = switch (phase) {
+      ProClosedLoopPhase.awaitingMeasurement => (
+          Icons.sensors,
+          '재측정 대기 중 — Closed Loop 비교를 위해 다시 측정하세요.',
+          Colors.white54,
+        ),
+      ProClosedLoopPhase.evaluated => (
+          Icons.loop,
+          'Closed Loop 평가 완료',
+          const Color(0xFF4CAF50),
+        ),
+    };
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 16),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(label,
+              style: TextStyle(color: color, fontSize: 12, height: 1.4)),
+        ),
       ],
     );
   }

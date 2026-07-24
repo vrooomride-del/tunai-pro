@@ -52,6 +52,19 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
   });
 }
 
+/// Post-apply closed-loop lifecycle phase.
+///
+/// `awaitingMeasurement` — apply succeeded; the UI should prompt the user to
+/// re-measure so a Closed Loop comparison can run.
+/// `evaluated`           — both before/after snapshots were available and
+/// [AcousticClosedLoopEvaluator] produced a [LoopVerdict].
+///
+/// Never carries a DSP value: this is a lifecycle label only.
+enum ProClosedLoopPhase {
+  awaitingMeasurement,
+  evaluated,
+}
+
 class ProGuidedAiCompleted extends ProGuidedAiState {
   final ProLocalOrchestratorOutcome outcome;
   final ProExplanation explanation;
@@ -64,11 +77,22 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
   /// Contains the applied/skipped band audit — no DSP register values.
   final TuningApplyResult? applyResult;
 
+  /// Opaque artifact-store key for the before-apply measurement artifact.
+  /// Present when apply succeeded; used to retrieve [MeasurementArtifact] for
+  /// the Closed Loop comparison once an after-measurement is available.
+  /// Never a DSP value — just a lookup reference.
+  final String? beforeMeasurementRef;
+
+  /// Closed Loop phase after apply. Null when no apply ran.
+  final ProClosedLoopPhase? loopPhase;
+
   const ProGuidedAiCompleted({
     required this.outcome,
     required this.explanation,
     this.loopVerdict,
     this.applyResult,
+    this.beforeMeasurementRef,
+    this.loopPhase,
   });
 }
 
