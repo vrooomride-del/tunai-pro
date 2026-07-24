@@ -1,8 +1,11 @@
 import '../../acoustic/acoustic_problem_classifier.dart'
     show AcousticClassificationResult;
 import '../../acoustic/candidate_optimizer.dart' show OptimizedSelection;
+import '../../acoustic/candidate_safety.dart' show CandidateSafetyResult;
 import '../../acoustic/candidate_scoring.dart' show ScoredCandidateSet;
 import '../../acoustic/candidate_set.dart' show CandidateSet;
+import '../../acoustic/closed_loop_evaluator.dart'
+    show ClosedLoopResult, LoopMeasurementSnapshot;
 import '../../acoustic/correction_plan.dart' show CorrectionPlan;
 import '../../acoustic/measurement_confidence.dart'
     show MeasurementConfidenceResult;
@@ -104,6 +107,29 @@ class ScoredCandidateSetArtifact extends ProToolArtifact {
 class OptimizedSelectionArtifact extends ProToolArtifact {
   final OptimizedSelection value;
   const OptimizedSelectionArtifact(this.value);
+}
+
+/// Result of [AcousticSelectionValidator.validate]. Carries the safety
+/// verdict and verified candidates — no DSP addresses, biquad coefficients,
+/// or hardware commands. [applyPermitted] must be true before any Apply step.
+class CandidateSafetyArtifact extends ProToolArtifact {
+  final CandidateSafetyResult value;
+  const CandidateSafetyArtifact(this.value);
+}
+
+/// A single point-in-time acoustic quality snapshot used as before/after input
+/// to [AcousticClosedLoopEvaluator.evaluate]. Carries no DSP values.
+class LoopSnapshotArtifact extends ProToolArtifact {
+  final LoopMeasurementSnapshot value;
+  const LoopSnapshotArtifact(this.value);
+}
+
+/// Result of [AcousticClosedLoopEvaluator.evaluate]. Carries the
+/// [ImprovementVerdict] and score delta — no DSP addresses, biquad
+/// coefficients, or hardware commands.
+class ClosedLoopResultArtifact extends ProToolArtifact {
+  final ClosedLoopResult value;
+  const ClosedLoopResultArtifact(this.value);
 }
 
 /// Session-scoped, in-memory store of tool artifacts, namespaced by projectId
