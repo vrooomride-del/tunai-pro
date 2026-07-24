@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/acoustic/acoustic_apply_engine.dart';
 import '../../core/acoustic/closed_loop_evaluator.dart';
 import '../../core/orchestrator/pro_guided_ai_controller.dart';
 import '../../core/orchestrator/pro_guided_ai_state.dart';
@@ -93,6 +94,21 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                             ref.read(guidedAiProvider.notifier).start(
                                   project: project,
                                   userGoal: _goalCtrl.text,
+                                  onApply: (pid, applyResult) async {
+                                    final channels =
+                                        project.tuningState.peqChannels
+                                            .map((ch) =>
+                                                ch.channelId ==
+                                                        applyResult.channelId
+                                                    ? applyResult.updatedChannel
+                                                    : ch)
+                                            .toList();
+                                    final updated = project.tuningState
+                                        .copyWith(peqChannels: channels);
+                                    await ref
+                                        .read(proProjectStoreProvider.notifier)
+                                        .updateTuningState(pid, updated);
+                                  },
                                 );
                           },
                     style: FilledButton.styleFrom(
@@ -173,8 +189,12 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   completedRecords: aiState.outcome.stepRecords,
                 ),
                 const SizedBox(height: 16),
-                if (aiState.loopVerdict != null)
+                if (aiState.applyResult != null)
+                  _ApplyResultCard(result: aiState.applyResult!),
+                if (aiState.loopVerdict != null) ...[
+                  const SizedBox(height: 12),
                   _VerdictCard(verdict: aiState.loopVerdict!),
+                ],
                 const SizedBox(height: 24),
                 _ResetButton(
                     onReset: () =>
@@ -417,6 +437,43 @@ class _VerdictCard extends StatelessWidget {
             style: TextStyle(
                 color: color, fontSize: 13, fontWeight: FontWeight.w500)),
       ],
+    );
+  }
+}
+
+class _ApplyResultCard extends StatelessWidget {
+  final TuningApplyResult result;
+  const _ApplyResultCard({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (result.status) {
+      TuningApplyStatus.ok => ('적용 완료', const Color(0xFF4CAF50)),
+      TuningApplyStatus.partiallyApplied => ('일부 적용', Colors.amber),
+      TuningApplyStatus.noSlotAvailable => ('슬롯 부족', Colors.redAccent),
+      TuningApplyStatus.notPermitted => ('적용 차단', Colors.redAccent),
+    };
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141414),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.tune, color: color, size: 16),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '$label · ${result.applied.length}밴드 적용'
+              '${result.skipped.isNotEmpty ? ' / ${result.skipped.length}밴드 스킵' : ''}',
+              style: TextStyle(color: color, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

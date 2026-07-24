@@ -3,6 +3,7 @@
 // TRUST BOUNDARY. No DSP value, no frequency, no gain, no Q at any level.
 // Only opaque references, lifecycle labels, and prose strings cross this layer.
 
+import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/closed_loop_evaluator.dart';
 import 'pro_explanation.dart';
 import 'pro_local_orchestrator_session.dart';
@@ -59,10 +60,15 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
   /// `improved`, `regressed`, or `inconclusive` — never a DSP number.
   final ImprovementVerdict? loopVerdict;
 
+  /// Non-null when the Apply Coordinator ran after safety validation.
+  /// Contains the applied/skipped band audit — no DSP register values.
+  final TuningApplyResult? applyResult;
+
   const ProGuidedAiCompleted({
     required this.outcome,
     required this.explanation,
     this.loopVerdict,
+    this.applyResult,
   });
 }
 

@@ -12,6 +12,8 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../acoustic/acoustic_apply_engine.dart';
+import '../acoustic/candidate_safety.dart';
 import '../acoustic/closed_loop_evaluator.dart';
 import '../pro_project.dart';
 import 'pro_acoustic_intent.dart';
@@ -30,7 +32,7 @@ import 'tools/adapters/candidate_safety_adapter.dart';
 import 'tools/adapters/candidate_scoring_adapter.dart';
 import 'tools/adapters/correction_plan_adapter.dart';
 import 'tools/adapters/impedance_analyze_adapter.dart';
-import 'tools/adapters/measurement_analyze_adapter.dart';
+import 'tools/adapters/parsed_measurement_adapter.dart';
 import 'tools/adapters/simulate_adapter.dart';
 import 'tools/pro_project_resolver.dart';
 import 'tools/pro_tool_artifact_store.dart';
@@ -61,6 +63,9 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   Future<void> start({
     required ProProject project,
     required String userGoal,
+    // Called after acousticValidateSafety completes to persist the apply result.
+    // Null → apply step is skipped (tests, offline mode).
+    Future<void> Function(String projectId, TuningApplyResult)? onApply,
   }) async {
     if (state is! ProGuidedAiIdle) return;
     state = const ProGuidedAiCloudCalling();
@@ -107,7 +112,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
 
     final adapters = _adapterOverrides ??
         [
-          const MeasurementAnalyzeAdapter(),
+          const ParsedMeasurementAdapter(),
           const AcousticClassifyAdapter(),
           const CorrectionPlanAdapter(),
           const CandidateGenerationAdapter(),
@@ -133,6 +138,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
 
     _orchestrator = ProLocalOrchestrator(registry);
     final completedSteps = <ProStepExecutionRecord>[];
+    TuningApplyResult? applyResult;
 
     await for (final event in _orchestrator!.run(plan, ctx)) {
       switch (event) {
@@ -145,6 +151,14 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           );
         case ProStepCompleted(:final record):
           completedSteps.add(record);
+          // Apply gate: runs after safety validation, before plan completion.
+          if (record.toolId == ProOrchestratorToolId.acousticValidateSafety &&
+              onApply != null) {
+            applyResult = _runApply(pid, store, record.outputRef, project);
+            if (applyResult != null) {
+              await onApply(pid, applyResult);
+            }
+          }
           state = ProGuidedAiExecuting(
             plan: plan,
             explanation: explanation,
@@ -162,6 +176,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             outcome: outcome,
             explanation: explanation,
             loopVerdict: _extractVerdict(pid, store, outcome.loopResultRef),
+            applyResult: applyResult,
           );
         case ProPlanFailed(:final outcome):
           state = ProGuidedAiFailed(outcome.terminationReason ?? '실행 실패');
@@ -195,6 +210,31 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Reads the CandidateSafetyArtifact at [safetyRef] and calls
+  /// AcousticApplyEngine on the project's first available PEQ channel.
+  /// Returns null when the artifact is missing, safety is blocked, or there is
+  /// no PEQ channel configured in the project.
+  static TuningApplyResult? _runApply(
+    String projectId,
+    ProToolArtifactStore store,
+    String safetyRef,
+    ProProject project,
+  ) {
+    if (!store.has(projectId, safetyRef)) return null;
+    CandidateSafetyResult safety;
+    try {
+      safety = store
+          .getTyped<CandidateSafetyArtifact>(projectId, safetyRef)
+          .value;
+    } catch (_) {
+      return null;
+    }
+    if (!safety.applyPermitted) return null;
+    final channel = project.tuningState.peqChannels.firstOrNull;
+    if (channel == null) return null;
+    return AcousticApplyEngine.apply(safety, channel);
   }
 }
 
