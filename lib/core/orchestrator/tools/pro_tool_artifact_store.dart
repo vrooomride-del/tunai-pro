@@ -1,5 +1,6 @@
 import '../../acoustic/acoustic_problem_classifier.dart'
     show AcousticClassificationResult;
+import '../../acoustic/candidate_optimizer.dart' show OptimizedSelection;
 import '../../acoustic/candidate_scoring.dart' show ScoredCandidateSet;
 import '../../acoustic/candidate_set.dart' show CandidateSet;
 import '../../acoustic/correction_plan.dart' show CorrectionPlan;
@@ -95,6 +96,14 @@ class CandidateSetArtifact extends ProToolArtifact {
 class ScoredCandidateSetArtifact extends ProToolArtifact {
   final ScoredCandidateSet value;
   const ScoredCandidateSetArtifact(this.value);
+}
+
+/// Result of [CandidateOptimizer.select]. Carries the subset of candidates
+/// chosen for application (by applicationOrder) and those rejected with
+/// reasons — no DSP addresses, biquad coefficients, or hardware commands.
+class OptimizedSelectionArtifact extends ProToolArtifact {
+  final OptimizedSelection value;
+  const OptimizedSelectionArtifact(this.value);
 }
 
 /// Session-scoped, in-memory store of tool artifacts, namespaced by projectId
