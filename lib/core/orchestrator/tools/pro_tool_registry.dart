@@ -114,6 +114,18 @@ extension ProToolAdapterSupport on ProToolAdapter {
     return step.inputRefs.single;
   }
 
+  /// The two input references a two-input tool expects (first, second).
+  /// Zero, one, or more than two refs throws [ProToolFailureCode.missingReference].
+  (String, String) pairedInputRefs(ProOrchestratorStep step) {
+    if (step.inputRefs.length != 2) {
+      throw ProToolException(
+          ProToolFailureCode.missingReference,
+          '${step.toolId.name} expects exactly two inputRefs, got '
+          '${step.inputRefs.length}.');
+    }
+    return (step.inputRefs[0], step.inputRefs[1]);
+  }
+
   /// A reference-only result. The resultId is a deterministic, opaque function
   /// of the outputRef (no DateTime/sequence), and evidence points at the stored
   /// artifact — no numbers ride along.

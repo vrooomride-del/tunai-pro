@@ -1,5 +1,6 @@
 import '../../acoustic/acoustic_problem_classifier.dart'
     show AcousticClassificationResult;
+import '../../acoustic/candidate_set.dart' show CandidateSet;
 import '../../acoustic/correction_plan.dart' show CorrectionPlan;
 import '../../acoustic/measurement_confidence.dart'
     show MeasurementConfidenceResult;
@@ -78,6 +79,14 @@ class ClassificationArtifact extends ProToolArtifact {
 class CorrectionPlanArtifact extends ProToolArtifact {
   final CorrectionPlan value;
   const CorrectionPlanArtifact(this.value);
+}
+
+/// Result of [CandidateGenerator.generate]. Carries PEQ proposals
+/// (frequencyHz/gainDb/q) — NOT safety-validated, no DSP addresses or biquad
+/// coefficients.
+class CandidateSetArtifact extends ProToolArtifact {
+  final CandidateSet value;
+  const CandidateSetArtifact(this.value);
 }
 
 /// Session-scoped, in-memory store of tool artifacts, namespaced by projectId
