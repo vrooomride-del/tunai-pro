@@ -56,7 +56,16 @@ enum ProOrchestratorToolId {
   simulate,
   protectionAnalyze,
   compareCandidates,
-  generateReport;
+  generateReport,
+
+  // Acoustic Engine pipeline tools — read-only, no DSP output (Phase 13).
+  acousticClassify,
+  acousticPlan,
+  acousticGenerateCandidates,
+  acousticScoreCandidates,
+  acousticOptimizeSelection,
+  acousticValidateSafety,
+  acousticEvaluateLoop;
 
   String toJson() => name;
 

@@ -1,3 +1,5 @@
+import '../../acoustic/acoustic_problem_classifier.dart'
+    show AcousticClassificationResult;
 import '../../acoustic/measurement_confidence.dart'
     show MeasurementConfidenceResult;
 import '../../acoustic/measurement_evidence.dart'
@@ -61,6 +63,13 @@ class SimulationArtifact extends ProToolArtifact {
   final List<double> curve;
   SimulationArtifact(List<double> curve)
       : curve = List<double>.unmodifiable(curve);
+}
+
+/// Result of [AcousticProblemClassifier.classify]. Carries only observation
+/// metadata — no DSP value, no biquad, no gain/Q/address.
+class ClassificationArtifact extends ProToolArtifact {
+  final AcousticClassificationResult value;
+  const ClassificationArtifact(this.value);
 }
 
 /// Session-scoped, in-memory store of tool artifacts, namespaced by projectId
