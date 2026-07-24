@@ -1,5 +1,6 @@
 import '../../acoustic/acoustic_problem_classifier.dart'
     show AcousticClassificationResult;
+import '../../acoustic/correction_plan.dart' show CorrectionPlan;
 import '../../acoustic/measurement_confidence.dart'
     show MeasurementConfidenceResult;
 import '../../acoustic/measurement_evidence.dart'
@@ -70,6 +71,13 @@ class SimulationArtifact extends ProToolArtifact {
 class ClassificationArtifact extends ProToolArtifact {
   final AcousticClassificationResult value;
   const ClassificationArtifact(this.value);
+}
+
+/// Result of [CorrectionPlanner.plan]. Carries correction dispositions and
+/// observation-region bounds — no DSP value, no biquad, no gain/Q/address.
+class CorrectionPlanArtifact extends ProToolArtifact {
+  final CorrectionPlan value;
+  const CorrectionPlanArtifact(this.value);
 }
 
 /// Session-scoped, in-memory store of tool artifacts, namespaced by projectId
