@@ -1,6 +1,20 @@
+import '../../acoustic/measurement_confidence.dart'
+    show MeasurementConfidenceResult;
+import '../../acoustic/measurement_evidence.dart'
+    show ImportedMeasurementEvidence;
 import '../../pro_acoustic_data.dart' show MeasurementParseResult;
 import '../../pro_impedance_analysis.dart' show ImpedanceAnalysisResult;
 import 'pro_tool_execution.dart';
+
+/// Whether confidence was actually computed for a measurement, and if not, why.
+/// `unsupportedDomain` is how ZMA (impedance) is honestly recorded — the
+/// acoustic confidence engine is never run on it, and no placeholder score is
+/// invented.
+enum MeasurementConfidenceEvaluation {
+  evaluated,
+  notEvaluated,
+  unsupportedDomain,
+}
 
 /// A local numeric result produced by a deterministic tool.
 ///
@@ -13,8 +27,27 @@ sealed class ProToolArtifact {
 }
 
 class MeasurementArtifact extends ProToolArtifact {
-  final MeasurementParseResult value;
-  const MeasurementArtifact(this.value);
+  /// The single parse of the original import (parsed exactly once).
+  final MeasurementParseResult parse;
+
+  /// The evidence describing what confidence this measurement can back.
+  final ImportedMeasurementEvidence evidence;
+
+  /// Whether confidence was computed, and the reason when it was not.
+  final MeasurementConfidenceEvaluation evaluation;
+  final String evaluationReason;
+
+  /// The confidence result — present only when [evaluation] is
+  /// `evaluated` (FRD). ZMA/impedance leaves this null with an explicit reason.
+  final MeasurementConfidenceResult? confidence;
+
+  const MeasurementArtifact({
+    required this.parse,
+    required this.evidence,
+    required this.evaluation,
+    this.evaluationReason = '',
+    this.confidence,
+  });
 }
 
 class ImpedanceArtifact extends ProToolArtifact {

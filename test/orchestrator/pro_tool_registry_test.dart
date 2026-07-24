@@ -162,51 +162,46 @@ void main() {
   });
 
   group('Artifact store', () {
-    final result =
-        ProMeasurementParser.parseFrd(fileName: 'a.frd', content: _frd);
+    // Store mechanics are exercised with a simple artifact type; the
+    // measurement artifact's richer shape is covered by the adapter tests.
+    SimulationArtifact art() => SimulationArtifact(const [1.0, 2.0, 3.0]);
 
     test('11. typed save/get round-trips', () {
       final s = ProToolArtifactStore();
-      s.put('p1', 'out1', MeasurementArtifact(result));
-      final got = s.getTyped<MeasurementArtifact>('p1', 'out1');
-      expect(got.value.status, result.status);
+      s.put('p1', 'out1', art());
+      final got = s.getTyped<SimulationArtifact>('p1', 'out1');
+      expect(got.curve, [1.0, 2.0, 3.0]);
     });
     test('12. same project + outputRef overwrite is refused', () {
       final s = ProToolArtifactStore();
-      s.put('p1', 'out1', MeasurementArtifact(result));
+      s.put('p1', 'out1', art());
       expect(
-          () => s.put('p1', 'out1', MeasurementArtifact(result)),
+          () => s.put('p1', 'out1', art()),
           throwsA(predicate((e) =>
               e is ProToolException &&
               e.code == ProToolFailureCode.outputRefConflict)));
     });
     test('13. a different project is a separate namespace', () {
       final s = ProToolArtifactStore();
-      s.put('p1', 'out1', MeasurementArtifact(result));
+      s.put('p1', 'out1', art());
       expect(
-          () => s.getTyped<MeasurementArtifact>('p2', 'out1'),
+          () => s.getTyped<SimulationArtifact>('p2', 'out1'),
           throwsA(predicate((e) =>
               e is ProToolException &&
               e.code == ProToolFailureCode.missingReference)));
-      // And p2 can reuse the same outputRef freely.
-      expect(() => s.put('p2', 'out1', MeasurementArtifact(result)),
-          returnsNormally);
+      expect(() => s.put('p2', 'out1', art()), returnsNormally);
     });
     test('14. wrong-type retrieval fails', () {
       final s = ProToolArtifactStore();
-      s.put('p1', 'out1', MeasurementArtifact(result));
+      s.put('p1', 'out1', art());
       expect(
-          () => s.getTyped<SimulationArtifact>('p1', 'out1'),
+          () => s.getTyped<ImpedanceArtifact>('p1', 'out1'),
           throwsA(predicate((e) =>
               e is ProToolException &&
               e.code == ProToolFailureCode.typeMismatch)));
     });
     test('15. artifacts expose no toJson (no cloud serialization path)', () {
-      // A sealed artifact has no toJson — numeric bodies cannot be serialized
-      // into a Cloud-facing result. (Compile-time guarantee; asserted for the
-      // record.)
-      final art = MeasurementArtifact(result);
-      expect(art, isA<ProToolArtifact>());
+      expect(art(), isA<ProToolArtifact>());
     });
   });
 
@@ -219,7 +214,7 @@ void main() {
       expect(outcome, isA<ProToolSuccess>());
 
       final stored =
-          env.store.getTyped<MeasurementArtifact>('p1', 'out1').value;
+          env.store.getTyped<MeasurementArtifact>('p1', 'out1').parse;
       final direct =
           ProMeasurementParser.parseFrd(fileName: 'a.frd', content: _frd);
       // ParsedMeasurementData.id/importedAt are timestamp-based; compare the
@@ -241,8 +236,8 @@ void main() {
           _step(ProOrchestratorToolId.measurementAnalyze,
               inputRefs: ['zma'], outputRef: 'oZma'),
           env.ctx);
-      final frd = env.store.getTyped<MeasurementArtifact>('p1', 'oFrd').value;
-      final zma = env.store.getTyped<MeasurementArtifact>('p1', 'oZma').value;
+      final frd = env.store.getTyped<MeasurementArtifact>('p1', 'oFrd').parse;
+      final zma = env.store.getTyped<MeasurementArtifact>('p1', 'oZma').parse;
       expect(frd.data?.fileType, AcousticFileType.frd);
       expect(zma.data?.fileType, AcousticFileType.zma);
     });

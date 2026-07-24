@@ -27,6 +27,21 @@ enum ProToolFailureCode {
   /// The measurement source is not a format this tool supports.
   unknownFormat,
 
+  /// The parser reported a failed parse.
+  parseFailure,
+
+  /// An FRD parse produced no usable magnitude data.
+  missingMagnitude,
+
+  /// A ZMA parse produced no usable impedance data.
+  missingImpedance,
+
+  /// Building the evidence model from a parse result failed an invariant.
+  evidenceConstructionFailure,
+
+  /// Computing confidence from the parsed spectrum threw.
+  confidenceCalculationFailure,
+
   /// The underlying deterministic engine threw.
   engineError,
 }
