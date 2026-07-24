@@ -1,5 +1,6 @@
 import '../../acoustic/acoustic_problem_classifier.dart'
     show AcousticClassificationResult;
+import '../../acoustic/candidate_scoring.dart' show ScoredCandidateSet;
 import '../../acoustic/candidate_set.dart' show CandidateSet;
 import '../../acoustic/correction_plan.dart' show CorrectionPlan;
 import '../../acoustic/measurement_confidence.dart'
@@ -87,6 +88,13 @@ class CorrectionPlanArtifact extends ProToolArtifact {
 class CandidateSetArtifact extends ProToolArtifact {
   final CandidateSet value;
   const CandidateSetArtifact(this.value);
+}
+
+/// Result of [CandidateScorer.score]. Carries ranked + graded candidates —
+/// no DSP addresses, biquad coefficients, or hardware commands.
+class ScoredCandidateSetArtifact extends ProToolArtifact {
+  final ScoredCandidateSet value;
+  const ScoredCandidateSetArtifact(this.value);
 }
 
 /// Session-scoped, in-memory store of tool artifacts, namespaced by projectId
