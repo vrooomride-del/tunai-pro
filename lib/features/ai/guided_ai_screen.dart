@@ -17,6 +17,8 @@ import '../../core/orchestrator/pro_local_orchestrator_session.dart';
 import '../../core/orchestrator/pro_orchestrator_plan.dart';
 import '../../core/orchestrator/pro_orchestrator_types.dart';
 import '../../core/pro_project_store.dart';
+import '../../core/spectrum_snapshot.dart';
+import '../mic/mic_measurement_controller.dart';
 
 class GuidedAiScreen extends ConsumerStatefulWidget {
   const GuidedAiScreen({super.key});
@@ -36,6 +38,25 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // When a mic measurement completes while awaiting closed-loop after data,
+    // convert the raw frequency response to FrequencyBin and forward to the
+    // AI controller. The map keys ('frequency', 'db') come from MicMeasurementController.
+    ref.listen(micMeasurementProvider, (prev, next) {
+      if (next.status != MeasurementStatus.done) return;
+      final aiState = ref.read(guidedAiProvider);
+      if (aiState is! ProGuidedAiCompleted) return;
+      if (aiState.loopPhase != ProClosedLoopPhase.awaitingMeasurement) return;
+      final bins = [
+        for (final m in next.frequencyResponse)
+          if (m['frequency'] != null && m['db'] != null)
+            FrequencyBin(frequency: m['frequency']!, magnitude: m['db']!),
+      ];
+      ref.read(guidedAiProvider.notifier).submitAfterMeasurementFromBins(
+            afterBins: bins,
+            afterRef: 'mic_after_${DateTime.now().millisecondsSinceEpoch}',
+          );
+    });
+
     final aiState = ref.watch(guidedAiProvider);
     final project = ref.watch(proProjectStoreProvider).currentProject;
 
@@ -95,14 +116,13 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                                   project: project,
                                   userGoal: _goalCtrl.text,
                                   onApply: (pid, applyResult) async {
-                                    final channels =
-                                        project.tuningState.peqChannels
-                                            .map((ch) =>
-                                                ch.channelId ==
-                                                        applyResult.channelId
-                                                    ? applyResult.updatedChannel
-                                                    : ch)
-                                            .toList();
+                                    final channels = project
+                                        .tuningState.peqChannels
+                                        .map((ch) => ch.channelId ==
+                                                applyResult.channelId
+                                            ? applyResult.updatedChannel
+                                            : ch)
+                                        .toList();
                                     final updated = project.tuningState
                                         .copyWith(peqChannels: channels);
                                     await ref
@@ -201,8 +221,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 ],
                 const SizedBox(height: 24),
                 _ResetButton(
-                    onReset: () =>
-                        ref.read(guidedAiProvider.notifier).reset()),
+                    onReset: () => ref.read(guidedAiProvider.notifier).reset()),
               ],
 
               // ── Failed ────────────────────────────────────────────────────
@@ -213,8 +232,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                     color: Colors.redAccent),
                 const SizedBox(height: 24),
                 _ResetButton(
-                    onReset: () =>
-                        ref.read(guidedAiProvider.notifier).reset()),
+                    onReset: () => ref.read(guidedAiProvider.notifier).reset()),
               ],
             ],
           ),
@@ -240,8 +258,7 @@ class _StatusCard extends StatelessWidget {
           Icon(icon, color: color, size: 20),
           const SizedBox(width: 12),
           Expanded(
-              child: Text(label,
-                  style: TextStyle(color: color, fontSize: 13))),
+              child: Text(label, style: TextStyle(color: color, fontSize: 13))),
         ],
       );
 }
@@ -258,8 +275,8 @@ class _ExplanationCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
         ),
         child: Text(explanation,
-            style:
-                const TextStyle(color: Colors.white70, fontSize: 13, height: 1.6)),
+            style: const TextStyle(
+                color: Colors.white70, fontSize: 13, height: 1.6)),
       );
 }
 
@@ -341,9 +358,7 @@ class _StepRow extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              step.objective.isNotEmpty
-                  ? step.objective
-                  : step.toolId.name,
+              step.objective.isNotEmpty ? step.objective : step.toolId.name,
               style: TextStyle(color: color, fontSize: 12),
             ),
           ),
@@ -515,8 +530,8 @@ class _AwaitingMeasurementCard extends StatelessWidget {
               padding: EdgeInsets.only(left: 22),
               child: Text(
                 '측정 앱에서 스피커를 다시 측정한 후 결과를 불러오세요.',
-                style: TextStyle(
-                    color: Colors.white30, fontSize: 11, height: 1.4),
+                style:
+                    TextStyle(color: Colors.white30, fontSize: 11, height: 1.4),
               ),
             ),
           ],

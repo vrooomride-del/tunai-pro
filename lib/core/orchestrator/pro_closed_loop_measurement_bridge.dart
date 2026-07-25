@@ -13,6 +13,7 @@
 import '../acoustic/closed_loop_evaluator.dart';
 import '../acoustic/measurement_confidence.dart';
 import '../pro_response_error.dart';
+import '../spectrum_snapshot.dart';
 import 'tools/pro_tool_artifact_store.dart';
 
 abstract final class ProClosedLoopMeasurementBridge {
@@ -52,12 +53,70 @@ abstract final class ProClosedLoopMeasurementBridge {
     // No magnitude → confidence is insufficient regardless of artifact field.
     final confidenceStatus = points.isEmpty
         ? ConfidenceStatus.insufficientEvidence
-        : (artifact.confidence?.status ?? ConfidenceStatus.insufficientEvidence);
+        : (artifact.confidence?.status ??
+            ConfidenceStatus.insufficientEvidence);
 
     return LoopMeasurementSnapshot(
       measurementRef: measurementRef,
       scoreResult: scoreResult,
       confidenceStatus: confidenceStatus,
+    );
+  }
+
+  /// Converts a list of [FrequencyBin]s (e.g. from a live mic measurement)
+  /// to a [LoopMeasurementSnapshot] for closed-loop comparison.
+  ///
+  /// Confidence is [ConfidenceStatus.valid] when [bins] has ≥ 10 points
+  /// (sufficient for a meaningful flatness score); [ConfidenceStatus.insufficientEvidence]
+  /// otherwise — causing [AcousticClosedLoopEvaluator] to return inconclusive.
+  static LoopMeasurementSnapshot snapshotFromBins(
+    List<FrequencyBin> bins,
+    String measurementRef,
+  ) {
+    final ResponseErrorResult scoreResult;
+    if (bins.isEmpty) {
+      scoreResult = const ResponseErrorResult(
+        rmsDb: 0.0,
+        maxDeviationDb: 0.0,
+        maxDeviationHz: 0.0,
+        weightedRmsDb: 0.0,
+        score: 0.0,
+      );
+    } else {
+      scoreResult = ProResponseError.analyze(
+        freqs: [for (final b in bins) b.frequency],
+        responseDb: [for (final b in bins) b.magnitude],
+        targetDb: List.filled(bins.length, 0.0),
+      );
+    }
+    final confidenceStatus = bins.length >= 10
+        ? ConfidenceStatus.valid
+        : ConfidenceStatus.insufficientEvidence;
+    return LoopMeasurementSnapshot(
+      measurementRef: measurementRef,
+      scoreResult: scoreResult,
+      confidenceStatus: confidenceStatus,
+    );
+  }
+
+  /// Evaluates before (artifact) vs after (live [FrequencyBin] list).
+  ///
+  /// Returns null when [afterBins] is null or empty — the after measurement
+  /// has not yet arrived or contains no data. No fake verdict is produced.
+  static ClosedLoopResult? evaluateWithBins({
+    required MeasurementArtifact beforeArtifact,
+    required String beforeRef,
+    required List<FrequencyBin>? afterBins,
+    required String afterRef,
+  }) {
+    if (afterBins == null || afterBins.isEmpty) return null;
+    final before = snapshotFrom(beforeArtifact, beforeRef);
+    final after = snapshotFromBins(afterBins, afterRef);
+    return AcousticClosedLoopEvaluator.evaluate(
+      before,
+      after,
+      ClosedLoopPolicy.proProvisional(),
+      evidenceRefs: [beforeRef, afterRef],
     );
   }
 
