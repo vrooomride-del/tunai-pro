@@ -69,7 +69,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
         ImportTab(projectId: projectId),
         TargetTab(projectId: projectId),
         OptimizerTab(projectId: projectId),
-        const GuidedAiScreen(),
+        GuidedAiScreen(projectId: projectId),
         PeqTab(
             projectId: projectId,
             usbiBackend: _usbiBackend,

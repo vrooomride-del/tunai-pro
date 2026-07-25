@@ -21,7 +21,8 @@ import '../../core/spectrum_snapshot.dart';
 import '../mic/mic_measurement_controller.dart';
 
 class GuidedAiScreen extends ConsumerStatefulWidget {
-  const GuidedAiScreen({super.key});
+  final String projectId;
+  const GuidedAiScreen({super.key, required this.projectId});
 
   @override
   ConsumerState<GuidedAiScreen> createState() => _GuidedAiScreenState();
@@ -57,8 +58,16 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
           );
     });
 
+    // Resolve the project the same way ProjectStatusBar does: look up by
+    // widget.projectId in the projects list. This avoids depending on
+    // currentProjectId, which may not be in sync when opening via the
+    // Demo Workstation or New Project paths.
     final aiState = ref.watch(guidedAiProvider);
-    final project = ref.watch(proProjectStoreProvider).currentProject;
+    final project = ref
+        .watch(proProjectStoreProvider)
+        .projects
+        .where((p) => p.id == widget.projectId)
+        .firstOrNull;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),

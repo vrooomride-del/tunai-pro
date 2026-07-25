@@ -91,7 +91,7 @@ Widget _screen(ProGuidedAiState initialState) => ProviderScope(
           (ref) => _FakeGuidedAiController(initialState),
         ),
       ],
-      child: const MaterialApp(home: GuidedAiScreen()),
+      child: const MaterialApp(home: GuidedAiScreen(projectId: 'test-proj')),
     );
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -171,8 +171,7 @@ void main() {
       expect(find.text('스피커 적용 완료'), findsOneWidget);
     });
 
-    testWidgets('"개선 확인을 위한 재측정을 기다리는 중" subtitle is shown',
-        (tester) async {
+    testWidgets('"개선 확인을 위한 재측정을 기다리는 중" subtitle is shown', (tester) async {
       final state = _completedState(
         applyResult: _stubApplyResult,
         loopPhase: ProClosedLoopPhase.awaitingMeasurement,
@@ -262,7 +261,8 @@ void main() {
       const awaitingSubtitle = '개선 확인을 위한 재측정을 기다리는 중';
 
       for (final term in dspTerms) {
-        expect(awaitingTitle.toLowerCase(), isNot(contains(term.toLowerCase())));
+        expect(
+            awaitingTitle.toLowerCase(), isNot(contains(term.toLowerCase())));
         expect(awaitingSubtitle.toLowerCase(),
             isNot(contains(term.toLowerCase())));
       }
