@@ -31,8 +31,11 @@ dependencies:
   # 차트 (Bode plot, 주파수 응답)
   fl_chart: ^0.68.0
 
-  # 파일 선택 (SCF 교정 파일)
+  # 파일 선택 (SCF 교정 파일, FRD/ZMA import)
   file_picker: ^8.0.0
+
+  # OS 파일 drag-and-drop 수신 (Windows / macOS desktop)
+  desktop_drop: ^0.4.4
 
   # 오디오 분석 (UMIK-1)
   fftea: ^1.5.0+1
