@@ -344,6 +344,99 @@ void main() {
     });
   });
 
+  // ── Pipeline verification: 2-sweep evidence ──────────────────────────────
+
+  // fallingTrend FRD: 11 bins at ~1-octave spacing, exactly -2 dB/oct from
+  // 20 Hz to 20 kHz.  Trend features are ALWAYS quality=confident (no
+  // minimumBinsPerFeature gate), so the pipeline produces a candidate when
+  // measurement confidence is sufficient (≥2 sweeps for repeatability).
+  const _frdTrend = '20 0.0 0\n'
+      '40 -2.0 0\n'
+      '80 -4.0 0\n'
+      '160 -6.0 0\n'
+      '315 -8.0 0\n'
+      '630 -10.0 0\n'
+      '1250 -12.0 0\n'
+      '2500 -14.0 0\n'
+      '5000 -16.0 0\n'
+      '10000 -18.0 0\n'
+      '20000 -20.0 0';
+
+  group('verification: 2-sweep evidence', () {
+    // Supplies spectraDb:[mags, mags] by setting sweepCount=2 on the adapter.
+    // Two identical sweeps → repeatability.score=1.0 → grade=excellent →
+    // correctableAllowed → fallingTrend (confident) → cautiousBroadCorrection
+    // → correctable → candidate generated.
+    // Proves the end-to-end pipeline is live; does NOT represent a real
+    // multi-sweep session.
+    ProToolArtifactStore _chain2(String frdContent, String candsRef) {
+      final resolver = InMemoryProToolReferenceResolver();
+      final store = ProToolArtifactStore();
+      final ctx = _ctx(resolver, store);
+      resolver.put(
+        _project,
+        'src:frd',
+        ProMeasurementSource(
+            fileName: 'test.frd',
+            content: frdContent,
+            format: AcousticFileType.frd),
+      );
+      const MeasurementAnalyzeAdapter(sweepCount: 2)
+          .run(ctx, _step('measurementAnalyze', ['src:frd'], 'meas:1'));
+      const AcousticClassifyAdapter()
+          .run(ctx, _step('acousticClassify', ['meas:1'], 'class:1'));
+      const CorrectionPlanAdapter()
+          .run(ctx, _step('acousticPlan', ['class:1'], 'plan:1'));
+      const CandidateGenerationAdapter().run(ctx,
+          _step('acousticGenerateCandidates', ['plan:1', 'class:1'], candsRef));
+      return store;
+    }
+
+    test('2-sweep trend FRD → CandidateSetStatus.ok', () {
+      final store = _chain2(_frdTrend, 'cands:1');
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      expect(cs.status, CandidateSetStatus.ok);
+    });
+
+    test('2-sweep trend FRD → candidates non-empty', () {
+      final store = _chain2(_frdTrend, 'cands:1');
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      expect(cs.candidates, isNotEmpty);
+    });
+
+    test('2-sweep → all candidates have negative gainDb (cut only)', () {
+      final store = _chain2(_frdTrend, 'cands:1');
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      for (final c in cs.candidates) {
+        expect(c.gainDb, isNegative,
+            reason: 'candidate ${c.candidateId} must be a cut');
+      }
+    });
+
+    test('2-sweep → no DSP-forbidden fields in candidate JSON', () {
+      final store = _chain2(_frdTrend, 'cands:1');
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      for (final c in cs.candidates) {
+        final j = c.toJson();
+        expect(j.containsKey('biquad'), isFalse);
+        expect(j.containsKey('address'), isFalse);
+        expect(j.containsKey('register'), isFalse);
+      }
+    });
+
+    test('1-sweep trend FRD → 0 candidates (policy gate); 2-sweep → candidates', () {
+      // _chain uses default sweepCount=1 → repeatability unavailable → 0 cands.
+      final store1 = _chain(_frdTrend, 'cands:1');
+      final store2 = _chain2(_frdTrend, 'cands:1');
+      final cs1 = store1.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      final cs2 = store2.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      expect(cs1.candidates, isEmpty,
+          reason: 'single sweep must yield 0 candidates (policy gate)');
+      expect(cs2.candidates, isNotEmpty,
+          reason: '2-sweep must yield candidates (pipeline verification)');
+    });
+  });
+
   // ── Determinism ───────────────────────────────────────────────────────────
 
   test('same FRD → same candidate status and count', () {

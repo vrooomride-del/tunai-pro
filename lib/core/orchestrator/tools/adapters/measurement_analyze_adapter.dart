@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../../acoustic/measurement_confidence.dart';
 import '../../../acoustic/measurement_evidence.dart';
@@ -23,7 +24,15 @@ import '../pro_tool_registry.dart';
 /// evidence, confidence, evaluation) is stored in one [MeasurementArtifact] at
 /// the step's outputRef; the Cloud-facing result carries only references.
 class MeasurementAnalyzeAdapter implements ProToolAdapter {
-  const MeasurementAnalyzeAdapter();
+  /// Number of synthetic sweep copies placed in [spectraDb].
+  ///
+  /// Production default is 1 (a single imported FRD). Set to ≥2 only in
+  /// tests that need to satisfy the [proProvisional] repeatability requirement
+  /// without a real multi-sweep measurement session.
+  @visibleForTesting
+  final int sweepCount;
+
+  const MeasurementAnalyzeAdapter({this.sweepCount = 1});
 
   /// Version prefix for the import content hash. Deliberately distinct from the
   /// enclosure hash prefix — this identifies an original measurement FILE by its
@@ -156,7 +165,7 @@ class MeasurementAnalyzeAdapter implements ProToolAdapter {
       confidence = MeasurementConfidenceEngine.evaluate(
         MeasurementConfidenceMetrics(
           frequencies: freqs,
-          spectraDb: [mags],
+          spectraDb: List.filled(sweepCount, mags),
           minBandHz: freqs.isEmpty ? 1 : freqs.first,
           maxBandHz: freqs.isEmpty ? 2 : freqs.last,
         ),
