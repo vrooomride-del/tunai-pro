@@ -450,30 +450,78 @@ class _LoopPhaseCard extends StatelessWidget {
   const _LoopPhaseCard({required this.phase});
 
   @override
-  Widget build(BuildContext context) {
-    final (icon, label, color) = switch (phase) {
-      ProClosedLoopPhase.awaitingMeasurement => (
-          Icons.sensors,
-          '재측정 대기 중 — Closed Loop 비교를 위해 다시 측정하세요.',
-          Colors.white54,
+  Widget build(BuildContext context) => switch (phase) {
+        ProClosedLoopPhase.awaitingMeasurement =>
+          const _AwaitingMeasurementCard(),
+        ProClosedLoopPhase.evaluated => const Row(
+            children: [
+              Icon(Icons.loop, color: Color(0xFF4CAF50), size: 16),
+              SizedBox(width: 8),
+              Text('Closed Loop 평가 완료',
+                  style: TextStyle(
+                      color: Color(0xFF4CAF50),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500)),
+            ],
+          ),
+      };
+}
+
+class _AwaitingMeasurementCard extends StatelessWidget {
+  const _AwaitingMeasurementCard();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF141414),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white12),
         ),
-      ProClosedLoopPhase.evaluated => (
-          Icons.loop,
-          'Closed Loop 평가 완료',
-          const Color(0xFF4CAF50),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.check_circle_outline,
+                    color: Color(0xFF4CAF50), size: 15),
+                SizedBox(width: 8),
+                Text(
+                  '스피커 적용 완료',
+                  style: TextStyle(
+                      color: Color(0xFF4CAF50),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.sensors, color: Colors.white38, size: 14),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '개선 확인을 위한 재측정을 기다리는 중',
+                    style: TextStyle(
+                        color: Colors.white54, fontSize: 12, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 6),
+            Padding(
+              padding: EdgeInsets.only(left: 22),
+              child: Text(
+                '측정 앱에서 스피커를 다시 측정한 후 결과를 불러오세요.',
+                style: TextStyle(
+                    color: Colors.white30, fontSize: 11, height: 1.4),
+              ),
+            ),
+          ],
         ),
-    };
-    return Row(
-      children: [
-        Icon(icon, color: color, size: 16),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(label,
-              style: TextStyle(color: color, fontSize: 12, height: 1.4)),
-        ),
-      ],
-    );
-  }
+      );
 }
 
 class _ApplyResultCard extends StatelessWidget {
