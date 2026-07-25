@@ -37,6 +37,7 @@ import 'tools/adapters/simulate_adapter.dart';
 import 'tools/pro_project_resolver.dart';
 import 'tools/pro_tool_artifact_store.dart';
 import 'tools/pro_tool_registry.dart';
+import 'pro_closed_loop_measurement_bridge.dart';
 
 final guidedAiProvider =
     StateNotifierProvider.autoDispose<ProGuidedAiController, ProGuidedAiState>(
@@ -50,6 +51,11 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   final List<ProToolAdapter>? _adapterOverrides;
 
   ProLocalOrchestrator? _orchestrator;
+
+  // Preserved after a session completes so submitAfterMeasurement can
+  // retrieve the before-measurement artifact for closed-loop comparison.
+  ProToolArtifactStore? _sessionStore;
+  String? _sessionProjectId;
 
   ProGuidedAiController({
     ProOrchestrateService? service,
@@ -199,13 +205,61 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           state = ProGuidedAiFailed(outcome.terminationReason ?? '사용자 취소');
       }
     }
+    // Preserve store so submitAfterMeasurement can retrieve before artifacts.
+    _sessionStore = store;
+    _sessionProjectId = pid;
   }
 
   void confirm(String stepId) => _orchestrator?.confirm(stepId);
   void cancel(String stepId) => _orchestrator?.cancel(stepId);
 
+  /// Receives the after-measurement artifact and transitions the state from
+  /// [ProClosedLoopPhase.awaitingMeasurement] to [ProClosedLoopPhase.evaluated].
+  ///
+  /// No-op unless the current state is [ProGuidedAiCompleted] with
+  /// [ProClosedLoopPhase.awaitingMeasurement] and a valid before-measurement ref.
+  /// No fake verdict is ever produced.
+  void submitAfterMeasurement({
+    required MeasurementArtifact afterArtifact,
+    required String afterRef,
+  }) {
+    final current = state;
+    if (current is! ProGuidedAiCompleted) return;
+    if (current.loopPhase != ProClosedLoopPhase.awaitingMeasurement) return;
+    final beforeRef = current.beforeMeasurementRef;
+    final store = _sessionStore;
+    final pid = _sessionProjectId;
+    if (beforeRef == null || store == null || pid == null) return;
+
+    MeasurementArtifact beforeArtifact;
+    try {
+      beforeArtifact = store.getTyped<MeasurementArtifact>(pid, beforeRef);
+    } catch (_) {
+      return;
+    }
+
+    final result = ProClosedLoopMeasurementBridge.evaluate(
+      beforeArtifact: beforeArtifact,
+      beforeRef: beforeRef,
+      afterArtifact: afterArtifact,
+      afterRef: afterRef,
+    );
+    if (result == null) return;
+
+    state = ProGuidedAiCompleted(
+      outcome: current.outcome,
+      explanation: current.explanation,
+      loopVerdict: result.verdict,
+      applyResult: current.applyResult,
+      beforeMeasurementRef: beforeRef,
+      loopPhase: ProClosedLoopPhase.evaluated,
+    );
+  }
+
   void reset() {
     _orchestrator = null;
+    _sessionStore = null;
+    _sessionProjectId = null;
     state = const ProGuidedAiIdle();
   }
 
