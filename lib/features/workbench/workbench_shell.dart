@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'project_status_bar.dart';
 import 'tabs/project_tab.dart';
 import 'tabs/workbench_tabs.dart';
+import '../ai/guided_ai_screen.dart';
 import '../../core/pro_project_store.dart';
 import '../../core/pro_measurement_store.dart';
 import '../../shared/pro_widgets.dart';
@@ -47,6 +48,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     _TabDef('Import', Icons.folder_open_outlined),
     _TabDef('Target', Icons.track_changes_outlined),
     _TabDef('Optimizer', Icons.auto_awesome_outlined),
+    _TabDef('Guided AI', Icons.psychology_outlined),
     _TabDef('PEQ', Icons.tune_outlined),
     _TabDef('XO', Icons.device_hub_outlined),
     _TabDef('Phase', Icons.timeline_outlined),
@@ -67,9 +69,13 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
         ImportTab(projectId: projectId),
         TargetTab(projectId: projectId),
         OptimizerTab(projectId: projectId),
-        PeqTab(projectId: projectId, usbiBackend: _usbiBackend,
-          isWindowsPlatform: () => Platform.isWindows,
-          deviceOpen: _usbiDeviceOpen, dspWritesDisabled: _dspWritesDisabled),
+        const GuidedAiScreen(),
+        PeqTab(
+            projectId: projectId,
+            usbiBackend: _usbiBackend,
+            isWindowsPlatform: () => Platform.isWindows,
+            deviceOpen: _usbiDeviceOpen,
+            dspWritesDisabled: _dspWritesDisabled),
         XoTab(
             projectId: projectId,
             usbiBackend: _usbiBackend,
