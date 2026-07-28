@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/acoustic/acoustic_apply_engine.dart';
 import '../../core/acoustic/closed_loop_evaluator.dart';
+import '../../core/orchestrator/guided_ai_project_apply.dart';
 import '../../core/orchestrator/pro_guided_ai_controller.dart';
 import '../../core/orchestrator/pro_guided_ai_state.dart';
 import '../../core/orchestrator/pro_local_orchestrator_session.dart';
@@ -125,18 +126,28 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                                   project: project,
                                   userGoal: _goalCtrl.text,
                                   onApply: (pid, applyResult) async {
-                                    final channels = project
-                                        .tuningState.peqChannels
-                                        .map((ch) => ch.channelId ==
-                                                applyResult.channelId
-                                            ? applyResult.updatedChannel
-                                            : ch)
-                                        .toList();
-                                    final updated = project.tuningState
-                                        .copyWith(peqChannels: channels);
+                                    // Read the latest project at apply time —
+                                    // not the stale closure captured at
+                                    // button-press time.
+                                    final latestProject = ref
+                                        .read(proProjectStoreProvider)
+                                        .projects
+                                        .where((p) => p.id == pid)
+                                        .firstOrNull;
+                                    final op = GuidedAiProjectApply.apply(
+                                      projectId: pid,
+                                      applyResult: applyResult,
+                                      latestProject: latestProject,
+                                    );
+                                    if (!op.wrote ||
+                                        op.updatedProject == null) {
+                                      return;
+                                    }
                                     await ref
                                         .read(proProjectStoreProvider.notifier)
-                                        .updateTuningState(pid, updated);
+                                        .updateTuningState(
+                                            pid,
+                                            op.updatedProject!.tuningState);
                                   },
                                 );
                           },

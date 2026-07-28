@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/candidate_safety.dart';
+import '../pro_tuning_data.dart';
 import '../acoustic/closed_loop_evaluator.dart';
 import '../pro_project.dart';
 import '../spectrum_snapshot.dart';
@@ -161,7 +162,16 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           // Apply gate: runs after safety validation, before plan completion.
           if (record.toolId == ProOrchestratorToolId.acousticValidateSafety &&
               onApply != null) {
-            applyResult = _runApply(pid, store, record.outputRef, project);
+            // Identify which driver channel was analyzed so the apply targets
+            // the correct PEQ channel in multi-channel projects.
+            final analyzedChannelId = plan.steps
+                .where(
+                    (s) => s.toolId == ProOrchestratorToolId.measurementAnalyze)
+                .firstOrNull
+                ?.inputRefs
+                .firstOrNull;
+            applyResult = _runApply(pid, store, record.outputRef, project,
+                analyzedChannelId: analyzedChannelId);
             if (applyResult != null) {
               await onApply(pid, applyResult);
             }
@@ -327,15 +337,22 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   }
 
   /// Reads the CandidateSafetyArtifact at [safetyRef] and calls
-  /// AcousticApplyEngine on the project's first available PEQ channel.
-  /// Returns null when the artifact is missing, safety is blocked, or there is
-  /// no PEQ channel configured in the project.
+  /// AcousticApplyEngine on the matching PEQ channel.
+  ///
+  /// When [analyzedChannelId] is provided, the PEQ channel whose [channelId]
+  /// matches is used. If no match is found, returns null — no fallback to the
+  /// first channel, because applying to the wrong channel is a silent
+  /// data-integrity error in multi-channel projects.
+  ///
+  /// Returns null when the artifact is missing, safety is blocked, or the
+  /// target channel cannot be resolved.
   static TuningApplyResult? _runApply(
     String projectId,
     ProToolArtifactStore store,
     String safetyRef,
-    ProProject project,
-  ) {
+    ProProject project, {
+    String? analyzedChannelId,
+  }) {
     if (!store.has(projectId, safetyRef)) return null;
     CandidateSafetyResult safety;
     try {
@@ -345,7 +362,14 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       return null;
     }
     if (!safety.applyPermitted) return null;
-    final channel = project.tuningState.peqChannels.firstOrNull;
+    final PeqChannelState? channel;
+    if (analyzedChannelId != null) {
+      channel = project.tuningState.peqChannels
+          .where((ch) => ch.channelId == analyzedChannelId)
+          .firstOrNull;
+    } else {
+      channel = project.tuningState.peqChannels.firstOrNull;
+    }
     if (channel == null) return null;
     return AcousticApplyEngine.apply(safety, channel);
   }
