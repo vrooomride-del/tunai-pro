@@ -4,6 +4,8 @@
 
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
 enum DriverRole {
@@ -443,6 +445,8 @@ class AcousticFileRef {
 /// serves as the duplicate-detection key — two entries with the same hash are
 /// not independent evidence and one is discarded.
 class FrdSweepEntry {
+  static const String contentHashPrefix = 'measurement_import_content_v1';
+
   final String fileName;
   final String content;
   final String contentHash;
@@ -452,6 +456,13 @@ class FrdSweepEntry {
     required this.content,
     required this.contentHash,
   });
+
+  factory FrdSweepEntry.fromRawContent(String fileName, String content) {
+    final hash = sha256
+        .convert(utf8.encode('$contentHashPrefix|$content'))
+        .toString();
+    return FrdSweepEntry(fileName: fileName, content: content, contentHash: hash);
+  }
 
   Map<String, dynamic> toJson() => {
         'fileName': fileName,

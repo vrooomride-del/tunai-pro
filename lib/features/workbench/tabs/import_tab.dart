@@ -207,6 +207,81 @@ class _ImportTabState extends ConsumerState<ImportTab> {
     }
   }
 
+  Future<void> _addRepeatSweep(DriverChannel ch) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['frd', 'txt', 'csv'],
+      allowMultiple: false,
+      withData: false,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final pf = result.files.first;
+    final path = pf.path;
+    if (path == null) return;
+
+    String content;
+    try {
+      content = await File(path).readAsString();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('읽기 실패: ${pf.name} — ${_friendlyError(e)}'),
+          backgroundColor: kProRed.withValues(alpha: 0.85),
+        ));
+      }
+      return;
+    }
+
+    final parsed = ProMeasurementParser.parseFrd(
+        fileName: pf.name, content: content);
+    if (parsed.status == MeasurementParseStatus.failed ||
+        parsed.data == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'Parse failed: ${pf.name} — ${parsed.errors.firstOrNull ?? "unknown error"}'),
+          backgroundColor: kProRed.withValues(alpha: 0.85),
+        ));
+      }
+      return;
+    }
+
+    final entry = FrdSweepEntry.fromRawContent(pf.name, content);
+    final acoustic = _acoustic;
+    final updatedChannels = acoustic.driverChannels.map((c) {
+      if (c.id != ch.id) return c;
+      return c.copyWith(
+          additionalFrdSweeps: [...c.additionalFrdSweeps, entry]);
+    }).toList();
+
+    await ref.read(proProjectStoreProvider.notifier).updateAcousticState(
+          widget.projectId,
+          acoustic.copyWith(driverChannels: updatedChannels),
+        );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            'Repeat sweep added: ${pf.name}  (${parsed.data!.pointCount} pts)'),
+        duration: const Duration(seconds: 3),
+      ));
+    }
+  }
+
+  Future<void> _removeRepeatSweep(DriverChannel ch, int index) async {
+    final acoustic = _acoustic;
+    final updatedChannels = acoustic.driverChannels.map((c) {
+      if (c.id != ch.id) return c;
+      final sweeps = [...c.additionalFrdSweeps]..removeAt(index);
+      return c.copyWith(additionalFrdSweeps: sweeps);
+    }).toList();
+
+    await ref.read(proProjectStoreProvider.notifier).updateAcousticState(
+          widget.projectId,
+          acoustic.copyWith(driverChannels: updatedChannels),
+        );
+  }
+
   Future<void> _removeDriver(DriverChannel ch, bool removeFrd) async {
     final acoustic = _acoustic;
     AcousticFileRef? fileToRemove;
@@ -460,6 +535,8 @@ class _ImportTabState extends ConsumerState<ImportTab> {
                     onRemoveZma: () => _removeDriver(ch, false),
                     onDropFiles: (detail) =>
                         _handleDrop(detail, cardChannel: ch),
+                    onAddRepeatSweep: () => _addRepeatSweep(ch),
+                    onRemoveRepeatSweep: (i) => _removeRepeatSweep(ch, i),
                   )),
 
               // Empty state
@@ -486,7 +563,7 @@ class _ImportTabState extends ConsumerState<ImportTab> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.upload_file_outlined,
+                      const Icon(Icons.upload_file_outlined,
                           color: kProAccent, size: 40),
                       const SizedBox(height: 12),
                       Text('FRD / ZMA 파일을 여기에 놓으세요',
@@ -509,12 +586,16 @@ class _DroppableDriverCard extends StatefulWidget {
   final VoidCallback onRemoveFrd;
   final VoidCallback onRemoveZma;
   final void Function(DropDoneDetails) onDropFiles;
+  final VoidCallback onAddRepeatSweep;
+  final void Function(int) onRemoveRepeatSweep;
 
   const _DroppableDriverCard({
     required this.channel,
     required this.onRemoveFrd,
     required this.onRemoveZma,
     required this.onDropFiles,
+    required this.onAddRepeatSweep,
+    required this.onRemoveRepeatSweep,
   });
 
   @override
@@ -547,6 +628,8 @@ class _DroppableDriverCardState extends State<_DroppableDriverCard> {
           channel: widget.channel,
           onRemoveFrd: widget.onRemoveFrd,
           onRemoveZma: widget.onRemoveZma,
+          onAddRepeatSweep: widget.onAddRepeatSweep,
+          onRemoveRepeatSweep: widget.onRemoveRepeatSweep,
         ),
       ),
     );
@@ -1388,11 +1471,15 @@ class _DriverDataCard extends StatelessWidget {
   final DriverChannel channel;
   final VoidCallback onRemoveFrd;
   final VoidCallback onRemoveZma;
+  final VoidCallback onAddRepeatSweep;
+  final void Function(int) onRemoveRepeatSweep;
 
   const _DriverDataCard({
     required this.channel,
     required this.onRemoveFrd,
     required this.onRemoveZma,
+    required this.onAddRepeatSweep,
+    required this.onRemoveRepeatSweep,
   });
 
   Color _statusColor(MeasurementStatus s) => switch (s) {
@@ -1461,7 +1548,90 @@ class _DriverDataCard extends StatelessWidget {
             ),
           ),
         ]),
+        if (channel.hasParsedFrd) ...[
+          const SizedBox(height: 10),
+          _RepeatSweepsSection(
+            sweeps: channel.additionalFrdSweeps,
+            onAdd: onAddRepeatSweep,
+            onRemove: onRemoveRepeatSweep,
+          ),
+        ],
       ]),
+    );
+  }
+}
+
+// ── Repeat sweeps section (inside DriverDataCard) ─────────────────────────────
+
+class _RepeatSweepsSection extends StatelessWidget {
+  final List<FrdSweepEntry> sweeps;
+  final VoidCallback onAdd;
+  final void Function(int) onRemove;
+
+  const _RepeatSweepsSection({
+    required this.sweeps,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Text(
+            sweeps.isEmpty
+                ? 'REPEAT SWEEPS'
+                : 'REPEAT SWEEPS (${sweeps.length})',
+            style: proLabel(size: 8, spacing: 1.2),
+          ),
+          const Spacer(),
+          GestureDetector(
+            onTap: onAdd,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.add, color: kProAccent, size: 11),
+              const SizedBox(width: 3),
+              Text('Add Repeat Sweep',
+                  style: TextStyle(
+                      color: kProAccent.withValues(alpha: 0.8), fontSize: 9)),
+            ]),
+          ),
+        ]),
+        if (sweeps.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          for (var i = 0; i < sweeps.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Row(children: [
+                const Icon(Icons.fiber_manual_record,
+                    color: kProAccent, size: 6),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    sweeps[i].fileName,
+                    style: proValue(size: 9, color: Colors.white60),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => onRemove(i),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4),
+                    child: Icon(Icons.close,
+                        color: Colors.white24, size: 11),
+                  ),
+                ),
+              ]),
+            ),
+        ] else ...[
+          const SizedBox(height: 4),
+          Text(
+            'Add a second measurement of the same driver to enable repeatability scoring.',
+            style: proSubtitle(size: 9),
+          ),
+        ],
+      ],
     );
   }
 }

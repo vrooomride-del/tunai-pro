@@ -5,13 +5,18 @@ import 'package:crypto/crypto.dart';
 import '../../../acoustic/measurement_confidence.dart';
 import '../../../acoustic/measurement_evidence.dart';
 import '../../../pro_acoustic_data.dart'
-    show MeasurementParseResult, MeasurementParseStatus;
+    show
+        FrdSweepEntry,
+        MeasurementParseResult,
+        MeasurementParseStatus;
+import '../../../pro_measurement_parser.dart';
 import '../../pro_orchestrator_plan.dart';
 import '../../pro_orchestrator_result.dart';
 import '../../pro_orchestrator_types.dart';
 import '../pro_tool_artifact_store.dart';
 import '../pro_tool_execution.dart';
 import '../pro_tool_registry.dart';
+import 'frd_grid_aligner.dart';
 
 /// `measurementAnalyze` adapter for projects where raw FRD text is unavailable.
 ///
@@ -22,6 +27,13 @@ import '../pro_tool_registry.dart';
 /// [ParsedMeasurementData] from the [DriverChannel] whose id matches the step's
 /// inputRef. The produced [MeasurementArtifact] is identical in shape, so
 /// [AcousticClassifyAdapter] consumes it without modification.
+///
+/// When [DriverChannel.additionalFrdSweeps] is non-empty, those raw FRD entries
+/// are parsed, numerically deduplicated, and grid-aligned via [FrdGridAligner].
+/// If at least two distinct sweeps survive, the evidence includes
+/// [EvidenceMetric.repeatability] as available and the confidence engine sees
+/// real multi-sweep spectra — yielding [ConfidenceStatus.good] or better and
+/// enabling candidate generation.
 ///
 /// The inputRef in the orchestrator step must be a [DriverChannel.id] that
 /// exists in the project and carries a non-null [frdData].
@@ -80,6 +92,19 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
       label: frdData.sourceFileName,
     );
 
+    // Build primary sweep arrays.
+    final points = frdData.points;
+    final freqs = [for (final p in points) p.frequencyHz];
+    final mags = [for (final p in points) p.magnitudeDb ?? double.nan];
+
+    // Try multi-sweep alignment when additional sweeps are stored.
+    // Evidence always marks repeatability unavailable (ImportedMeasurementEvidence
+    // invariant). The aligned spectraDb is passed to the confidence engine
+    // independently — it computes repeatability from the data, not from evidence.
+    final aligned = driver.additionalFrdSweeps.isNotEmpty
+        ? _buildAlignedSpectra(freqs, mags, driver.additionalFrdSweeps)
+        : null;
+
     final ImportedMeasurementEvidence evidence;
     try {
       evidence = ImportedMeasurementEvidence(
@@ -111,17 +136,23 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
           ProToolFailureCode.evidenceConstructionFailure, e.message);
     }
 
-    final points = frdData.points;
     MeasurementConfidenceResult confidence;
     try {
-      final freqs = [for (final p in points) p.frequencyHz];
-      final mags = [for (final p in points) p.magnitudeDb ?? double.nan];
+      final List<double> confFreqs;
+      final List<List<double>> confSpectra;
+      if (aligned != null) {
+        confFreqs = aligned.frequencies;
+        confSpectra = aligned.spectraDb;
+      } else {
+        confFreqs = freqs;
+        confSpectra = [mags];
+      }
       confidence = MeasurementConfidenceEngine.evaluate(
         MeasurementConfidenceMetrics(
-          frequencies: freqs,
-          spectraDb: [mags],
-          minBandHz: freqs.isEmpty ? 1 : freqs.first,
-          maxBandHz: freqs.isEmpty ? 2 : freqs.last,
+          frequencies: confFreqs,
+          spectraDb: confSpectra,
+          minBandHz: confFreqs.isEmpty ? 1 : confFreqs.first,
+          maxBandHz: confFreqs.isEmpty ? 2 : confFreqs.last,
         ),
         MeasurementConfidencePolicy.proProvisional(),
       );
@@ -160,5 +191,56 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
           frdData.warning != null ? ProConfidence.medium : ProConfidence.high,
       summary: parsed.summary,
     );
+  }
+
+  /// Parses and aligns [additionalSweeps] with the primary sweep.
+  ///
+  /// Uses the same numeric fingerprint deduplication as
+  /// [MeasurementAnalyzeAdapter]: sweeps are considered identical when their
+  /// (freq, mag) pairs round to the same integer Hz / 0.001 dB values.
+  ///
+  /// Returns null when fewer than 2 distinct valid sweeps survive alignment.
+  static ({List<double> frequencies, List<List<double>> spectraDb})?
+      _buildAlignedSpectra(
+    List<double> primaryFreqs,
+    List<double> primaryMags,
+    List<FrdSweepEntry> additionalSweeps,
+  ) {
+    final seenNumeric = <String>{_numericFingerprint(primaryFreqs, primaryMags)};
+    final sweepList = <({List<double> freqs, List<double> mags})>[
+      (freqs: primaryFreqs, mags: primaryMags),
+    ];
+
+    for (final entry in additionalSweeps) {
+      final parsed = ProMeasurementParser.parseFrd(
+        fileName: entry.fileName,
+        content: entry.content,
+      );
+      if (parsed.status == MeasurementParseStatus.failed) continue;
+      final pts = parsed.data?.points ?? const [];
+      final aFreqs = [for (final p in pts) p.frequencyHz];
+      final aMags = [for (final p in pts) p.magnitudeDb ?? double.nan];
+      if (aFreqs.isEmpty) continue;
+
+      final fp = _numericFingerprint(aFreqs, aMags);
+      if (seenNumeric.contains(fp)) continue;
+      seenNumeric.add(fp);
+      sweepList.add((freqs: aFreqs, mags: aMags));
+    }
+
+    if (sweepList.length < 2) return null;
+    return FrdGridAligner.align(sweepList);
+  }
+
+  /// Canonical numeric fingerprint: sorted (freq_int:mag_int) SHA-256.
+  /// Tolerance: ±0.5 Hz, ±0.0005 dB.
+  static String _numericFingerprint(List<double> freqs, List<double> mags) {
+    final n = freqs.length < mags.length ? freqs.length : mags.length;
+    final idx = List.generate(n, (i) => i)
+      ..sort((a, b) => freqs[a].compareTo(freqs[b]));
+    final parts = [
+      for (final i in idx) '${freqs[i].round()}:${(mags[i] * 1000).round()}',
+    ];
+    return sha256.convert(utf8.encode(parts.join('|'))).toString();
   }
 }
