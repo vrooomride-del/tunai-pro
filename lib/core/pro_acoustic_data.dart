@@ -436,6 +436,36 @@ class AcousticFileRef {
   );
 }
 
+/// One repeated FRD measurement sweep stored alongside the primary FRD.
+///
+/// Used to build a multi-sweep evidence set for repeatability scoring.
+/// [contentHash] is sha256('measurement_import_content_v1|' + content) and
+/// serves as the duplicate-detection key — two entries with the same hash are
+/// not independent evidence and one is discarded.
+class FrdSweepEntry {
+  final String fileName;
+  final String content;
+  final String contentHash;
+
+  const FrdSweepEntry({
+    required this.fileName,
+    required this.content,
+    required this.contentHash,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'fileName': fileName,
+        'content': content,
+        'contentHash': contentHash,
+      };
+
+  factory FrdSweepEntry.fromJson(Map<String, dynamic> j) => FrdSweepEntry(
+        fileName: j['fileName'] as String,
+        content: j['content'] as String,
+        contentHash: j['contentHash'] as String,
+      );
+}
+
 class DriverChannel {
   final String id;
   final String name;
@@ -452,6 +482,8 @@ class DriverChannel {
   final ParsedMeasurementData? zmaData;
   // Phase N: acoustic offset (3-D position relative to reference axis)
   final DriverAcousticOffset? acousticOffset;
+  // Phase O: repeated FRD sweeps for multi-sweep repeatability evidence
+  final List<FrdSweepEntry> additionalFrdSweeps;
 
   const DriverChannel({
     required this.id,
@@ -467,6 +499,7 @@ class DriverChannel {
     this.frdData,
     this.zmaData,
     this.acousticOffset,
+    this.additionalFrdSweeps = const [],
   });
 
   String get shortLabel => '${role.short} · ${side.label}';
@@ -493,6 +526,7 @@ class DriverChannel {
     bool clearZmaData = false,
     DriverAcousticOffset? acousticOffset,
     bool clearAcousticOffset = false,
+    List<FrdSweepEntry>? additionalFrdSweeps,
   }) => DriverChannel(
     id: id,
     name: name ?? this.name,
@@ -507,6 +541,7 @@ class DriverChannel {
     frdData: clearFrdData ? null : (frdData ?? this.frdData),
     zmaData: clearZmaData ? null : (zmaData ?? this.zmaData),
     acousticOffset: clearAcousticOffset ? null : (acousticOffset ?? this.acousticOffset),
+    additionalFrdSweeps: additionalFrdSweeps ?? this.additionalFrdSweeps,
   );
 
   Map<String, dynamic> toJson() => {
@@ -523,6 +558,8 @@ class DriverChannel {
     if (frdData != null) 'frdData': frdData!.toJson(),
     if (zmaData != null) 'zmaData': zmaData!.toJson(),
     if (acousticOffset != null) 'acousticOffset': acousticOffset!.toJson(),
+    if (additionalFrdSweeps.isNotEmpty)
+      'additionalFrdSweeps': [for (final s in additionalFrdSweeps) s.toJson()],
   };
 
   factory DriverChannel.fromJson(Map<String, dynamic> j) => DriverChannel(
@@ -550,6 +587,9 @@ class DriverChannel {
         ? DriverAcousticOffset.fromJson(
             Map<String, dynamic>.from(j['acousticOffset'] as Map))
         : null,
+    additionalFrdSweeps: (j['additionalFrdSweeps'] as List?)
+        ?.map((e) => FrdSweepEntry.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList() ?? const [],
   );
 }
 

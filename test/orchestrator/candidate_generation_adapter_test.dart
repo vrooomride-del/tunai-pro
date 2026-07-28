@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/acoustic/candidate_set.dart';
 import 'package:tunai_pro/core/orchestrator/pro_orchestrator_plan.dart';
@@ -5,6 +8,7 @@ import 'package:tunai_pro/core/orchestrator/pro_orchestrator_types.dart';
 import 'package:tunai_pro/core/orchestrator/tools/adapters/acoustic_classify_adapter.dart';
 import 'package:tunai_pro/core/orchestrator/tools/adapters/candidate_generation_adapter.dart';
 import 'package:tunai_pro/core/orchestrator/tools/adapters/correction_plan_adapter.dart';
+import 'package:tunai_pro/core/orchestrator/tools/adapters/frd_grid_aligner.dart';
 import 'package:tunai_pro/core/orchestrator/tools/adapters/measurement_analyze_adapter.dart';
 import 'package:tunai_pro/core/orchestrator/tools/pro_tool_artifact_store.dart';
 import 'package:tunai_pro/core/orchestrator/tools/pro_tool_execution.dart';
@@ -434,6 +438,238 @@ void main() {
           reason: 'single sweep must yield 0 candidates (policy gate)');
       expect(cs2.candidates, isNotEmpty,
           reason: '2-sweep must yield candidates (pipeline verification)');
+    });
+  });
+
+  // ── Production multi-sweep evidence path (A-E) ───────────────────────────
+
+  // _frdTrend2: same 11-point falling trend as _frdTrend but with ±0.1 dB
+  // perturbation so the content hash differs — two independent sweeps.
+  // Mean abs diff = 0.1 dB, ceiling = 6 dB → repeatability score ≈ 0.983 →
+  // excellent → sufficient evidence → correctable → candidate generated.
+  const _frdTrend2 = '20 0.1 0\n'
+      '40 -1.9 0\n'
+      '80 -3.9 0\n'
+      '160 -5.9 0\n'
+      '315 -7.9 0\n'
+      '630 -9.9 0\n'
+      '1250 -11.9 0\n'
+      '2500 -13.9 0\n'
+      '5000 -15.9 0\n'
+      '10000 -17.9 0\n'
+      '20000 -19.9 0';
+
+  String _contentHash(String content) => sha256
+      .convert(utf8.encode(
+          '${MeasurementAnalyzeAdapter.contentHashPrefix}|$content'))
+      .toString();
+
+  ProToolArtifactStore _chainMulti(
+      String primaryContent, List<FrdSweepEntry> additionalSweeps,
+      String candsRef) {
+    final resolver = InMemoryProToolReferenceResolver();
+    final store = ProToolArtifactStore();
+    final ctx = _ctx(resolver, store);
+    resolver.put(
+      _project,
+      'src:frd',
+      ProMeasurementSource(
+        fileName: 'sweep1.frd',
+        content: primaryContent,
+        format: AcousticFileType.frd,
+        additionalSweeps: additionalSweeps,
+      ),
+    );
+    const MeasurementAnalyzeAdapter()
+        .run(ctx, _step('measurementAnalyze', ['src:frd'], 'meas:1'));
+    const AcousticClassifyAdapter()
+        .run(ctx, _step('acousticClassify', ['meas:1'], 'class:1'));
+    const CorrectionPlanAdapter()
+        .run(ctx, _step('acousticPlan', ['class:1'], 'plan:1'));
+    const CandidateGenerationAdapter().run(
+        ctx, _step('acousticGenerateCandidates', ['plan:1', 'class:1'], candsRef));
+    return store;
+  }
+
+  group('production multi-sweep evidence (A-E)', () {
+    test('A: single FRD (empty additionalSweeps) → repeatability unavailable → 0 candidates', () {
+      final store = _chainMulti(_frdTrend, const [], 'cands:1');
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      expect(cs.candidates, isEmpty,
+          reason: 'single sweep → repeatability unavailable → analysis-only');
+    });
+
+    test('B: two different repeatable sweeps → CandidateSetStatus.ok', () {
+      final store = _chainMulti(
+        _frdTrend,
+        [FrdSweepEntry(
+          fileName: 'sweep2.frd',
+          content: _frdTrend2,
+          contentHash: _contentHash(_frdTrend2),
+        )],
+        'cands:1',
+      );
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      expect(cs.status, CandidateSetStatus.ok);
+      expect(cs.candidates, isNotEmpty,
+          reason: 'two distinct repeatable sweeps → correctable candidate');
+    });
+
+    test('B: two-sweep candidate values are finite and deterministic', () {
+      final sweep2 = FrdSweepEntry(
+        fileName: 'sweep2.frd',
+        content: _frdTrend2,
+        contentHash: _contentHash(_frdTrend2),
+      );
+      final store1 = _chainMulti(_frdTrend, [sweep2], 'cands:1');
+      final store2 = _chainMulti(_frdTrend, [sweep2], 'cands:1');
+      final c1 = store1.getTyped<CandidateSetArtifact>(_project, 'cands:1').value.candidates;
+      final c2 = store2.getTyped<CandidateSetArtifact>(_project, 'cands:1').value.candidates;
+      expect(c1.length, c2.length);
+      for (var i = 0; i < c1.length; i++) {
+        expect(c1[i].frequencyHz.isFinite, isTrue);
+        expect(c1[i].gainDb.isFinite, isTrue);
+        expect(c1[i].q.isFinite, isTrue);
+        expect(c1[i].frequencyHz, c2[i].frequencyHz);
+        expect(c1[i].gainDb, c2[i].gainDb);
+        expect(c1[i].q, c2[i].q);
+      }
+    });
+
+    test('C: identical duplicate sweeps (same hash) → deduplicated → 0 candidates', () {
+      final primaryHash = _contentHash(_frdTrend);
+      final store = _chainMulti(
+        _frdTrend,
+        [FrdSweepEntry(
+          fileName: 'sweep1_copy.frd',
+          content: _frdTrend,
+          contentHash: primaryHash,  // same as primary → not independent
+        )],
+        'cands:1',
+      );
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      expect(cs.candidates, isEmpty,
+          reason: 'identical sweeps are not independent evidence → 0 candidates');
+    });
+
+    test('D: FrdGridAligner — narrower sweep clips intersection, no extrapolation', () {
+      // Primary: 20Hz–200Hz (4 points). Secondary: 50Hz–100Hz (5 points).
+      // Intersection: [50Hz, 100Hz]. Secondary has more points there → secondary grid.
+      final primary = (
+        freqs: [20.0, 50.0, 100.0, 200.0],
+        mags: [0.0, -3.0, -6.0, -12.0],
+      );
+      final secondary = (
+        freqs: [50.0, 60.0, 70.0, 80.0, 100.0],
+        mags: [-2.5, -3.5, -4.5, -5.5, -5.5],
+      );
+      final result = FrdGridAligner.align([primary, secondary])!;
+
+      // All returned frequencies must lie within the intersection range.
+      for (final f in result.frequencies) {
+        expect(f, greaterThanOrEqualTo(50.0),
+            reason: 'no extrapolation below intersection min');
+        expect(f, lessThanOrEqualTo(100.0),
+            reason: 'no extrapolation above intersection max');
+      }
+      // Secondary grid (5 points) is selected as the common grid.
+      expect(result.frequencies, equals([50.0, 60.0, 70.0, 80.0, 100.0]));
+      expect(result.spectraDb.length, 2);
+
+      // Deterministic: same inputs → same output.
+      final result2 = FrdGridAligner.align([primary, secondary])!;
+      expect(result2.frequencies, result.frequencies);
+      for (var si = 0; si < result.spectraDb.length; si++) {
+        for (var fi = 0; fi < result.spectraDb[si].length; fi++) {
+          expect(result2.spectraDb[si][fi],
+              closeTo(result.spectraDb[si][fi], 1e-9));
+        }
+      }
+    });
+
+    test('D: FrdGridAligner — non-overlapping grids return null', () {
+      final a = (freqs: [20.0, 50.0], mags: [0.0, -3.0]);
+      final b = (freqs: [100.0, 200.0], mags: [-6.0, -12.0]);
+      expect(FrdGridAligner.align([a, b]), isNull);
+    });
+
+    test('E: no deepNull candidates ever generated (hard policy invariant)', () {
+      final sweep2 = FrdSweepEntry(
+        fileName: 'sweep2.frd',
+        content: _frdTrend2,
+        contentHash: _contentHash(_frdTrend2),
+      );
+      final store = _chainMulti(_frdTrend, [sweep2], 'cands:1');
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      for (final c in cs.candidates) {
+        expect(c.featureType.name, isNot(equals('deepNull')),
+            reason: 'deepNull candidate generation is always prohibited by policy');
+      }
+    });
+  });
+
+  // ── Numeric duplicate detection (Blocker 2) ──────────────────────────────
+
+  // _frdTrendFormatted: same numeric measurements as _frdTrend but with extra
+  // decimal places and trailing zeros — different raw bytes, identical numbers.
+  // The numeric fingerprint must match _frdTrend so it is deduplicated.
+  const _frdTrendFormatted = '20.0 0.000 0.0\n'
+      '40.0 -2.000 0.0\n'
+      '80.0 -4.000 0.0\n'
+      '160.0 -6.000 0.0\n'
+      '315.0 -8.000 0.0\n'
+      '630.0 -10.000 0.0\n'
+      '1250.0 -12.000 0.0\n'
+      '2500.0 -14.000 0.0\n'
+      '5000.0 -16.000 0.0\n'
+      '10000.0 -18.000 0.0\n'
+      '20000.0 -20.000 0.0';
+
+  group('numeric duplicate detection (Blocker 2)', () {
+    test(
+        '1: same numeric FRD, different whitespace/decimal formatting '
+        '→ deduplicated → repeatability unavailable → 0 candidates', () {
+      // _frdTrendFormatted has a different raw content hash than _frdTrend
+      // but the parsed numeric values are identical — should be rejected as
+      // not independent evidence.
+      final store = _chainMulti(
+        _frdTrend,
+        [
+          FrdSweepEntry(
+            fileName: 'sweep_formatted.frd',
+            content: _frdTrendFormatted,
+            contentHash: _contentHash(_frdTrendFormatted), // different raw hash
+          ),
+        ],
+        'cands:1',
+      );
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      expect(cs.candidates, isEmpty,
+          reason: 'numerically identical sweeps must not count as independent '
+              'repeatability evidence → 0 candidates');
+    });
+
+    test(
+        '2: two genuinely different repeatable FRDs → numeric fingerprints differ '
+        '→ sufficient confidence → candidate generated', () {
+      // _frdTrend2 differs from _frdTrend by ±0.1 dB per point — genuinely
+      // different measurements.  Numeric fingerprints are distinct so both
+      // sweeps are accepted as independent evidence.
+      final store = _chainMulti(
+        _frdTrend,
+        [
+          FrdSweepEntry(
+            fileName: 'sweep2.frd',
+            content: _frdTrend2,
+            contentHash: _contentHash(_frdTrend2),
+          ),
+        ],
+        'cands:1',
+      );
+      final cs = store.getTyped<CandidateSetArtifact>(_project, 'cands:1').value;
+      expect(cs.status, CandidateSetStatus.ok);
+      expect(cs.candidates, isNotEmpty,
+          reason: 'two genuinely different sweeps must yield correctable candidate');
     });
   });
 

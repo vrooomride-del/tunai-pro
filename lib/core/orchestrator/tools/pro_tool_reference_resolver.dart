@@ -1,6 +1,6 @@
 import '../../adau1701_peq_response.dart' show PeqResponseBand;
 import '../../pro_acoustic_data.dart'
-    show AcousticFileType, DriverChannel, MeasurementProjectState;
+    show AcousticFileType, DriverChannel, FrdSweepEntry, MeasurementProjectState;
 import 'pro_tool_execution.dart';
 
 /// A local, typed measurement source for `measurementAnalyze`. The fileName and
@@ -10,10 +10,14 @@ class ProMeasurementSource {
   final String fileName;
   final String content;
   final AcousticFileType format;
+  /// Additional repeated FRD sweeps for multi-sweep repeatability evidence.
+  /// Empty list = single-sweep (analysis-only path).
+  final List<FrdSweepEntry> additionalSweeps;
   const ProMeasurementSource({
     required this.fileName,
     required this.content,
     required this.format,
+    this.additionalSweeps = const [],
   });
 }
 

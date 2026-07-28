@@ -6,7 +6,8 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../../acoustic/measurement_confidence.dart';
 import '../../../acoustic/measurement_evidence.dart';
 import '../../../pro_acoustic_data.dart'
-    show AcousticFileType, MeasurementParseResult, MeasurementParseStatus;
+    show AcousticFileType, FrdSweepEntry, MeasurementParseResult, MeasurementParseStatus;
+import 'frd_grid_aligner.dart';
 import '../../../pro_measurement_parser.dart';
 import '../../pro_orchestrator_plan.dart';
 import '../../pro_orchestrator_result.dart';
@@ -94,7 +95,9 @@ class MeasurementAnalyzeAdapter implements ProToolAdapter {
           magnitudePresent: magnitudePresent,
           phasePresent: phasePresent,
           impedancePresent: impedancePresent,
-          points: points);
+          points: points,
+          primaryContentHash: contentHash,
+          additionalSweeps: source.additionalSweeps);
     } else {
       artifact = _zma(step, ref, parsed, provenance, evidenceId, ctx.projectId,
           impedancePresent: impedancePresent);
@@ -115,6 +118,8 @@ class MeasurementAnalyzeAdapter implements ProToolAdapter {
     required bool phasePresent,
     required bool impedancePresent,
     required List points,
+    required String primaryContentHash,
+    List<FrdSweepEntry> additionalSweeps = const [],
   }) {
     if (!magnitudePresent) {
       throw ProToolException(ProToolFailureCode.missingMagnitude,
@@ -152,22 +157,41 @@ class MeasurementAnalyzeAdapter implements ProToolAdapter {
           ProToolFailureCode.evidenceConstructionFailure, e.message);
     }
 
-    // FRD confidence: a single acoustic magnitude spectrum. Only coverage is
-    // computable; repeatability/SNR/clipping are legitimately unavailable, so
-    // proProvisional generally yields insufficientEvidence — which is NOT a
-    // failure, just honest metadata.
+    // FRD confidence. Single sweep → only coverage is computable; repeatability
+    // is legitimately unavailable → proProvisional yields insufficientEvidence
+    // (honest metadata, not a failure). Multi-sweep path uses aligned spectra
+    // so repeatability can be computed from real independent measurements.
     MeasurementConfidenceResult confidence;
     try {
       final freqs = [for (final p in points) p.frequencyHz as double];
       final mags = [
         for (final p in points) (p.magnitudeDb as double?) ?? double.nan
       ];
+
+      final List<double> confFreqs;
+      final List<List<double>> spectraDb;
+      if (additionalSweeps.isNotEmpty) {
+        final aligned = _buildAlignedSpectra(
+            freqs, mags, primaryContentHash, additionalSweeps);
+        if (aligned != null) {
+          confFreqs = aligned.frequencies;
+          spectraDb = aligned.spectraDb;
+        } else {
+          // All additional sweeps were duplicates or invalid; fall back to single.
+          confFreqs = freqs;
+          spectraDb = [mags];
+        }
+      } else {
+        confFreqs = freqs;
+        spectraDb = List.filled(sweepCount, mags);
+      }
+
       confidence = MeasurementConfidenceEngine.evaluate(
         MeasurementConfidenceMetrics(
-          frequencies: freqs,
-          spectraDb: List.filled(sweepCount, mags),
-          minBandHz: freqs.isEmpty ? 1 : freqs.first,
-          maxBandHz: freqs.isEmpty ? 2 : freqs.last,
+          frequencies: confFreqs,
+          spectraDb: spectraDb,
+          minBandHz: confFreqs.isEmpty ? 1 : confFreqs.first,
+          maxBandHz: confFreqs.isEmpty ? 2 : confFreqs.last,
         ),
         MeasurementConfidencePolicy.proProvisional(),
       );
@@ -246,5 +270,71 @@ class MeasurementAnalyzeAdapter implements ProToolAdapter {
     if (r.errors.isNotEmpty) return ProConfidence.low;
     if (r.warnings.isNotEmpty) return ProConfidence.medium;
     return ProConfidence.high;
+  }
+
+  /// Builds aligned (frequencies, spectraDb) from the primary sweep and any
+  /// non-duplicate additional sweeps.
+  ///
+  /// Duplicate detection uses a canonical NUMERIC fingerprint computed from the
+  /// parsed (frequencyHz, magnitudeDb) pairs — not from the raw file content.
+  /// Two sweeps with the same measured values but different whitespace, decimal
+  /// formatting, or comment lines are treated as one sweep, not two.
+  ///
+  /// Fingerprint tolerance (documented):
+  ///   frequency : rounded to nearest integer Hz  (±0.5 Hz)
+  ///   magnitude : rounded to nearest 0.001 dB   (±0.0005 dB)
+  ///
+  /// The raw [FrdSweepEntry.contentHash] is preserved as an identity/integrity
+  /// field but is NOT used for repeatability-evidence deduplication.
+  ///
+  /// Returns null when fewer than 2 distinct valid sweeps survive.
+  ({List<double> frequencies, List<List<double>> spectraDb})? _buildAlignedSpectra(
+    List<double> primaryFreqs,
+    List<double> primaryMags,
+    String primaryHash,
+    List<FrdSweepEntry> additionalSweeps,
+  ) {
+    final seenNumeric = <String>{_numericFingerprint(primaryFreqs, primaryMags)};
+    final sweepList = <({List<double> freqs, List<double> mags})>[
+      (freqs: primaryFreqs, mags: primaryMags),
+    ];
+
+    for (final entry in additionalSweeps) {
+      final parsed = ProMeasurementParser.parseFrd(
+        fileName: entry.fileName,
+        content: entry.content,
+      );
+      if (parsed.status == MeasurementParseStatus.failed) continue;
+      final pts = parsed.data?.points ?? const [];
+      final aFreqs = [for (final p in pts) p.frequencyHz];
+      final aMags = [
+        for (final p in pts) p.magnitudeDb ?? double.nan
+      ];
+      if (aFreqs.isEmpty) continue;
+
+      final fp = _numericFingerprint(aFreqs, aMags);
+      if (seenNumeric.contains(fp)) continue; // numerically identical — not independent
+      seenNumeric.add(fp);
+      sweepList.add((freqs: aFreqs, mags: aMags));
+    }
+
+    if (sweepList.length < 2) return null;
+    return FrdGridAligner.align(sweepList);
+  }
+
+  /// Canonical numeric fingerprint of an FRD sweep.
+  ///
+  /// Sorted by frequency; each point encoded as 'fRounded:mRounded' where
+  /// fRounded = frequencyHz.round() and mRounded = (magnitudeDb × 1000).round().
+  /// Tolerance: ±0.5 Hz in frequency, ±0.0005 dB in magnitude.
+  static String _numericFingerprint(List<double> freqs, List<double> mags) {
+    final n = freqs.length < mags.length ? freqs.length : mags.length;
+    final idx = List.generate(n, (i) => i)
+      ..sort((a, b) => freqs[a].compareTo(freqs[b]));
+    final parts = [
+      for (final i in idx)
+        '${freqs[i].round()}:${(mags[i] * 1000).round()}',
+    ];
+    return sha256.convert(utf8.encode(parts.join('|'))).toString();
   }
 }

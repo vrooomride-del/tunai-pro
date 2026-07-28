@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/acoustic/acoustic_problem_classifier.dart'
     show AcousticFeatureType;
@@ -38,6 +41,38 @@ const _frd10 = '100 -5.0 0\n'
 
 /// 3 points → insufficientEvidence → optimizer propagated → safety block.
 const _frd3 = '100 -3.0 0\n200 -2.0 0\n400 -1.0 0';
+
+// Falling trend fixtures — two genuinely different sweeps (±0.1 dB deviation).
+// With 2 non-duplicate sweeps: repeatability sufficient → candidate generated →
+// safety produces applyPermitted=true, verifiedCandidates.length=1.
+const _frdTrend = '20 0.0 0\n'
+    '40 -2.0 0\n'
+    '80 -4.0 0\n'
+    '160 -6.0 0\n'
+    '315 -8.0 0\n'
+    '630 -10.0 0\n'
+    '1250 -12.0 0\n'
+    '2500 -14.0 0\n'
+    '5000 -16.0 0\n'
+    '10000 -18.0 0\n'
+    '20000 -20.0 0';
+
+const _frdTrend2 = '20 0.1 0\n'
+    '40 -1.9 0\n'
+    '80 -3.9 0\n'
+    '160 -5.9 0\n'
+    '315 -7.9 0\n'
+    '630 -9.9 0\n'
+    '1250 -11.9 0\n'
+    '2500 -13.9 0\n'
+    '5000 -15.9 0\n'
+    '10000 -17.9 0\n'
+    '20000 -19.9 0';
+
+String _contentHash(String content) => sha256
+    .convert(utf8.encode(
+        '${MeasurementAnalyzeAdapter.contentHashPrefix}|$content'))
+    .toString();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -538,6 +573,95 @@ void main() {
         expect(j.containsKey('register'), isFalse);
         expect(j.containsKey('code'), isTrue);
       }
+    });
+  });
+
+  // ── Blocker 1: safe path + unsafe path end-to-end ────────────────────────
+
+  // Full chain through to safety using production additionalSweeps.
+  ProToolArtifactStore _chainMultiSafety(
+    String primaryContent,
+    List<FrdSweepEntry> additionalSweeps,
+    String safetyRef,
+  ) {
+    final resolver = InMemoryProToolReferenceResolver();
+    final store = ProToolArtifactStore();
+    final ctx = _ctx(resolver, store);
+    resolver.put(
+      _project,
+      'src:frd',
+      ProMeasurementSource(
+        fileName: 'sweep1.frd',
+        content: primaryContent,
+        format: AcousticFileType.frd,
+        additionalSweeps: additionalSweeps,
+      ),
+    );
+    const MeasurementAnalyzeAdapter()
+        .run(ctx, _step('measurementAnalyze', ['src:frd'], 'meas:1'));
+    const AcousticClassifyAdapter()
+        .run(ctx, _step('acousticClassify', ['meas:1'], 'class:1'));
+    const CorrectionPlanAdapter()
+        .run(ctx, _step('acousticPlan', ['class:1'], 'plan:1'));
+    const CandidateGenerationAdapter().run(
+        ctx, _step('acousticGenerateCandidates', ['plan:1', 'class:1'], 'cands:1'));
+    const CandidateScoringAdapter().run(
+        ctx, _step('acousticScoreCandidates', ['cands:1', 'class:1'], 'scored:1'));
+    const CandidateOptimizerAdapter()
+        .run(ctx, _step('acousticOptimizeSelection', ['scored:1'], 'optim:1'));
+    const CandidateSafetyAdapter()
+        .run(ctx, _step('acousticValidateSafety', ['optim:1'], safetyRef));
+    return store;
+  }
+
+  group('Blocker 1: safe/unsafe candidate end-to-end', () {
+    test(
+        '3: safe cut candidate via 2-sweep production path '
+        '→ applyPermitted=true, verifiedCandidates non-empty', () {
+      // Two genuinely different repeatable trend sweeps → 1 candidate
+      // (fallingTrend@632Hz, gainDb=-9.0 ≤ 0, within safety limits) →
+      // applyPermitted=true, verifiedCandidates.length=1.
+      final store = _chainMultiSafety(
+        _frdTrend,
+        [
+          FrdSweepEntry(
+            fileName: 'sweep2.frd',
+            content: _frdTrend2,
+            contentHash: _contentHash(_frdTrend2),
+          ),
+        ],
+        'safety:1',
+      );
+      final result =
+          store.getTyped<CandidateSafetyArtifact>(_project, 'safety:1').value;
+      expect(result.applyPermitted, isTrue,
+          reason: 'safe cut candidate must yield applyPermitted=true');
+      expect(result.verifiedCandidates, isNotEmpty,
+          reason: 'verifiedCandidates must be non-empty when applyPermitted=true');
+      expect(result.issues, isEmpty,
+          reason: 'no safety violations for a clamped cut within policy bounds');
+    });
+
+    test(
+        '4: deepNull candidate (via synthetic fixture) '
+        '→ applyPermitted=false, deepNullGuard issued', () {
+      // Policy invariant: deepNull is always blocked by safety regardless of
+      // other conditions.  Uses the existing synthetic-fixture path for clarity.
+      final store = ProToolArtifactStore();
+      final ctx = _ctx(InMemoryProToolReferenceResolver(), store);
+      _putOkOptimWithCandidates(store, 'optim:1',
+          [_selectedCandidate(featureType: AcousticFeatureType.deepNull)]);
+
+      safety.run(ctx, _step('acousticValidateSafety', ['optim:1'], 'safety:1'));
+
+      final result =
+          store.getTyped<CandidateSafetyArtifact>(_project, 'safety:1').value;
+      expect(result.applyPermitted, isFalse);
+      expect(
+        result.issues
+            .any((i) => i.code == CandidateSafetyViolationCode.deepNullGuard),
+        isTrue,
+      );
     });
   });
 
