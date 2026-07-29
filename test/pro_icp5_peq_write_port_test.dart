@@ -39,6 +39,7 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   final List<(int, double)> gainWrites = [];
   final List<(int, int)> freqWrites = [];
   final List<(int, double)> qWrites = [];
+  final List<(int, double)> outputGainWrites = [];
   bool ackSuccess = true;
 
   @override
@@ -70,6 +71,12 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
       {int band = 0}) async {
     qWrites.add((channel, q));
     return Adau1701WriteAck(success: ackSuccess, message: 'q');
+  }
+
+  @override
+  Future<Adau1701WriteAck> writeOutputGain(int channel, double gainDb) async {
+    outputGainWrites.add((channel, gainDb));
+    return Adau1701WriteAck(success: ackSuccess, message: 'outputGain');
   }
 }
 
@@ -213,5 +220,83 @@ void main() {
       throwsA(isA<UnsupportedIcp5WriteOperation>()),
     );
     expect(t.gainWrites, isEmpty);
+  });
+
+  test('crossoverHighPass writes through transport and verifies readback', () async {
+    final t = _FakeTuningTransport();
+    const op = HardwareWriteOp(
+      channelId: 'wf',
+      parameterKind: HardwareParamKind.crossoverHighPass,
+      bandIndex: null,
+      targetValue: 2000,
+      verification: HardwareParamVerification.captureProven,
+      writable: true,
+      reason: 'test',
+    );
+    final report = await _port(t, readback: _readOk(freq: 2000))
+        .preflightAndWrite(op);
+
+    expect(t.freqWrites, [(0, 2000)]);
+    expect(t.gainWrites, isEmpty);
+    expect(report.deploymentAllowed, isTrue);
+    expect(report.deploymentSucceeded, isTrue);
+  });
+
+  test('crossoverLowPass writes through transport and verifies readback', () async {
+    final t = _FakeTuningTransport();
+    const op = HardwareWriteOp(
+      channelId: 'wf',
+      parameterKind: HardwareParamKind.crossoverLowPass,
+      bandIndex: null,
+      targetValue: 2000,
+      verification: HardwareParamVerification.captureProven,
+      writable: true,
+      reason: 'test',
+    );
+    final report = await _port(t, readback: _readOk(freq: 2000))
+        .preflightAndWrite(op);
+
+    expect(t.freqWrites, [(0, 2000)]);
+    expect(report.deploymentAllowed, isTrue);
+    expect(report.deploymentSucceeded, isTrue);
+  });
+
+  test('channelGain writes through transport, ACK-only, no readback required',
+      () async {
+    final t = _FakeTuningTransport();
+    const op = HardwareWriteOp(
+      channelId: 'wf',
+      parameterKind: HardwareParamKind.channelGain,
+      bandIndex: null,
+      targetValue: -3.5,
+      verification: HardwareParamVerification.captureProven,
+      writable: true,
+      reason: 'test',
+    );
+    final report = await _port(t).preflightAndWrite(op);
+
+    expect(t.outputGainWrites, [(0, -3.5)]);
+    expect(t.gainWrites, isEmpty);
+    expect(t.freqWrites, isEmpty);
+    expect(report.deploymentAllowed, isTrue);
+    expect(report.deploymentSucceeded, isTrue);
+    expect(report.deploymentResult!.message, contains('ACKed'));
+  });
+
+  test('channelGain preflight failure blocks write', () async {
+    final t = _FakeTuningTransport(connected: false);
+    const op = HardwareWriteOp(
+      channelId: 'wf',
+      parameterKind: HardwareParamKind.channelGain,
+      bandIndex: null,
+      targetValue: -3.5,
+      verification: HardwareParamVerification.captureProven,
+      writable: true,
+      reason: 'test',
+    );
+    final report = await _port(t).preflightAndWrite(op);
+
+    expect(report.deploymentAllowed, isFalse);
+    expect(t.outputGainWrites, isEmpty);
   });
 }

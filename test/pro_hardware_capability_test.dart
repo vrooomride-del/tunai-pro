@@ -35,15 +35,18 @@ void main() {
           HardwareParamVerification.unverified);
     });
 
-    test('XO, delay, and gain stages are unavailable', () {
-      expect(adau1701.verificationFor(HardwareParamKind.crossoverHighPass),
-          HardwareParamVerification.unavailable);
-      expect(adau1701.verificationFor(HardwareParamKind.crossoverLowPass),
-          HardwareParamVerification.unavailable);
+    test('delay is unavailable; channelGain and XO frequency are captureProven', () {
       expect(adau1701.verificationFor(HardwareParamKind.channelDelay),
           HardwareParamVerification.unavailable);
+      // channelGain: ICP5 parameter-ID 0x14 + float32 LE + channel byte confirmed.
       expect(adau1701.verificationFor(HardwareParamKind.channelGain),
-          HardwareParamVerification.unavailable);
+          HardwareParamVerification.captureProven);
+      // crossoverHighPass/LowPass: param-ID 0x15, band 0, capture-proven via
+      // filter cutoff TEST/RESTORE pairs for channels 0–3.
+      expect(adau1701.verificationFor(HardwareParamKind.crossoverHighPass),
+          HardwareParamVerification.captureProven);
+      expect(adau1701.verificationFor(HardwareParamKind.crossoverLowPass),
+          HardwareParamVerification.captureProven);
     });
 
     test('band-agnostic gain lookup falls back to unverified', () {

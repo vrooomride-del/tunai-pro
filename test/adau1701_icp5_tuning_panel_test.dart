@@ -118,6 +118,10 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
       message: _qWriteSuccess ? 'PASS_ACK' : 'No ACK.',
     );
   }
+
+  @override
+  Future<Adau1701WriteAck> writeOutputGain(int channel, double gainDb) async =>
+      const Adau1701WriteAck(success: true, message: 'ok');
 }
 
 // ── Test helpers ──────────────────────────────────────────────────────────────

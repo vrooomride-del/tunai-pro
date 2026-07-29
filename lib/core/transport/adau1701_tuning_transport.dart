@@ -23,4 +23,9 @@ abstract interface class Adau1701TuningTransport
   /// Consumer Q encoding; hardware ACK + readback verification pending. See
   /// [Icp5FrameCodec.buildPeqQWriteArbitrary].
   Future<Adau1701WriteAck> writePeqQ(int channel, double q, {int band = 0});
+
+  /// Writes an arbitrary output gain in −20.0..+6.0 dB for [channel] (0–3).
+  /// Uses the capture-confirmed ICP5 parameter-ID 0x14 and float32 LE dB
+  /// encoding. See [Icp5FrameCodec.buildOutputGainWriteArbitrary].
+  Future<Adau1701WriteAck> writeOutputGain(int channel, double gainDb);
 }

@@ -111,6 +111,10 @@ class _FakeTransport implements Adau1701TuningTransport {
   @override
   Future<Adau1701WriteAck> writePeqQ(int c, double q, {int band = 0}) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
+
+  @override
+  Future<Adau1701WriteAck> writeOutputGain(int c, double g) async =>
+      const Adau1701WriteAck(success: true, message: 'ok');
 }
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

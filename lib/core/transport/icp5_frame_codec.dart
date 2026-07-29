@@ -128,6 +128,27 @@ abstract final class Icp5FrameCodec {
   static bool parseOutputGainAck(List<int> frame) =>
       _parseSuccessAck(frame, outputDac1GainParameterId);
 
+  /// Writes an arbitrary output gain for [channel] (0–3) in −20.0..+6.0 dB.
+  ///
+  /// Uses the capture-confirmed parameter-ID 0x14 and float32 LE dB encoding,
+  /// identical to [buildOutputGainWrite]. Arbitrary dB values beyond the six
+  /// captured pairs are hardware-unverified at the value level; the frame
+  /// structure and parameter ID are capture-confirmed.
+  static List<int> buildOutputGainWriteArbitrary(int channel, double gainDb) {
+    if (channel < 0 || channel > 3) {
+      throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
+    }
+    if (gainDb < -20.0 || gainDb > 6.0) {
+      throw ArgumentError.value(gainDb, 'gainDb', 'Gain must be −20.0..+6.0 dB.');
+    }
+    final data = ByteData(4)..setFloat32(0, gainDb, Endian.little);
+    final frame = <int>[
+      0x55, 0x0C, 0x1C, 0, 0, 0, 0x14, 0x01, channel,
+      ...data.buffer.asUint8List(),
+    ];
+    return [...frame, checksum(frame)];
+  }
+
   static List<int> buildDelayCandidateWrite(int channel, double value) {
     if (channel < 0 || channel > 3 || (value != 1.0 && value != 0.04)) {
       throw ArgumentError(

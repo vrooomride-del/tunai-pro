@@ -123,14 +123,22 @@ class HardwareWriteExecutor {
   final Icp5PeqWritePort port;
   const HardwareWriteExecutor(this.port);
 
-  /// The initial supported set: ADAU1701 ICP5, PEQ Band 1 (index 0) gain and
-  /// frequency. Everything else fails closed (no executor exists).
-  static bool isSupported(HardwareWriteApproval approval, HardwareWriteOp op) =>
-      approval.deviceProfile.deviceId ==
-          HardwareDeviceProfiles.adau1701Icp5.deviceId &&
-      op.bandIndex == 0 &&
-      (op.parameterKind == HardwareParamKind.peqFrequency ||
-          op.parameterKind == HardwareParamKind.peqGain);
+  /// Supported set: ADAU1701 ICP5.
+  /// - PEQ Band 1 (index 0) gain + frequency (banded, bandIndex == 0)
+  /// - channelGain, crossoverHighPass, crossoverLowPass (non-banded, bandIndex == null)
+  /// Everything else fails closed.
+  static bool isSupported(HardwareWriteApproval approval, HardwareWriteOp op) {
+    if (approval.deviceProfile.deviceId !=
+        HardwareDeviceProfiles.adau1701Icp5.deviceId) return false;
+    if (op.bandIndex == null) {
+      return op.parameterKind == HardwareParamKind.channelGain ||
+          op.parameterKind == HardwareParamKind.crossoverHighPass ||
+          op.parameterKind == HardwareParamKind.crossoverLowPass;
+    }
+    return op.bandIndex == 0 &&
+        (op.parameterKind == HardwareParamKind.peqFrequency ||
+            op.parameterKind == HardwareParamKind.peqGain);
+  }
 
   Future<HardwareWriteExecutionResult> execute(
       HardwareWriteApproval approval) async {

@@ -582,6 +582,17 @@ class Icp5UsbTransport
     return Adau1701WriteAck(success: r.success, message: r.message);
   }
 
+  /// Writes an arbitrary output gain in −20.0..+6.0 dB for [channel] (0–3).
+  /// Uses the capture-confirmed parameter-ID 0x14 frame structure.
+  @override
+  Future<Adau1701WriteAck> writeOutputGain(int channel, double gainDb) async {
+    final r = await _writePhaseC(
+      Icp5FrameCodec.buildOutputGainWriteArbitrary(channel, gainDb),
+      Icp5FrameCodec.parseOutputGainAck,
+    );
+    return Adau1701WriteAck(success: r.success, message: r.message);
+  }
+
   Future<Icp5PhaseCResult> writeCapturedPeqBand1Gain(
           int channel, double value) =>
       _writePhaseC(Icp5FrameCodec.buildPeqBand1GainWrite(channel, value),

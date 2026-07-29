@@ -81,7 +81,7 @@ void main() {
     expect(plan.writableOperations, isEmpty);
   });
 
-  test('XO parameters are unavailable and not writable', () {
+  test('XO HPF/LPF are captureProven; polarity remains unavailable', () {
     final plan = buildHardwareWritePlan(
       _pkg([
         const ExportParameterBlock(
@@ -102,13 +102,18 @@ void main() {
     final hp = _op(plan, HardwareParamKind.crossoverHighPass);
     final lp = _op(plan, HardwareParamKind.crossoverLowPass);
     final pol = _op(plan, HardwareParamKind.channelPolarity);
-    for (final o in [hp, lp, pol]) {
-      expect(o.writable, isFalse);
-      expect(o.verification, HardwareParamVerification.unavailable);
-    }
+    // HPF/LPF: param-ID 0x15, band 0, capture-proven via filter cutoff TEST/RESTORE.
+    expect(hp.writable, isTrue);
+    expect(hp.verification, HardwareParamVerification.captureProven);
+    expect(lp.writable, isTrue);
+    expect(lp.verification, HardwareParamVerification.captureProven);
+    // Polarity: no confirmed write path.
+    expect(pol.writable, isFalse);
+    expect(pol.verification, HardwareParamVerification.unavailable);
   });
 
-  test('channel gain/delay/mute are unavailable on ADAU1701', () {
+  test('channelGain is captureProven on ADAU1701; delay and mute remain unavailable',
+      () {
     final plan = buildHardwareWritePlan(
       _pkg([
         const ExportParameterBlock(
@@ -122,7 +127,10 @@ void main() {
       ]),
       adau1701,
     );
-    expect(_op(plan, HardwareParamKind.channelGain).writable, isFalse);
+    // channelGain: parameter-ID 0x14 + float32 LE + channel byte confirmed.
+    expect(_op(plan, HardwareParamKind.channelGain).writable, isTrue);
+    expect(_op(plan, HardwareParamKind.channelGain).verification,
+        HardwareParamVerification.captureProven);
     expect(_op(plan, HardwareParamKind.channelDelay).writable, isFalse);
     expect(_op(plan, HardwareParamKind.channelMute).writable, isFalse);
   });
@@ -185,10 +193,10 @@ void main() {
 
     final s = plan.summary;
     expect(s.totalOps, 7); // 3 + 3 + 1
-    expect(s.captureProvenCount, 2); // band0 gain + freq
+    expect(s.captureProvenCount, 3); // band0 gain + freq + XO high-pass
     expect(s.unverifiedCount, 4); // band0 q + band1 gain/freq/q
-    expect(s.unavailableCount, 1); // XO high-pass
-    expect(s.writableOps, 2);
+    expect(s.unavailableCount, 0);
+    expect(s.writableOps, 3);
     expect(s.writableOps, plan.writableOperations.length);
     expect(s.hasWritableOps, isTrue);
     expect(

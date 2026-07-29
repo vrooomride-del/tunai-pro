@@ -181,18 +181,24 @@ abstract final class HardwareDeviceProfiles {
       HardwareCapabilityEntry(
           kind: HardwareParamKind.peqQ,
           verification: HardwareParamVerification.unverified),
-      // No confirmed write path.
-      HardwareCapabilityEntry(
-          kind: HardwareParamKind.crossoverHighPass,
-          verification: HardwareParamVerification.unavailable),
-      HardwareCapabilityEntry(
-          kind: HardwareParamKind.crossoverLowPass,
-          verification: HardwareParamVerification.unavailable),
-      HardwareCapabilityEntry(
-          kind: HardwareParamKind.channelDelay,
-          verification: HardwareParamVerification.unavailable),
+      // Channel gain: parameter-ID 0x14 + float32 LE dB + channel byte 0–3
+      // are capture-confirmed. Arbitrary dB values are hardware-unverified at
+      // the value level; ACK-only (no readback service yet).
       HardwareCapabilityEntry(
           kind: HardwareParamKind.channelGain,
+          verification: HardwareParamVerification.captureProven),
+      // crossoverHighPass / crossoverLowPass: parameter-ID 0x15 + band 0 +
+      // 16-bit LE Hz, capture-proven via TEST/RESTORE pairs on channels 0–3
+      // (CH0/1 at 2000/2001 Hz, CH2/3 at 20/21 Hz). Frame structure identical
+      // to buildFilterFrequencyWriteArbitrary(channel, freq, band: 0).
+      HardwareCapabilityEntry(
+          kind: HardwareParamKind.crossoverHighPass,
+          verification: HardwareParamVerification.captureProven),
+      HardwareCapabilityEntry(
+          kind: HardwareParamKind.crossoverLowPass,
+          verification: HardwareParamVerification.captureProven),
+      HardwareCapabilityEntry(
+          kind: HardwareParamKind.channelDelay,
           verification: HardwareParamVerification.unavailable),
     ],
   );
