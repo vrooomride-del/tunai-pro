@@ -45,3 +45,10 @@ final workbenchTabProvider =
 enum DeployScrollTarget { factoryProfile }
 
 final deployScrollTargetProvider = StateProvider<DeployScrollTarget?>((ref) => null);
+
+// ── Guided AI target channel ───────────────────────────────────────────────────
+// Import tab writes this before navigating to kTabGuidedAi so Guided AI can
+// display and analyze the exact selected channel instead of falling back to
+// the first available channel.
+
+final guidedAiTargetChannelProvider = StateProvider<String?>((ref) => null);

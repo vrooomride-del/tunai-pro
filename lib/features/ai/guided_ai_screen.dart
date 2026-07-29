@@ -21,6 +21,7 @@ import '../../core/orchestrator/pro_guided_ai_state.dart';
 import '../../core/orchestrator/pro_local_orchestrator_session.dart';
 import '../../core/orchestrator/pro_orchestrator_plan.dart';
 import '../../core/orchestrator/pro_orchestrator_types.dart';
+import '../../core/pro_acoustic_data.dart' show DriverChannel;
 import '../../core/pro_correction_cycle.dart';
 import '../../core/pro_project_store.dart';
 import '../../core/spectrum_snapshot.dart';
@@ -68,14 +69,24 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
         .firstOrNull;
     if (project == null) return;
 
-    final driverCh = project.acousticState.driverChannels.firstOrNull;
+    // Use the channelId from the apply result if available; avoids firstOrNull.
+    final appliedChannelId = aiState.applyResult?.channelId;
+    final driverCh = appliedChannelId != null
+        ? project.acousticState.driverChannels
+            .where((c) => c.id == appliedChannelId)
+            .firstOrNull
+        : project.acousticState.driverChannels.firstOrNull;
     final beforePoints = driverCh?.frdData?.points
             .where((p) => p.magnitudeDb != null)
             .map((p) => FrdPoint(frequency: p.frequencyHz, spl: p.magnitudeDb!))
             .toList() ??
         <FrdPoint>[];
 
-    final peqChannel = project.tuningState.peqChannels.firstOrNull;
+    final peqChannel = appliedChannelId != null
+        ? project.tuningState.peqChannels
+            .where((c) => c.channelId == appliedChannelId)
+            .firstOrNull
+        : project.tuningState.peqChannels.firstOrNull;
     if (peqChannel == null) return;
 
     final beforeRef = aiState.beforeMeasurementRef ??
@@ -133,6 +144,22 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
         .where((p) => p.id == widget.projectId)
         .firstOrNull;
 
+    // Channel selection handoff from Import tab.
+    final targetChannelId = ref.watch(guidedAiTargetChannelProvider);
+    final frdChannels =
+        project?.acousticState.driverChannels.where((d) => d.hasParsedFrd).toList() ??
+            [];
+    // Resolve the target driver channel for display and analysis.
+    // If a channelId was explicitly handed off, use it. If exactly one FRD
+    // channel exists, use that. Otherwise null (requires explicit selection).
+    final DriverChannel? targetChannel = targetChannelId != null
+        ? frdChannels.where((d) => d.id == targetChannelId).firstOrNull
+        : (frdChannels.length == 1 ? frdChannels.first : null);
+    final bool channelIdInvalid =
+        targetChannelId != null && targetChannel == null;
+    final bool needsChannelSelection =
+        targetChannelId == null && frdChannels.length > 1;
+
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
       body: SafeArea(
@@ -159,17 +186,10 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
               _ContextRow(
                 projectName: project?.name,
                 hwTarget: project?.dspTarget,
-                primaryFrdFilename: project?.acousticState.driverChannels
-                    .firstOrNull?.frdFile?.fileName,
-                driverChannelLabel: project?.acousticState.driverChannels
-                    .where((d) => d.hasParsedFrd)
-                    .firstOrNull
-                    ?.shortLabel,
-                repeatSweepCount: project?.acousticState.driverChannels
-                    .where((d) => d.hasParsedFrd)
-                    .firstOrNull
-                    ?.additionalFrdSweeps
-                    .length,
+                primaryFrdFilename: targetChannel?.frdFile?.fileName,
+                driverChannelLabel: targetChannel?.shortLabel,
+                repeatSweepCount:
+                    targetChannel?.additionalFrdSweeps.length,
                 cycleNumber: (project?.correctionCycles.length ?? 0) + 1,
               ),
               const SizedBox(height: 20),
@@ -201,6 +221,60 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
+                if (channelIdInvalid) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1A0A00),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.redAccent.withAlpha(80)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.block_outlined,
+                            color: Colors.redAccent, size: 15),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '채널 없음: \'$targetChannelId\' — Import 탭에서 다시 선택하세요.',
+                            style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 12,
+                                height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (needsChannelSelection) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1A1200),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.amber.withAlpha(80)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.touch_app_outlined,
+                            color: Colors.amber, size: 15),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '채널을 선택하세요 — Import 탭의 채널 카드에서 \'이 채널 분석\'을 누르세요.',
+                            style: TextStyle(
+                                color: Colors.amber,
+                                fontSize: 12,
+                                height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 const Text('목표 설명',
                     style: TextStyle(
                         color: Colors.white60, fontSize: 12, letterSpacing: 2)),
@@ -225,12 +299,21 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   width: double.infinity,
                   child: FilledButton(
                     onPressed: (project == null ||
-                            project.acousticState.parsedFrdCount == 0)
+                            project.acousticState.parsedFrdCount == 0 ||
+                            channelIdInvalid ||
+                            needsChannelSelection)
                         ? null
                         : () {
+                            // Consume the target channel — clear provider after
+                            // the analysis starts so it doesn't linger.
+                            final channelId = targetChannelId;
+                            ref
+                                .read(guidedAiTargetChannelProvider.notifier)
+                                .state = null;
                             ref.read(guidedAiProvider.notifier).start(
                                   project: project,
                                   userGoal: _goalCtrl.text,
+                                  targetChannelId: channelId,
                                   onApply: (pid, applyResult) async {
                                     // Read the latest project at apply time —
                                     // not the stale closure captured at
@@ -263,8 +346,11 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
-                    child: const Text('AI 분석 시작',
-                        style: TextStyle(
+                    child: Text(
+                        needsChannelSelection
+                            ? '분석 불가 — 채널을 선택하세요'
+                            : 'AI 분석 시작',
+                        style: const TextStyle(
                             color: Colors.white,
                             letterSpacing: 2,
                             fontSize: 13)),

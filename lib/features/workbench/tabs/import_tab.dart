@@ -147,6 +147,11 @@ class _ImportTabState extends ConsumerState<ImportTab> {
   MeasurementProjectState get _acoustic =>
       _project?.acousticState ?? MeasurementProjectState.createDefault();
 
+  void _analyzeChannel(DriverChannel ch) {
+    ref.read(guidedAiTargetChannelProvider.notifier).state = ch.id;
+    ref.read(workbenchTabProvider.notifier).go(kTabGuidedAi);
+  }
+
   // ── Core import (unchanged logic from previous version) ───────────────────
 
   Future<void> _applyImport(
@@ -538,28 +543,63 @@ class _ImportTabState extends ConsumerState<ImportTab> {
                         _handleDrop(detail, cardChannel: ch),
                     onAddRepeatSweep: () => _addRepeatSweep(ch),
                     onRemoveRepeatSweep: (i) => _removeRepeatSweep(ch, i),
+                    onAnalyzeAi: ch.hasParsedFrd
+                        ? () => _analyzeChannel(ch)
+                        : null,
                   )),
 
               // "Analyze with AI" shortcut — only when FRD data is present.
               if (acoustic.parsedFrdCount > 0) ...[
                 const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => ref
-                        .read(workbenchTabProvider.notifier)
-                        .go(kTabGuidedAi),
-                    icon: const Icon(Icons.psychology_outlined, size: 15),
-                    label: const Text('AI로 분석하기'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white60,
-                      side: const BorderSide(color: Colors.white12),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
-                ),
+                Builder(builder: (context) {
+                  final frdChannels = acoustic.driverChannels
+                      .where((ch) => ch.hasParsedFrd)
+                      .toList();
+                  final repeatChannels = frdChannels
+                      .where((ch) => ch.additionalFrdSweeps.isNotEmpty)
+                      .toList();
+                  // Deterministic selection: exactly one FRD channel, OR
+                  // exactly one channel has repeat evidence.
+                  DriverChannel? autoChannel;
+                  if (frdChannels.length == 1) {
+                    autoChannel = frdChannels.first;
+                  } else if (repeatChannels.length == 1) {
+                    autoChannel = repeatChannels.first;
+                  }
+                  final multipleEligible = frdChannels.length > 1 &&
+                      repeatChannels.length != 1;
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: autoChannel != null
+                              ? () => _analyzeChannel(autoChannel!)
+                              : null,
+                          icon: const Icon(Icons.psychology_outlined, size: 15),
+                          label: const Text('AI로 분석하기'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white60,
+                            side: const BorderSide(color: Colors.white12),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                      if (multipleEligible) ...[
+                        const SizedBox(height: 6),
+                        const Text(
+                          '채널이 여러 개입니다 — 아래 카드에서 \'이 채널 분석\'을 선택하세요.',
+                          style: TextStyle(
+                              color: Colors.white38, fontSize: 10),
+                        ),
+                      ],
+                    ],
+                  );
+                }),
               ],
 
               // Empty state
@@ -611,6 +651,7 @@ class _DroppableDriverCard extends StatefulWidget {
   final void Function(DropDoneDetails) onDropFiles;
   final VoidCallback onAddRepeatSweep;
   final void Function(int) onRemoveRepeatSweep;
+  final VoidCallback? onAnalyzeAi;
 
   const _DroppableDriverCard({
     required this.channel,
@@ -619,6 +660,7 @@ class _DroppableDriverCard extends StatefulWidget {
     required this.onDropFiles,
     required this.onAddRepeatSweep,
     required this.onRemoveRepeatSweep,
+    this.onAnalyzeAi,
   });
 
   @override
@@ -653,6 +695,7 @@ class _DroppableDriverCardState extends State<_DroppableDriverCard> {
           onRemoveZma: widget.onRemoveZma,
           onAddRepeatSweep: widget.onAddRepeatSweep,
           onRemoveRepeatSweep: widget.onRemoveRepeatSweep,
+          onAnalyzeAi: widget.onAnalyzeAi,
         ),
       ),
     );
@@ -1496,6 +1539,7 @@ class _DriverDataCard extends StatelessWidget {
   final VoidCallback onRemoveZma;
   final VoidCallback onAddRepeatSweep;
   final void Function(int) onRemoveRepeatSweep;
+  final VoidCallback? onAnalyzeAi;
 
   const _DriverDataCard({
     required this.channel,
@@ -1503,6 +1547,7 @@ class _DriverDataCard extends StatelessWidget {
     required this.onRemoveZma,
     required this.onAddRepeatSweep,
     required this.onRemoveRepeatSweep,
+    this.onAnalyzeAi,
   });
 
   Color _statusColor(MeasurementStatus s) => switch (s) {
@@ -1578,6 +1623,34 @@ class _DriverDataCard extends StatelessWidget {
             onAdd: onAddRepeatSweep,
             onRemove: onRemoveRepeatSweep,
           ),
+          if (onAnalyzeAi != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: GestureDetector(
+                onTap: onAnalyzeAi,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: kProAccent.withValues(alpha: 0.45)),
+                    borderRadius: BorderRadius.circular(4),
+                    color: kProAccent.withValues(alpha: 0.06),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.psychology_outlined,
+                        color: kProAccent, size: 11),
+                    const SizedBox(width: 5),
+                    Text('이 채널 분석',
+                        style: TextStyle(
+                            color: kProAccent.withValues(alpha: 0.85),
+                            fontSize: 10)),
+                  ]),
+                ),
+              ),
+            ),
+          ],
         ],
       ]),
     );

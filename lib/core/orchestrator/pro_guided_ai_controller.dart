@@ -74,6 +74,9 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   Future<void> start({
     required ProProject project,
     required String userGoal,
+    // When set, only this channel's ID is passed as measurementRef so the
+    // orchestrator analyzes the exact selected channel. Null → all channels.
+    String? targetChannelId,
     // Called after acousticValidateSafety completes to persist the apply result.
     // Null → apply step is skipped (tests, offline mode).
     Future<void> Function(String projectId, TuningApplyResult)? onApply,
@@ -83,9 +86,9 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
 
     final pid = project.id;
 
-    final measRefs = [
-      for (final ch in project.acousticState.driverChannels) ch.id,
-    ];
+    final measRefs = targetChannelId != null
+        ? [targetChannelId]
+        : [for (final ch in project.acousticState.driverChannels) ch.id];
 
     final request = ProOrchestrateRequest(
       projectId: pid,
