@@ -368,6 +368,9 @@ class DeployProjectState {
   final String? activePresetId;
   final DateTime updatedAt;
   final int revision;
+  // Last successfully ACK-confirmed gain per channel (channelId → dB).
+  // Written after PASS_ACK; used for rollback ("Restore previous").
+  final Map<String, double> appliedGainsByChannel;
 
   DeployProjectState({
     this.packages = const [],
@@ -376,7 +379,9 @@ class DeployProjectState {
     this.activePresetId,
     DateTime? updatedAt,
     this.revision = 0,
-  }) : updatedAt = updatedAt ?? DateTime.now();
+    Map<String, double>? appliedGainsByChannel,
+  }) : updatedAt = updatedAt ?? DateTime.now(),
+       appliedGainsByChannel = appliedGainsByChannel ?? const {};
 
   // ── Computed getters ──────────────────────────────────────────────────────
 
@@ -431,6 +436,7 @@ class DeployProjectState {
     String? activePresetId,
     DateTime? updatedAt,
     int? revision,
+    Map<String, double>? appliedGainsByChannel,
   }) => DeployProjectState(
     packages: packages ?? this.packages,
     presets: presets ?? this.presets,
@@ -438,6 +444,7 @@ class DeployProjectState {
     activePresetId: activePresetId ?? this.activePresetId,
     updatedAt: updatedAt ?? this.updatedAt,
     revision: revision ?? this.revision,
+    appliedGainsByChannel: appliedGainsByChannel ?? this.appliedGainsByChannel,
   );
 
   // ── Serialisation ─────────────────────────────────────────────────────────
@@ -449,6 +456,8 @@ class DeployProjectState {
     if (activePresetId != null) 'activePresetId': activePresetId,
     'updatedAt': updatedAt.toIso8601String(),
     'revision': revision,
+    if (appliedGainsByChannel.isNotEmpty)
+      'appliedGainsByChannel': appliedGainsByChannel,
   };
 
   factory DeployProjectState.fromJson(Map<String, dynamic> j) =>
@@ -466,6 +475,9 @@ class DeployProjectState {
         updatedAt:
             DateTime.tryParse(j['updatedAt'] as String? ?? '') ?? DateTime.now(),
         revision: j['revision'] as int? ?? 0,
+        appliedGainsByChannel: (j['appliedGainsByChannel'] as Map?)
+            ?.map((k, v) => MapEntry(k as String, (v as num).toDouble())) ??
+            const {},
       );
 
   static DeployProjectState createDefault() => DeployProjectState(

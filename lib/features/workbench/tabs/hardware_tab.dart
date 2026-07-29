@@ -36,6 +36,7 @@ import 'transport_connection_panel.dart';
 import 'adau1701_icp5_tuning_panel.dart';
 import '../../../core/transport/icp5_transports.dart';
 import '../../../core/deploy/pro_hardware_context_provider.dart';
+import '../../../core/deploy/pro_adau1701_hardware_context.dart';
 
 class HardwareTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -106,9 +107,15 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   // ── ADAU1701 ICP5 tuning transports (USB + BLE shared with connection panel)
   late final Icp5UsbTransport _adau1701UsbTransport;
   late final Icp5BluetoothTransport _adau1701BleTransport;
+  // Hardware contexts wrapping each transport — shared with the deploy dialog
+  // via activeAdau1701ContextProvider. The BLE context on macOS is owned here;
+  // on Windows it comes from adau1701Icp5BleWindowsContextProvider.
+  late final Adau1701HardwareContext _adau1701BleContext;
   // True only for a tab-created (macOS local) BLE transport; the Windows BLE
   // transport is owned by adau1701Icp5BleWindowsContextProvider.
   bool _ownsBleTransport = true;
+  // Last value synced to the project store so we avoid redundant writes.
+  HardwareConnection? _lastSyncedConnection;
   Timer? _tuningRefreshTimer;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
@@ -333,17 +340,31 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           ref.read(adau1701Icp5BleWindowsContextProvider).transport
               as Icp5BluetoothTransport;
       _ownsBleTransport = false;
+      // Reuse the provider-owned context — do not create a second wrapper.
+      _adau1701BleContext = ref.read(adau1701Icp5BleWindowsContextProvider);
     } else {
       _adau1701BleTransport = Icp5BluetoothTransport(
         readTimeout: const Duration(seconds: 3),
         writeTimeout: const Duration(seconds: 3),
       );
       _ownsBleTransport = true;
+      // Wrap the tab-owned macOS BLE transport so the deploy dialog can use it
+      // via activeAdau1701ContextProvider when BLE is the active connection.
+      // Default transportType (icp5) is used — no import of pro_hardware_capability
+      // needed, which avoids a HardwareTransportType name conflict with the one
+      // already imported from pro_hardware_connection_data.dart.
+      _adau1701BleContext =
+          Adau1701HardwareContext.fromTransport(_adau1701BleTransport);
     }
     // Periodic rebuild so the tuning panel's key reflects the active transport
     // (USB vs BLE) without needing a callback from TransportConnectionPanel.
+    // Also syncs the live ICP5 transport connection state to the project store
+    // so the status bar and other tabs see the correct connection status.
     _tuningRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        _syncConnectionToStore();
+      }
     });
     if (widget.usbiBackend != null) {
       _usbiNativeBackend = widget.usbiBackend!;
@@ -379,6 +400,38 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     // close the macOS local BLE transport this tab created.
     if (_ownsBleTransport) _adau1701BleTransport.close();
     super.dispose();
+  }
+
+  /// Syncs the live ICP5 transport handshake state to `project.connection` in
+  /// the store and to `activeAdau1701ContextProvider` so the status bar, deploy
+  /// dialog, and all other consumers see the correct value.
+  /// Called by the 1 s refresh timer.
+  void _syncConnectionToStore() {
+    final projectId = widget.projectId;
+    final bleReady = _adau1701BleTransport.isConnected &&
+        _adau1701BleTransport.handshakeComplete;
+    final usbReady = _adau1701UsbTransport.isConnected &&
+        _adau1701UsbTransport.handshakeComplete;
+    final liveConnected = bleReady || usbReady;
+    final want = liveConnected
+        ? HardwareConnection.connected
+        : HardwareConnection.disconnected;
+
+    // Always update the active context so the deploy dialog uses the right
+    // transport (BLE / USB) — the transport can swap while liveConnected stays
+    // true, which would not change `want` and would be skipped by the guard.
+    final activeCtx = bleReady
+        ? _adau1701BleContext
+        : usbReady
+            ? ref.read(adau1701Icp5UsbContextProvider)
+            : null;
+    ref.read(activeAdau1701ContextProvider.notifier).state = activeCtx;
+
+    if (_lastSyncedConnection == want) return;
+    _lastSyncedConnection = want;
+    ref
+        .read(proProjectStoreProvider.notifier)
+        .updateHardwareConnection(projectId, want);
   }
 
   /// Returns whichever ADAU1701 ICP5 transport is currently ready.

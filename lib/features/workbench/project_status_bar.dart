@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/pro_project.dart';
 import '../../core/pro_project_store.dart';
 import '../../shared/pro_widgets.dart';
+import 'widgets/deploy_dialog.dart';
 
 class ProjectStatusBar extends ConsumerWidget {
   final String projectId;
@@ -19,7 +20,15 @@ class ProjectStatusBar extends ConsumerWidget {
     final dspTarget = project?.dspTarget ?? '—';
     final profileLabel = project?.profileStatus.label ?? '—';
     final safetyLabel = project?.safetyStatus.label ?? '—';
+    // isConnected reflects PASS_HANDSHAKE: _syncConnectionToStore in hardware_tab
+    // only writes HardwareConnection.connected when handshakeComplete is true,
+    // which requires DSP1701.100.00.01 firmware identity confirmation.
     final isConnected = project?.connection == HardwareConnection.connected;
+
+    final canDeploy = project != null &&
+        project.dspTarget == 'ADAU1701' &&
+        isConnected &&
+        project.acousticState.driverChannels.isNotEmpty;
 
     return Container(
       height: 36,
@@ -68,6 +77,20 @@ class ProjectStatusBar extends ConsumerWidget {
               ],
               const SizedBox(width: 16),
             ]),
+          ),
+        ),
+        // DEPLOY button — ADAU1701 + ICP5 handshake + channels required
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: _DeployButton(
+            enabled: canDeploy,
+            onTap: () => showDeployDialog(
+              context: context,
+              projectId: projectId,
+              channels: project!.acousticState.driverChannels,
+              tuning: project.tuningState,
+              previousAppliedGains: project.deployState.appliedGainsByChannel,
+            ),
           ),
         ),
         // Fixed right safety badge — never overflows
@@ -131,4 +154,46 @@ class _Div extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       Container(width: 0.5, height: 16, color: kProBorder);
+}
+
+class _DeployButton extends StatelessWidget {
+  final bool enabled;
+  final VoidCallback onTap;
+  const _DeployButton({required this.enabled, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: enabled ? onTap : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: enabled
+                  ? kProAccent.withValues(alpha: 0.7)
+                  : kProBorder,
+            ),
+            borderRadius: BorderRadius.circular(3),
+            color: enabled
+                ? kProAccent.withValues(alpha: 0.08)
+                : Colors.transparent,
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(
+              Icons.upload_outlined,
+              size: 11,
+              color: enabled ? kProAccent : Colors.white24,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              'DEPLOY',
+              style: proLabel(
+                size: 9,
+                color: enabled ? kProAccent : Colors.white24,
+                spacing: 1.2,
+              ),
+            ),
+          ]),
+        ),
+      );
 }

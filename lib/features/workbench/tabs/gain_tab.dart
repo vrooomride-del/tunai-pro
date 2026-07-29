@@ -83,6 +83,9 @@ class _GainTabState extends ConsumerState<GainTab> {
         store.projects.where((p) => p.id == widget.projectId).firstOrNull;
     final drivers = project?.acousticState.driverChannels ?? [];
     final tuning = project?.tuningState ?? TuningProjectState.createDefault();
+    // ADAU1466 operational controls are only relevant for ADAU1466 projects.
+    // ADAU1701 projects write gains through the ICP5 deploy path, not USBi.
+    final showAdau1466Controls = (project?.dspTarget ?? '') != 'ADAU1701';
     final operational = OperationalAdau1466GainControls(
       backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
       isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
@@ -93,7 +96,7 @@ class _GainTabState extends ConsumerState<GainTab> {
     if (drivers.isEmpty) {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
-        child: operational,
+        child: showAdau1466Controls ? operational : const SizedBox.shrink(),
       );
     }
 
@@ -135,8 +138,10 @@ class _GainTabState extends ConsumerState<GainTab> {
                 'Channel level matching and output trim. '
                 'Hardware write remains disabled. Use the Hardware tab for dry-run planning.',
                 style: proSubtitle()),
-            const SizedBox(height: 16),
-            operational,
+            if (showAdau1466Controls) ...[
+              const SizedBox(height: 16),
+              operational,
+            ],
             const SizedBox(height: 16),
             // Channel header
             _GainChannelHeader(

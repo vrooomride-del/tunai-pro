@@ -190,6 +190,24 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
         project.copyWith(deployState: deployState, updatedAt: DateTime.now()));
   }
 
+  /// Records confirmed ACK-applied gains per channel for rollback.
+  /// Merges [gains] into the existing map so previously-applied channels
+  /// that weren't part of this write are preserved.
+  Future<void> updateDeployAppliedGains(
+      String id, Map<String, double> gains) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    final merged = {
+      ...project.deployState.appliedGainsByChannel,
+      ...gains,
+    };
+    final updated = project.deployState.copyWith(
+      appliedGainsByChannel: merged,
+      updatedAt: DateTime.now(),
+    );
+    await updateProject(
+        project.copyWith(deployState: updated, updatedAt: DateTime.now()));
+  }
+
   Future<void> updateAddressValidationState(
       String id, AddressValidationProjectState addressValidationState) async {
     final project = state.projects.firstWhere((p) => p.id == id);

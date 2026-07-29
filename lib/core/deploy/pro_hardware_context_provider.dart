@@ -29,6 +29,14 @@ final adau1701Icp5UsbContextProvider = Provider<Adau1701HardwareContext>((ref) {
   return ctx;
 });
 
+/// The currently active ADAU1701 ICP5 hardware context — whichever of BLE or
+/// USB has a live PASS_HANDSHAKE. Null when disconnected.
+/// Updated by hardware_tab's _syncConnectionToStore() on every 1 s tick.
+/// Deploy consumers read this instead of a transport-specific provider so the
+/// correct transport is always used regardless of connection path (BLE / USB).
+final activeAdau1701ContextProvider =
+    StateProvider<Adau1701HardwareContext?>((ref) => null);
+
 /// Shared ADAU1701 ICP5 **Bluetooth (WinRT)** hardware context for Windows.
 ///
 /// Wraps the WinRT [WindowsIcp5BluetoothDriver] in the generic ICP5 transport so
