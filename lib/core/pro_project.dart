@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'factory_sound_profile.dart';
 import 'pro_acoustic_data.dart';
 import 'pro_correction_cycle.dart';
 import 'pro_tuning_data.dart';
@@ -86,6 +87,10 @@ class ProProject {
   /// Each entry records one before/apply/deploy/after pass.
   final List<CorrectionCycle> correctionCycles;
 
+  /// Immutable Factory Sound Profile snapshots for this project.
+  /// Profiles are append-only: existing entries are never modified after creation.
+  final List<FactorySoundProfile> factoryProfiles;
+
   ProProject({
     required this.id,
     required this.name,
@@ -112,6 +117,7 @@ class ProProject {
     DeployProjectState? deployState,
     AddressValidationProjectState? addressValidationState,
     this.correctionCycles = const [],
+    this.factoryProfiles = const [],
   }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
        tuningState = tuningState ?? TuningProjectState.createDefault(),
        protectionState = protectionState ?? ProtectionProjectState.createDefault(),
@@ -168,6 +174,7 @@ class ProProject {
     DeployProjectState? deployState,
     AddressValidationProjectState? addressValidationState,
     List<CorrectionCycle>? correctionCycles,
+    List<FactorySoundProfile>? factoryProfiles,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -194,6 +201,7 @@ class ProProject {
     deployState: deployState ?? this.deployState,
     addressValidationState: addressValidationState ?? this.addressValidationState,
     correctionCycles: correctionCycles ?? this.correctionCycles,
+    factoryProfiles: factoryProfiles ?? this.factoryProfiles,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -229,6 +237,9 @@ class ProProject {
     if (correctionCycles.isNotEmpty)
       'correctionCycles':
           correctionCycles.map((c) => c.toJson()).toList(),
+    if (factoryProfiles.isNotEmpty)
+      'factoryProfiles':
+          factoryProfiles.map((p) => p.toJson()).toList(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -281,6 +292,10 @@ class ProProject {
     correctionCycles: (j['correctionCycles'] as List? ?? [])
         .map((e) =>
             CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList(),
+    factoryProfiles: (j['factoryProfiles'] as List? ?? [])
+        .map((e) =>
+            FactorySoundProfile.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList(),
   );
 

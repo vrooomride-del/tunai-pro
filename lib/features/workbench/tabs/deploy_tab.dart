@@ -6,6 +6,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/factory_profile_builder.dart';
+import '../../../core/factory_profile_exporter.dart';
+import '../../../core/factory_sound_profile.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_deploy_package_data.dart';
@@ -31,6 +34,11 @@ class _DeployTabState extends ConsumerState<DeployTab> {
   final _nameController = TextEditingController();
   final _notesController = TextEditingController();
 
+  // ── Factory Sound Profile state ──────────────────────────────────────────────
+  bool _fpCreating = false;
+  bool _fpShowExport = false;
+  final _fpNameController = TextEditingController();
+
   ProProject? get _project => ref
       .read(proProjectStoreProvider)
       .projects
@@ -41,7 +49,27 @@ class _DeployTabState extends ConsumerState<DeployTab> {
   void dispose() {
     _nameController.dispose();
     _notesController.dispose();
+    _fpNameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _createFactoryProfile() async {
+    final project = _project;
+    if (project == null) return;
+    setState(() => _fpCreating = true);
+    try {
+      final name = _fpNameController.text.trim().isEmpty
+          ? null
+          : _fpNameController.text.trim();
+      final profile = FactoryProfileBuilder.build(project, profileName: name);
+      if (profile == null) return;
+      await ref
+          .read(proProjectStoreProvider.notifier)
+          .addFactoryProfile(widget.projectId, profile);
+      _fpNameController.clear();
+    } finally {
+      if (mounted) setState(() => _fpCreating = false);
+    }
   }
 
   Future<void> _generatePackage() async {
@@ -301,7 +329,22 @@ class _DeployTabState extends ConsumerState<DeployTab> {
           const SizedBox(height: 20),
         ],
 
-        // ── G: Safety banner ─────────────────────────────────────────────────
+        // ── G: Factory Sound Profile ─────────────────────────────────────────
+        const _SectionHeader('FACTORY SOUND PROFILE', Icons.verified_outlined),
+        const SizedBox(height: 8),
+        if (project != null)
+          _FactoryProfileSection(
+            project: project,
+            nameController: _fpNameController,
+            creating: _fpCreating,
+            showExport: _fpShowExport,
+            onToggleExport: () =>
+                setState(() => _fpShowExport = !_fpShowExport),
+            onCreate: _createFactoryProfile,
+          ),
+        const SizedBox(height: 20),
+
+        // ── H: Safety banner ─────────────────────────────────────────────────
         const SizedBox(height: 4),
         Container(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
@@ -929,6 +972,275 @@ class _SafetyRow extends StatelessWidget {
       child: Text(text, style: const TextStyle(fontSize: 10, color: kProAmber)),
     ),
   ]);
+}
+
+// ── _FactoryProfileSection ────────────────────────────────────────────────────
+
+class _FactoryProfileSection extends StatelessWidget {
+  final ProProject project;
+  final TextEditingController nameController;
+  final bool creating;
+  final bool showExport;
+  final VoidCallback onToggleExport;
+  final VoidCallback onCreate;
+
+  const _FactoryProfileSection({
+    required this.project,
+    required this.nameController,
+    required this.creating,
+    required this.showExport,
+    required this.onToggleExport,
+    required this.onCreate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final eligibility = FactoryProfileBuilder.checkEligibility(project);
+    final latestProfile = project.factoryProfiles.isNotEmpty
+        ? project.factoryProfiles.last
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Eligibility result
+        _EligibilityCard(eligibility: eligibility),
+        const SizedBox(height: 10),
+
+        if (eligibility.isApproved) ...[
+          // Profile name input
+          TextField(
+            controller: nameController,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+            decoration: InputDecoration(
+              hintText: project.name,
+              hintStyle: const TextStyle(color: Colors.white30, fontSize: 12),
+              labelText: 'Profile Name',
+              labelStyle: const TextStyle(color: Colors.white38, fontSize: 11),
+              filled: true,
+              fillColor: kProSurface,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide: const BorderSide(color: kProBorder),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide: const BorderSide(color: kProBorder),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: creating ? null : onCreate,
+              icon: creating
+                  ? const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 1.5, color: Colors.white))
+                  : const Icon(Icons.verified_outlined, size: 14),
+              label: const Text('Create Factory Sound Profile',
+                  style: TextStyle(fontSize: 12)),
+              style: FilledButton.styleFrom(
+                backgroundColor: kProAccent.withValues(alpha: 0.15),
+                foregroundColor: kProAccent,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                  side: BorderSide(color: kProAccent.withValues(alpha: 0.4)),
+                ),
+              ),
+            ),
+          ),
+        ],
+
+        // Latest profile summary
+        if (latestProfile != null) ...[
+          const SizedBox(height: 12),
+          _ProfileSummaryCard(
+            profile: latestProfile,
+            showExport: showExport,
+            onToggleExport: onToggleExport,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _EligibilityCard extends StatelessWidget {
+  final FactoryProfileEligibility eligibility;
+  const _EligibilityCard({required this.eligibility});
+
+  @override
+  Widget build(BuildContext context) {
+    if (eligibility.isApproved) {
+      return Row(children: [
+        const Icon(Icons.check_circle_outline,
+            color: Color(0xFF4CAF50), size: 14),
+        const SizedBox(width: 8),
+        Text('Eligible for factory profile creation',
+            style: proSubtitle(size: 11, color: const Color(0xFF4CAF50))),
+      ]);
+    }
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.redAccent.withValues(alpha: 0.07),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.block_outlined, color: Colors.redAccent, size: 13),
+            const SizedBox(width: 6),
+            Text('Not eligible',
+                style: proSubtitle(size: 11, color: Colors.redAccent)),
+          ]),
+          const SizedBox(height: 6),
+          for (final r in eligibility.reasons)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('• ',
+                      style:
+                          TextStyle(color: Colors.redAccent, fontSize: 10)),
+                  Expanded(
+                    child: Text(r,
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 10, height: 1.4)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileSummaryCard extends StatelessWidget {
+  final FactorySoundProfile profile;
+  final bool showExport;
+  final VoidCallback onToggleExport;
+  const _ProfileSummaryCard({
+    required this.profile,
+    required this.showExport,
+    required this.onToggleExport,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    String? exportJson;
+    String? exportError;
+    try {
+      exportJson = const JsonEncoder.withIndent('  ')
+          .convert(FactoryProfileExporter.toJson(profile));
+    } on UnsupportedHardwareExportError catch (e) {
+      exportError = e.toString();
+    } catch (e) {
+      exportError = 'Export error: $e';
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.verified, color: Color(0xFF4CAF50), size: 14),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                profile.profileName,
+                style: proTitle(size: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: kProAccent.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(3),
+                border:
+                    Border.all(color: kProAccent.withValues(alpha: 0.4)),
+              ),
+              child: Text('v${profile.version}',
+                  style: const TextStyle(
+                      fontSize: 9,
+                      color: kProAccent,
+                      fontWeight: FontWeight.w600)),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          _profileRow('Hardware', profile.hardwareTarget),
+          _profileRow('Channels', profile.channelConfig),
+          _profileRow('Validation', profile.validationStatus),
+          _profileRow('Cycles', '${profile.completedCycleNumbers.length} completed'),
+          _profileRow('Fingerprint', profile.projectFingerprint),
+          _profileRow('Created',
+              profile.createdAt.toIso8601String().substring(0, 19)),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: onToggleExport,
+            child: Row(children: [
+              Icon(showExport ? Icons.expand_less : Icons.expand_more,
+                  color: Colors.white38, size: 13),
+              const SizedBox(width: 6),
+              Text(
+                showExport ? 'Collapse JSON export' : 'Export JSON',
+                style: proSubtitle(size: 10),
+              ),
+            ]),
+          ),
+          if (showExport) ...[
+            const SizedBox(height: 6),
+            if (exportError != null)
+              Text(exportError,
+                  style: const TextStyle(
+                      color: Colors.redAccent, fontSize: 10))
+            else
+              SelectableText(
+                exportJson!,
+                style: const TextStyle(
+                    fontSize: 8,
+                    fontFamily: 'monospace',
+                    color: Colors.white54,
+                    height: 1.5),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _profileRow(String label, String value) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style: const TextStyle(color: Colors.white38, fontSize: 10)),
+            Text(value,
+                style: const TextStyle(
+                    color: Colors.white54, fontSize: 10)),
+          ],
+        ),
+      );
 }
 
 Widget _emptyBox(String msg) => Container(

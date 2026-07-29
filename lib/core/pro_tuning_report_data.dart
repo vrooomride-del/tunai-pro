@@ -356,6 +356,76 @@ class TuningReportDeploymentSummary {
       );
 }
 
+/// Factory Sound Profile summary section for the Tuning Report.
+class TuningReportFactoryProfileSummary {
+  final String profileId;
+  final String profileName;
+  final int profileVersion;
+  final String hardwareTarget;
+  final String channelConfig;
+  final int channelCount;
+  final int totalPeqBands;
+  final int xoConfiguredChannels;
+  final int completedCycleCount;
+  final String? beforeAfterImprovement;
+  final String validationStatus;
+  final String projectFingerprint;
+  final DateTime exportedAt;
+
+  const TuningReportFactoryProfileSummary({
+    required this.profileId,
+    required this.profileName,
+    required this.profileVersion,
+    required this.hardwareTarget,
+    required this.channelConfig,
+    required this.channelCount,
+    required this.totalPeqBands,
+    required this.xoConfiguredChannels,
+    required this.completedCycleCount,
+    this.beforeAfterImprovement,
+    required this.validationStatus,
+    required this.projectFingerprint,
+    required this.exportedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'profileId': profileId,
+        'profileName': profileName,
+        'profileVersion': profileVersion,
+        'hardwareTarget': hardwareTarget,
+        'channelConfig': channelConfig,
+        'channelCount': channelCount,
+        'totalPeqBands': totalPeqBands,
+        'xoConfiguredChannels': xoConfiguredChannels,
+        'completedCycleCount': completedCycleCount,
+        if (beforeAfterImprovement != null)
+          'beforeAfterImprovement': beforeAfterImprovement,
+        'validationStatus': validationStatus,
+        'projectFingerprint': projectFingerprint,
+        'exportedAt': exportedAt.toIso8601String(),
+      };
+
+  factory TuningReportFactoryProfileSummary.fromJson(
+          Map<String, dynamic> j) =>
+      TuningReportFactoryProfileSummary(
+        profileId: j['profileId'] as String? ?? '',
+        profileName: j['profileName'] as String? ?? '',
+        profileVersion: j['profileVersion'] as int? ?? 1,
+        hardwareTarget: j['hardwareTarget'] as String? ?? '',
+        channelConfig: j['channelConfig'] as String? ?? '',
+        channelCount: j['channelCount'] as int? ?? 0,
+        totalPeqBands: j['totalPeqBands'] as int? ?? 0,
+        xoConfiguredChannels: j['xoConfiguredChannels'] as int? ?? 0,
+        completedCycleCount: j['completedCycleCount'] as int? ?? 0,
+        beforeAfterImprovement: j['beforeAfterImprovement'] as String?,
+        validationStatus: j['validationStatus'] as String? ?? '',
+        projectFingerprint: j['projectFingerprint'] as String? ?? '',
+        exportedAt:
+            DateTime.tryParse(j['exportedAt'] as String? ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+      );
+}
+
 class TuningReportRevisions {
   final int tuning;
   final int protection;
@@ -394,6 +464,10 @@ class TuningReportData {
   final List<String> warnings;
   final TuningReportRevisions revisions;
 
+  /// Present when the project has at least one Factory Sound Profile.
+  /// Summarizes the most-recently-created profile.
+  final TuningReportFactoryProfileSummary? factoryProfile;
+
   const TuningReportData({
     this.schemaVersion = kTuningReportSchemaVersion,
     required this.generatedAt,
@@ -407,6 +481,7 @@ class TuningReportData {
     required this.deployment,
     required this.warnings,
     required this.revisions,
+    this.factoryProfile,
   });
 
   Map<String, dynamic> toJson() => {
@@ -422,6 +497,7 @@ class TuningReportData {
         'deployment': deployment.toJson(),
         'warnings': warnings,
         'revisions': revisions.toJson(),
+        if (factoryProfile != null) 'factoryProfile': factoryProfile!.toJson(),
       };
 
   factory TuningReportData.fromJson(Map<String, dynamic> j) {
@@ -442,6 +518,9 @@ class TuningReportData {
       deployment: TuningReportDeploymentSummary.fromJson(sub('deployment')),
       warnings: (j['warnings'] as List? ?? []).map((e) => e.toString()).toList(),
       revisions: TuningReportRevisions.fromJson(sub('revisions')),
+      factoryProfile: j['factoryProfile'] != null
+          ? TuningReportFactoryProfileSummary.fromJson(sub('factoryProfile'))
+          : null,
     );
   }
 }
@@ -559,6 +638,42 @@ TuningReportData buildTuningReport(
         '(electrical simulation).');
   }
 
+  // ── Factory Sound Profile summary ───────────────────────────────────────────
+  TuningReportFactoryProfileSummary? factoryProfileSummary;
+  if (project.factoryProfiles.isNotEmpty) {
+    final latest = project.factoryProfiles.last;
+    // Before/After improvement from the last completed correction cycle.
+    String? improvement;
+    final cycles = project.correctionCycles.where((c) => c.isComplete).toList();
+    if (cycles.isNotEmpty) {
+      final lastCycle = cycles.last;
+      final m = lastCycle.metrics;
+      if (m != null) {
+        final sign = m.improvementDelta >= 0 ? '+' : '';
+        improvement =
+            '$sign${m.improvementDelta.toStringAsFixed(2)} dB MAR delta '
+            '(${lastCycle.decision?.name ?? "pending"})';
+      }
+    }
+    factoryProfileSummary = TuningReportFactoryProfileSummary(
+      profileId: latest.profileId,
+      profileName: latest.profileName,
+      profileVersion: latest.version,
+      hardwareTarget: latest.hardwareTarget,
+      channelConfig: latest.channelConfig,
+      channelCount: latest.tuningSnapshot.peqChannels.length,
+      totalPeqBands: latest.tuningSnapshot.activePeqBands,
+      xoConfiguredChannels: latest.tuningSnapshot.crossoverChannels
+          .where((c) => c.isConfigured)
+          .length,
+      completedCycleCount: latest.completedCycleNumbers.length,
+      beforeAfterImprovement: improvement,
+      validationStatus: latest.validationStatus,
+      projectFingerprint: latest.projectFingerprint,
+      exportedAt: latest.createdAt,
+    );
+  }
+
   return TuningReportData(
     generatedAt: now,
     project: meta,
@@ -575,6 +690,7 @@ TuningReportData buildTuningReport(
       protection: project.protectionState.revision,
       optimizer: project.optimizerState.revision,
     ),
+    factoryProfile: factoryProfileSummary,
   );
 }
 

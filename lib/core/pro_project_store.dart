@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'factory_sound_profile.dart';
 import 'pro_correction_cycle.dart';
 import 'pro_project.dart';
 import 'pro_acoustic_data.dart';
@@ -217,6 +218,25 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
         .toList();
     await updateProject(project.copyWith(
         correctionCycles: updated, updatedAt: DateTime.now()));
+  }
+
+  /// Appends a new [FactorySoundProfile] to the project and persists.
+  Future<void> addFactoryProfile(String id, FactorySoundProfile profile) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    final updated = [...project.factoryProfiles, profile];
+    await updateProject(project.copyWith(
+        factoryProfiles: updated, updatedAt: DateTime.now()));
+  }
+
+  /// Replaces the [FactorySoundProfile] matching [profile.profileId] and persists.
+  Future<void> updateFactoryProfile(
+      String id, FactorySoundProfile profile) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    final updated = project.factoryProfiles
+        .map((p) => p.profileId == profile.profileId ? profile : p)
+        .toList();
+    await updateProject(project.copyWith(
+        factoryProfiles: updated, updatedAt: DateTime.now()));
   }
 }
 
