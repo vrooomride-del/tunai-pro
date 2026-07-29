@@ -107,15 +107,12 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   // ── ADAU1701 ICP5 tuning transports (USB + BLE shared with connection panel)
   late final Icp5UsbTransport _adau1701UsbTransport;
   late final Icp5BluetoothTransport _adau1701BleTransport;
-  // Hardware contexts wrapping each transport — shared with the deploy dialog
-  // via activeAdau1701ContextProvider. The BLE context on macOS is owned here;
-  // on Windows it comes from adau1701Icp5BleWindowsContextProvider.
+  // Hardware context wrapping the BLE transport — exposed via
+  // activeAdau1701ContextProvider only after PASS_HANDSHAKE.
   late final Adau1701HardwareContext _adau1701BleContext;
   // True only for a tab-created (macOS local) BLE transport; the Windows BLE
   // transport is owned by adau1701Icp5BleWindowsContextProvider.
   bool _ownsBleTransport = true;
-  // Last value synced to the project store so we avoid redundant writes.
-  HardwareConnection? _lastSyncedConnection;
   Timer? _tuningRefreshTimer;
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
@@ -358,13 +355,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     }
     // Periodic rebuild so the tuning panel's key reflects the active transport
     // (USB vs BLE) without needing a callback from TransportConnectionPanel.
-    // Also syncs the live ICP5 transport connection state to the project store
-    // so the status bar and other tabs see the correct connection status.
     _tuningRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() {});
-        _syncConnectionToStore();
-      }
+      if (mounted) setState(() {});
     });
     if (widget.usbiBackend != null) {
       _usbiNativeBackend = widget.usbiBackend!;
@@ -402,39 +394,21 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     super.dispose();
   }
 
-  /// Syncs the live ICP5 transport handshake state to `project.connection` in
-  /// the store and to `activeAdau1701ContextProvider` so the status bar, deploy
-  /// dialog, and all other consumers see the correct value.
-  /// Called by the 1 s refresh timer.
-  void _syncConnectionToStore() {
-    final projectId = widget.projectId;
-    final bleReady = _adau1701BleTransport.isConnected &&
-        _adau1701BleTransport.handshakeComplete;
-    final usbReady = _adau1701UsbTransport.isConnected &&
-        _adau1701UsbTransport.handshakeComplete;
-    final liveConnected = bleReady || usbReady;
-    final want = liveConnected
-        ? HardwareConnection.connected
-        : HardwareConnection.disconnected;
-
-    // Always update the active context so the deploy dialog uses the right
-    // transport (BLE / USB) — the transport can swap while liveConnected stays
-    // true, which would not change `want` and would be skipped by the guard.
-    final activeCtx = bleReady
-        ? _adau1701BleContext
-        : usbReady
-            ? ref.read(adau1701Icp5UsbContextProvider)
-            : null;
-    ref.read(activeAdau1701ContextProvider.notifier).state = activeCtx;
-
-    if (_lastSyncedConnection == want) return;
-    _lastSyncedConnection = want;
+  void _onBlePassHandshake() {
+    ref.read(activeAdau1701ContextProvider.notifier).state = _adau1701BleContext;
     ref
         .read(proProjectStoreProvider.notifier)
-        .updateHardwareConnection(projectId, want);
+        .updateHardwareConnection(widget.projectId, HardwareConnection.connected);
   }
 
-  /// Returns whichever ADAU1701 ICP5 transport is currently ready.
+  void _onBleDisconnected() {
+    ref.read(activeAdau1701ContextProvider.notifier).state = null;
+    ref
+        .read(proProjectStoreProvider.notifier)
+        .updateHardwareConnection(widget.projectId, HardwareConnection.disconnected);
+  }
+
+/// Returns whichever ADAU1701 ICP5 transport is currently ready.
   /// BLE takes priority when connected; falls back to USB.
   Icp5UsbTransport get _activeTuningTransport {
     if (_adau1701BleTransport.isConnected &&
@@ -524,6 +498,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
               widget.onDspWritesDisabledChanged?.call(true);
             });
           },
+          onBlePassHandshake: _onBlePassHandshake,
+          onBleDisconnected: _onBleDisconnected,
         ),
         const SizedBox(height: 20),
 

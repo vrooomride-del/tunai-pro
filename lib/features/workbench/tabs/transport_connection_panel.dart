@@ -52,6 +52,8 @@ class TransportConnectionPanel extends StatefulWidget {
   final Icp5UsbTransport? icp5UsbTransport;
   final Icp5BluetoothTransport? icp5BluetoothTransport;
   final bool? isMacOS;
+  final VoidCallback? onBlePassHandshake;
+  final VoidCallback? onBleDisconnected;
   const TransportConnectionPanel({
     super.key,
     required this.backend,
@@ -61,6 +63,8 @@ class TransportConnectionPanel extends StatefulWidget {
     this.icp5UsbTransport,
     this.icp5BluetoothTransport,
     this.isMacOS,
+    this.onBlePassHandshake,
+    this.onBleDisconnected,
   });
 
   @override
@@ -1066,6 +1070,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         }
       }
     });
+    if (passed) widget.onBlePassHandshake?.call();
   }
 
   Future<void> _disconnectBluetooth() async {
@@ -1077,6 +1082,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
       _bluetoothState = Icp5BluetoothUiState.disconnected;
       _bluetoothError = null;
     });
+    widget.onBleDisconnected?.call();
   }
 
   Icp5BluetoothUiState _classifyBluetoothFailure(String? message) {

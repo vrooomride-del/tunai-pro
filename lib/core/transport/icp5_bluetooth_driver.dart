@@ -94,28 +94,41 @@ class Icp5BluetoothGattDriver
             matches: [],
             error: 'Bluetooth adapter is not on.');
       }
-      await FlutterBluePlus.startScan(timeout: scanTimeout);
-      await FlutterBluePlus.isScanning
-          .where((scanning) => !scanning)
-          .first
-          .timeout(scanTimeout + const Duration(seconds: 1));
-      final results = await FlutterBluePlus.scanResults.first;
-      final matches = results
-          .where((result) => result.advertisementData.connectable)
-          .map((result) {
-        final id = result.device.remoteId.str;
-        _discoveredDevices[id] = result.device;
-        final name = result.device.advName.trim();
-        final metadata = Icp5SerialDevice(
-            portName: id,
-            productName: name.isEmpty ? null : name,
-            friendlyName: name.isEmpty ? 'Unnamed BLE device' : name,
-            instanceId: id,
-            rssi: result.rssi,
-            enumerationSource: source);
-        _discoveredMetadata[id] = metadata;
-        return metadata;
-      }).toList(growable: true)
+      // Subscribe BEFORE startScan to capture all emissions during the scan
+      // window. No connectable filter: ICP5 flaps between connectable=true and
+      // connectable=false as BLE alternates ADV_IND and scan-response packets.
+      // Filtering on connectable drops ICP5 from the list intermittently.
+      // Matches Consumer (consumer_ble_service.dart) proven behavior.
+      final accumulated = <String, Icp5SerialDevice>{};
+      final subscription = FlutterBluePlus.scanResults.listen((results) {
+        // [TEMP RAW SCAN LOG] remove before release
+        for (final result in results) {
+          debugPrint('[RAW SCAN] remoteId=${result.device.remoteId.str} '
+              'platformName=${result.device.platformName} '
+              'advName=${result.device.advName} '
+              'serviceUuids=${result.advertisementData.serviceUuids} '
+              'connectable=${result.advertisementData.connectable} '
+              'rssi=${result.rssi}');
+        }
+        for (final result in results) {
+          final id = result.device.remoteId.str;
+          _discoveredDevices[id] = result.device;
+          accumulateRawResult(
+              accumulated, id, result.device.advName, result.rssi, source);
+        }
+      });
+      try {
+        await FlutterBluePlus.startScan(timeout: scanTimeout);
+        await FlutterBluePlus.isScanning
+            .where((scanning) => !scanning)
+            .first
+            .timeout(scanTimeout + const Duration(seconds: 1));
+      } finally {
+        await FlutterBluePlus.stopScan();
+        await subscription.cancel();
+      }
+      _discoveredMetadata.addAll(accumulated);
+      final matches = accumulated.values.toList(growable: true)
         ..sort(_compareCandidates);
       return Icp5DiscoveryResult(
           source: source, allPorts: matches, matches: matches);
@@ -131,8 +144,6 @@ class Icp5BluetoothGattDriver
           allPorts: const [],
           matches: const [],
           error: 'ICP5 BLE discovery failed: $error');
-    } finally {
-      await FlutterBluePlus.stopScan();
     }
   }
 
@@ -218,6 +229,27 @@ class Icp5BluetoothGattDriver
     }
     _failureStage = null;
     return _Icp5BluetoothGattConnection(device: device, tx: tx, rx: rx);
+  }
+
+  /// Inserts or overwrites the accumulator entry for [id] with the latest
+  /// advertised name and RSSI. No connectable check — exposed for unit tests.
+  @visibleForTesting
+  static void accumulateRawResult(
+    Map<String, Icp5SerialDevice> accumulator,
+    String id,
+    String advName,
+    int rssi,
+    String source,
+  ) {
+    final name = advName.trim();
+    accumulator[id] = Icp5SerialDevice(
+      portName: id,
+      productName: name.isEmpty ? null : name,
+      friendlyName: name.isEmpty ? 'Unnamed BLE device' : name,
+      instanceId: id,
+      rssi: rssi,
+      enumerationSource: source,
+    );
   }
 
   @visibleForTesting

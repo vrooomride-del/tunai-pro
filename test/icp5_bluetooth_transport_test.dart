@@ -93,6 +93,51 @@ class _FakeGattDriver implements Icp5SerialDriver {
 }
 
 void main() {
+  group('Icp5BluetoothGattDriver scan accumulation', () {
+    test(
+        'ICP5 remains discoverable when connectable toggles true → false', () {
+      final accumulated = <String, Icp5SerialDevice>{};
+      const id = 'AA:BB:CC:DD:EE:FF';
+      const source = 'test';
+
+      // Emission 1: ICP5 seen (connectable=true in real BLE packet)
+      Icp5BluetoothGattDriver.accumulateRawResult(
+          accumulated, id, 'WONDOM ICP5', -70, source);
+      expect(accumulated, hasLength(1));
+
+      // Emission 2: same device re-emitted with connectable=false in real BLE.
+      // Old code filtered this; new code keeps and updates RSSI.
+      Icp5BluetoothGattDriver.accumulateRawResult(
+          accumulated, id, 'WONDOM ICP5', -65, source);
+      expect(accumulated, hasLength(1));
+      expect(accumulated[id]?.friendlyName, 'WONDOM ICP5');
+      expect(accumulated[id]?.rssi, -65);
+    });
+
+    test('results from multiple scan emissions accumulate by identifier', () {
+      final accumulated = <String, Icp5SerialDevice>{};
+      const source = 'test';
+
+      // Emission 1: device A and ICP5
+      Icp5BluetoothGattDriver.accumulateRawResult(
+          accumulated, 'id-a', 'Device A', -80, source);
+      Icp5BluetoothGattDriver.accumulateRawResult(
+          accumulated, 'id-icp5', 'WONDOM ICP5', -72, source);
+
+      // Emission 2: device B and ICP5 again (different RSSI)
+      Icp5BluetoothGattDriver.accumulateRawResult(
+          accumulated, 'id-b', 'Device B', -90, source);
+      Icp5BluetoothGattDriver.accumulateRawResult(
+          accumulated, 'id-icp5', 'WONDOM ICP5', -68, source);
+
+      expect(accumulated, hasLength(3));
+      expect(accumulated['id-a']?.friendlyName, 'Device A');
+      expect(accumulated['id-b']?.friendlyName, 'Device B');
+      expect(accumulated['id-icp5']?.friendlyName, 'WONDOM ICP5');
+      expect(accumulated['id-icp5']?.rssi, -68); // latest RSSI overwrites
+    });
+  });
+
   test('BLE GATT UUIDs are capture locked', () {
     expect(Icp5BluetoothGattDriver.serviceUuid, 'fff0');
     expect(Icp5BluetoothGattDriver.txCharacteristicUuid, 'fff2');
