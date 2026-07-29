@@ -115,7 +115,7 @@ void main() {
       await tester.pumpWidget(_screen(state));
       await tester.pump();
 
-      expect(find.textContaining('적용 완료'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('PEQ 업데이트 완료'), findsAtLeastNWidgets(1));
     });
 
     testWidgets('applied band count is shown in UI text', (tester) async {

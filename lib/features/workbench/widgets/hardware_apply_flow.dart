@@ -25,11 +25,15 @@ class HardwareApplyFlow extends StatefulWidget {
   /// Injectable for tests; defaults to the shared ICP5 USB context.
   final Adau1701HardwareContext Function()? contextFactory;
 
+  /// Called once after execute() completes, with the result. Null = not wired.
+  final ValueChanged<HardwareWriteExecutionResult>? onResult;
+
   const HardwareApplyFlow({
     super.key,
     required this.exportPackage,
     required this.profile,
     this.contextFactory,
+    this.onResult,
   });
 
   @override
@@ -84,7 +88,10 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
     try {
       final result =
           await HardwareWriteExecutor(_context.writePort).execute(approval);
-      if (mounted) setState(() => _result = result);
+      if (mounted) {
+        setState(() => _result = result);
+        widget.onResult?.call(result);
+      }
     } finally {
       if (mounted) setState(() => _applying = false);
     }

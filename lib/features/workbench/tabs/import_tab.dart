@@ -15,6 +15,7 @@ import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_measurement_parser.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
+import '../../../core/workbench_tab_provider.dart';
 import '../../../shared/pro_widgets.dart';
 
 // ── Filename heuristic helpers (pure — easily testable) ───────────────────────
@@ -538,6 +539,28 @@ class _ImportTabState extends ConsumerState<ImportTab> {
                     onAddRepeatSweep: () => _addRepeatSweep(ch),
                     onRemoveRepeatSweep: (i) => _removeRepeatSweep(ch, i),
                   )),
+
+              // "Analyze with AI" shortcut — only when FRD data is present.
+              if (acoustic.parsedFrdCount > 0) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => ref
+                        .read(workbenchTabProvider.notifier)
+                        .go(kTabGuidedAi),
+                    icon: const Icon(Icons.psychology_outlined, size: 15),
+                    label: const Text('AI로 분석하기'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white60,
+                      side: const BorderSide(color: Colors.white12),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                ),
+              ],
 
               // Empty state
               if (acoustic.parsedFrdCount == 0 &&

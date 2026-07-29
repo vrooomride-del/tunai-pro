@@ -185,11 +185,89 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             completedSteps: List.unmodifiable(completedSteps),
           );
         case ProWaitingConfirmation(:final request):
+          // Determine the channel that will be written on apply — same logic
+          // as the apply gate below.
+          final analyzedChannelId = plan.steps
+              .where((s) =>
+                  s.toolId == ProOrchestratorToolId.measurementAnalyze)
+              .firstOrNull
+              ?.inputRefs
+              .firstOrNull;
+
+          // Available PEQ slots for the target channel.
+          final targetChannel = analyzedChannelId != null
+              ? project.tuningState.peqChannels
+                  .where((ch) => ch.channelId == analyzedChannelId)
+                  .firstOrNull
+              : project.tuningState.peqChannels.firstOrNull;
+          final availableSlots = targetChannel?.bands.length;
+
+          List<CandidatePreviewEntry>? preview;
+          String? applyBlockedReason;
+
+          final optRef = completedSteps
+              .where((r) =>
+                  r.toolId == ProOrchestratorToolId.acousticOptimizeSelection)
+              .firstOrNull
+              ?.outputRef;
+          if (optRef != null && store.has(pid, optRef)) {
+            try {
+              final opt =
+                  store.getTyped<OptimizedSelectionArtifact>(pid, optRef);
+              final channelLabel = analyzedChannelId ?? '';
+              final needed = opt.value.selected.length;
+              if (availableSlots != null && needed > availableSlots) {
+                applyBlockedReason =
+                    '슬롯 부족: $needed개 필요, 채널 ${channelLabel.isNotEmpty ? channelLabel : "—"}에 $availableSlots개 가능';
+              }
+              // Simulate fillNextFreeSlot in applicationOrder to determine the
+              // 1-based PEQ slot each candidate will occupy on apply.
+              final slotMap = <int, int?>{};
+              if (targetChannel != null) {
+                var simCh = targetChannel;
+                final sorted = [...opt.value.selected]
+                  ..sort((a, b) =>
+                      a.applicationOrder.compareTo(b.applicationOrder));
+                for (final sel in sorted) {
+                  final norm = simCh.normalized();
+                  final idx = norm.bands.indexWhere((b) => !b.enabled);
+                  slotMap[sel.applicationOrder] =
+                      idx >= 0 ? idx + 1 : null;
+                  if (idx >= 0) {
+                    simCh = simCh.fillNextFreeSlot(
+                      type: PeqBandType.peak,
+                      frequencyHz:
+                          sel.scoredCandidate.candidate.frequencyHz,
+                      gainDb: sel.scoredCandidate.candidate.gainDb,
+                      q: sel.scoredCandidate.candidate.q,
+                    );
+                  }
+                }
+              }
+              preview = [
+                for (final c in opt.value.selected)
+                  CandidatePreviewEntry(
+                    applicationOrder: c.applicationOrder,
+                    frequencyHz: c.scoredCandidate.candidate.frequencyHz,
+                    gainDb: c.scoredCandidate.candidate.gainDb,
+                    q: c.scoredCandidate.candidate.q,
+                    grade: c.scoredCandidate.grade.name,
+                    channelId: channelLabel,
+                    safetyVerified: false,
+                    targetPeqSlot: slotMap[c.applicationOrder],
+                  ),
+              ];
+            } catch (_) {}
+          }
           state = ProGuidedAiConfirmPending(
             request: request,
             plan: plan,
             explanation: explanation,
             completedSteps: List.unmodifiable(completedSteps),
+            candidatePreview: preview,
+            applyBlockedReason: applyBlockedReason,
+            targetChannelId: analyzedChannelId,
+            availablePeqSlots: availableSlots,
           );
         case ProPlanCompleted(:final outcome):
           final loopVerdict =

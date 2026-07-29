@@ -6,6 +6,7 @@ import 'tabs/workbench_tabs.dart';
 import '../ai/guided_ai_screen.dart';
 import '../../core/pro_project_store.dart';
 import '../../core/pro_measurement_store.dart';
+import '../../core/workbench_tab_provider.dart';
 import '../../shared/pro_widgets.dart';
 import 'dart:io';
 import '../../core/pro_usbi_native_backend.dart';
@@ -20,7 +21,6 @@ class WorkbenchShell extends ConsumerStatefulWidget {
 }
 
 class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
-  int _tabIndex = 0;
   late final ProUsbiNativeBackend _usbiBackend;
   bool _usbiDeviceOpen = false;
   bool _dspWritesDisabled = false;
@@ -123,6 +123,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
 
   @override
   Widget build(BuildContext context) {
+    final tabIndex = ref.watch(workbenchTabProvider);
     final store = ref.watch(proProjectStoreProvider);
     final project =
         store.projects.where((p) => p.id == widget.projectId).firstOrNull;
@@ -136,15 +137,15 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
           child: Row(children: [
             _Sidebar(
               tabs: _tabs,
-              selected: _tabIndex,
+              selected: tabIndex,
               projectName: project?.name ?? 'Project',
-              onSelect: (i) => setState(() => _tabIndex = i),
+              onSelect: (i) => ref.read(workbenchTabProvider.notifier).go(i),
               onClose: () => Navigator.of(context).pop(),
             ),
             Container(width: 0.5, color: kProBorder),
             Expanded(
               child: IndexedStack(
-                index: _tabIndex,
+                index: tabIndex,
                 children: screens,
               ),
             ),

@@ -24,6 +24,7 @@ import '../../core/orchestrator/pro_orchestrator_types.dart';
 import '../../core/pro_correction_cycle.dart';
 import '../../core/pro_project_store.dart';
 import '../../core/spectrum_snapshot.dart';
+import '../../core/workbench_tab_provider.dart';
 import '../mic/mic_measurement_controller.dart';
 
 class GuidedAiScreen extends ConsumerStatefulWidget {
@@ -154,10 +155,52 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 style: TextStyle(
                     color: Colors.white38, fontSize: 12, letterSpacing: 1),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
+              _ContextRow(
+                projectName: project?.name,
+                hwTarget: project?.dspTarget,
+                primaryFrdFilename: project?.acousticState.driverChannels
+                    .firstOrNull?.frdFile?.fileName,
+                driverChannelLabel: project?.acousticState.driverChannels
+                    .where((d) => d.hasParsedFrd)
+                    .firstOrNull
+                    ?.shortLabel,
+                repeatSweepCount: project?.acousticState.driverChannels
+                    .where((d) => d.hasParsedFrd)
+                    .firstOrNull
+                    ?.additionalFrdSweeps
+                    .length,
+                cycleNumber: (project?.correctionCycles.length ?? 0) + 1,
+              ),
+              const SizedBox(height: 20),
 
               // ── Input ──────────────────────────────────────────────────────
               if (aiState is ProGuidedAiIdle) ...[
+                if ((project?.acousticState.parsedFrdCount ?? 0) == 0) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1A1200),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.amber.withAlpha(80)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.warning_amber_outlined,
+                            color: Colors.amber, size: 15),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'FRD 파일이 없습니다 — Import 탭에서 측정 파일을 먼저 불러오세요.',
+                            style:
+                                TextStyle(color: Colors.amber, fontSize: 12, height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 const Text('목표 설명',
                     style: TextStyle(
                         color: Colors.white60, fontSize: 12, letterSpacing: 2)),
@@ -181,7 +224,8 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
-                    onPressed: project == null
+                    onPressed: (project == null ||
+                            project.acousticState.parsedFrdCount == 0)
                         ? null
                         : () {
                             ref.read(guidedAiProvider.notifier).start(
@@ -231,6 +275,13 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                     padding: EdgeInsets.only(top: 8),
                     child: Text('프로젝트를 먼저 선택하세요.',
                         style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  )
+                else if (project.acousticState.parsedFrdCount == 0)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text('분석 불가 — FRD 파일이 없습니다.',
+                        style:
+                            TextStyle(color: Colors.white38, fontSize: 12)),
                   ),
               ],
 
@@ -264,6 +315,10 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 const SizedBox(height: 24),
                 _ConfirmationCard(
                   request: aiState.request,
+                  candidatePreview: aiState.candidatePreview,
+                  applyBlockedReason: aiState.applyBlockedReason,
+                  targetChannelId: aiState.targetChannelId,
+                  availablePeqSlots: aiState.availablePeqSlots,
                   onConfirm: () => ref
                       .read(guidedAiProvider.notifier)
                       .confirm(aiState.request.stepId),
@@ -292,7 +347,32 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 ),
                 const SizedBox(height: 16),
                 if (aiState.applyResult != null)
-                  _ApplyResultCard(result: aiState.applyResult!),
+                  _ApplyResultCard(
+                    result: aiState.applyResult!,
+                    onGoToDeploy: () => ref
+                        .read(workbenchTabProvider.notifier)
+                        .go(kTabDeploy),
+                  )
+                else if (aiState.outcome.stepRecords.any((r) =>
+                    r.toolId ==
+                        ProOrchestratorToolId.acousticValidateSafety &&
+                    r.status == ProStepStatus.failed)) ...[
+                  const SizedBox(height: 12),
+                  const _StatusCard(
+                    icon: Icons.block_outlined,
+                    label: '안전 검증 실패 — 적용이 차단되었습니다.',
+                    color: Colors.redAccent,
+                  ),
+                ] else if (aiState.outcome.stepRecords.any((r) =>
+                    r.toolId ==
+                    ProOrchestratorToolId.acousticValidateSafety)) ...[
+                  const SizedBox(height: 12),
+                  const _StatusCard(
+                    icon: Icons.info_outline,
+                    label: '적용 단계를 실행하지 않았습니다.',
+                    color: Colors.white38,
+                  ),
+                ],
                 if (aiState.loopPhase != null) ...[
                   const SizedBox(height: 12),
                   _LoopPhaseCard(phase: aiState.loopPhase!),
@@ -338,16 +418,59 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                     ),
                   ),
                 ],
+                // evaluated phase: prompt next action.
+                if (aiState.loopPhase == ProClosedLoopPhase.evaluated) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _importAfterFrd,
+                      icon: const Icon(Icons.folder_open_outlined, size: 16),
+                      label: const Text('After FRD 불러오기'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF1E2A3A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () => ref
+                          .read(workbenchTabProvider.notifier)
+                          .go(kTabDeploy),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white60,
+                        side: const BorderSide(color: Colors.white12),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: const Text('완료 — Deploy로 이동'),
+                    ),
+                  ),
+                ],
                 // Cycle evaluation result.
                 if (aiState.loopPhase == ProClosedLoopPhase.cycleComplete &&
                     aiState.completedCycle != null) ...[
                   const SizedBox(height: 12),
                   _CycleDecisionCard(
                     cycle: aiState.completedCycle!,
+                    cycleNumber:
+                        (project?.correctionCycles.length ?? 1),
                     onContinue: () =>
                         ref.read(guidedAiProvider.notifier).reset(),
-                    onComplete: () =>
-                        ref.read(guidedAiProvider.notifier).reset(),
+                    onComplete: () {
+                      ref.read(deployScrollTargetProvider.notifier).state =
+                          DeployScrollTarget.factoryProfile;
+                      ref
+                          .read(workbenchTabProvider.notifier)
+                          .go(kTabDeploy);
+                    },
                   ),
                 ],
                 if (aiState.loopVerdict != null) ...[
@@ -505,11 +628,19 @@ class _StepRow extends StatelessWidget {
 
 class _ConfirmationCard extends StatelessWidget {
   final ProUserConfirmationRequest request;
+  final List<CandidatePreviewEntry>? candidatePreview;
+  final String? applyBlockedReason;
+  final String? targetChannelId;
+  final int? availablePeqSlots;
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
 
   const _ConfirmationCard({
     required this.request,
+    this.candidatePreview,
+    this.applyBlockedReason,
+    this.targetChannelId,
+    this.availablePeqSlots,
     required this.onConfirm,
     required this.onCancel,
   });
@@ -535,6 +666,99 @@ class _ConfirmationCard extends StatelessWidget {
             Text(request.explanation.summary,
                 style: const TextStyle(
                     color: Colors.white70, fontSize: 13, height: 1.5)),
+            if (candidatePreview != null && candidatePreview!.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Text(
+                    '후보 ${candidatePreview!.length}개',
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 11, letterSpacing: 1.5),
+                  ),
+                  if (availablePeqSlots != null) ...[
+                    const Text('  /  ',
+                        style: TextStyle(color: Colors.white24, fontSize: 11)),
+                    Text(
+                      '슬롯 $availablePeqSlots개 가용',
+                      style: TextStyle(
+                        color: candidatePreview!.length > availablePeqSlots!
+                            ? Colors.redAccent
+                            : Colors.white38,
+                        fontSize: 11,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              Table(
+                columnWidths: const {
+                  0: FixedColumnWidth(24),
+                  1: FlexColumnWidth(2.5),
+                  2: FixedColumnWidth(36),
+                  3: FlexColumnWidth(2),
+                  4: FlexColumnWidth(2),
+                  5: FlexColumnWidth(1.5),
+                  6: FlexColumnWidth(2),
+                  7: FixedColumnWidth(44),
+                },
+                children: [
+                  TableRow(
+                    children: [
+                      _th('#'),
+                      _th('Ch'),
+                      _th('Slot'),
+                      _th('Freq'),
+                      _th('Gain'),
+                      _th('Q'),
+                      _th('Grade'),
+                      _th('Safety'),
+                    ],
+                  ),
+                  for (final c in candidatePreview!)
+                    TableRow(
+                      children: [
+                        _td('${c.applicationOrder}'),
+                        _td(c.channelId, overflow: TextOverflow.ellipsis),
+                        _td(c.targetPeqSlot != null ? '${c.targetPeqSlot}' : '—'),
+                        _td('${c.frequencyHz.round()} Hz'),
+                        _td('${c.gainDb >= 0 ? '+' : ''}${c.gainDb.toStringAsFixed(1)} dB'),
+                        _td(c.q.toStringAsFixed(2)),
+                        _td(c.grade),
+                        _tdSafety(c.safetyVerified),
+                      ],
+                    ),
+                ],
+              ),
+            ],
+            if (applyBlockedReason != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withAlpha(25),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.block_outlined,
+                        color: Colors.redAccent, size: 14),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '적용 차단: $applyBlockedReason',
+                        style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 11,
+                            height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -553,7 +777,7 @@ class _ConfirmationCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
-                    onPressed: onConfirm,
+                    onPressed: applyBlockedReason != null ? null : onConfirm,
                     style: FilledButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: Colors.black,
@@ -567,6 +791,38 @@ class _ConfirmationCard extends StatelessWidget {
             ),
           ],
         ),
+      );
+
+  static Widget _th(String t) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(t,
+            style: const TextStyle(
+                color: Colors.white38, fontSize: 10, letterSpacing: 1)),
+      );
+
+  static Widget _td(String t, {TextOverflow? overflow}) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Text(t,
+            overflow: overflow,
+            style: const TextStyle(color: Colors.white60, fontSize: 11)),
+      );
+
+  static Widget _tdSafety(bool verified) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(
+            verified ? Icons.check_circle_outline : Icons.hourglass_empty,
+            size: 11,
+            color: verified ? const Color(0xFF4CAF50) : Colors.white24,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            verified ? 'OK' : '대기',
+            style: TextStyle(
+                color: verified ? const Color(0xFF4CAF50) : Colors.white24,
+                fontSize: 10),
+          ),
+        ]),
       );
 }
 
@@ -686,15 +942,19 @@ class _AwaitingMeasurementCard extends StatelessWidget {
 
 class _ApplyResultCard extends StatelessWidget {
   final TuningApplyResult result;
-  const _ApplyResultCard({required this.result});
+  final VoidCallback? onGoToDeploy;
+
+  const _ApplyResultCard({required this.result, this.onGoToDeploy});
 
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (result.status) {
-      TuningApplyStatus.ok => ('적용 완료', const Color(0xFF4CAF50)),
+      TuningApplyStatus.ok => ('프로젝트 PEQ 업데이트 완료', const Color(0xFF4CAF50)),
       TuningApplyStatus.partiallyApplied => ('일부 적용', Colors.amber),
-      TuningApplyStatus.noSlotAvailable => ('슬롯 부족', Colors.redAccent),
-      TuningApplyStatus.notPermitted => ('적용 차단', Colors.redAccent),
+      TuningApplyStatus.noSlotAvailable =>
+        ('슬롯 부족 — PEQ 밴드가 없습니다', Colors.redAccent),
+      TuningApplyStatus.notPermitted =>
+        ('적용 차단 — 안전 검증이 허가하지 않음', Colors.redAccent),
     };
 
     return Container(
@@ -704,17 +964,62 @@ class _ApplyResultCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.withAlpha(60)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.tune, color: color, size: 16),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              '$label · ${result.applied.length}밴드 적용'
-              '${result.skipped.isNotEmpty ? ' / ${result.skipped.length}밴드 스킵' : ''}',
-              style: TextStyle(color: color, fontSize: 12),
-            ),
+          Row(
+            children: [
+              Icon(Icons.tune, color: color, size: 16),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '$label · ${result.applied.length}밴드 적용'
+                  '${result.skipped.isNotEmpty ? ' / ${result.skipped.length}밴드 스킵' : ''}',
+                  style: TextStyle(color: color, fontSize: 12),
+                ),
+              ),
+            ],
           ),
+          if (result.applied.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            for (final b in result.applied)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 26),
+                    Text(
+                      '#${b.applicationOrder}  '
+                      '${b.frequencyHz.round()} Hz  '
+                      '${b.gainDb >= 0 ? '+' : ''}${b.gainDb.toStringAsFixed(1)} dB  '
+                      'Q ${b.q.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          if (result.status == TuningApplyStatus.ok &&
+              onGoToDeploy != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onGoToDeploy,
+                icon: const Icon(Icons.inventory_2_outlined, size: 14),
+                label: const Text('Deploy로 이동'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF4CAF50),
+                  side: BorderSide(
+                      color: const Color(0xFF4CAF50).withAlpha(100)),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6)),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -723,11 +1028,13 @@ class _ApplyResultCard extends StatelessWidget {
 
 class _CycleDecisionCard extends StatelessWidget {
   final CorrectionCycle cycle;
+  final int cycleNumber;
   final VoidCallback onContinue;
   final VoidCallback onComplete;
 
   const _CycleDecisionCard({
     required this.cycle,
+    required this.cycleNumber,
     required this.onContinue,
     required this.onComplete,
   });
@@ -790,11 +1097,18 @@ class _CycleDecisionCard extends StatelessWidget {
             children: [
               Icon(icon, color: decisionColor, size: 16),
               const SizedBox(width: 8),
-              Text(decisionLabel,
-                  style: TextStyle(
-                      color: decisionColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500)),
+              Expanded(
+                child: Text(decisionLabel,
+                    style: TextStyle(
+                        color: decisionColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500)),
+              ),
+              Text(
+                'Cycle $cycleNumber',
+                style: const TextStyle(
+                    color: Colors.white24, fontSize: 10, letterSpacing: 1),
+              ),
             ],
           ),
           if (metrics != null) ...[
@@ -829,6 +1143,23 @@ class _CycleDecisionCard extends StatelessWidget {
                 child: Text('• $r',
                     style: const TextStyle(
                         color: Colors.white38, fontSize: 11, height: 1.4)),
+              ),
+            ),
+          ],
+          if (decision ==
+              CorrectionCycleDecision.improvedNeedsAnotherCycle) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.amber.withAlpha(20),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'After 측정 결과가 다음 사이클의 Before로 사용됩니다.',
+                style: TextStyle(
+                    color: Colors.amber, fontSize: 11, height: 1.4),
               ),
             ),
           ],
@@ -936,5 +1267,60 @@ class _ResetButton extends StatelessWidget {
         onPressed: onReset,
         child: const Text('처음으로',
             style: TextStyle(color: Colors.white38, letterSpacing: 1)),
+      );
+}
+
+class _ContextRow extends StatelessWidget {
+  final String? projectName;
+  final String? hwTarget;
+  final String? primaryFrdFilename;
+  final String? driverChannelLabel;
+  final int? repeatSweepCount;
+  final int cycleNumber;
+
+  const _ContextRow({
+    this.projectName,
+    this.hwTarget,
+    this.primaryFrdFilename,
+    this.driverChannelLabel,
+    this.repeatSweepCount,
+    required this.cycleNumber,
+  });
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+        spacing: 16,
+        runSpacing: 4,
+        children: [
+          if (projectName != null)
+            _Chip(Icons.folder_outlined, projectName!),
+          if (hwTarget != null)
+            _Chip(Icons.memory_outlined, hwTarget!),
+          if (primaryFrdFilename != null)
+            _Chip(Icons.graphic_eq_outlined, primaryFrdFilename!),
+          if (driverChannelLabel != null)
+            _Chip(Icons.speaker_outlined, driverChannelLabel!),
+          if (repeatSweepCount != null && repeatSweepCount! > 0)
+            _Chip(Icons.repeat_outlined, '스윕 +$repeatSweepCount'),
+          _Chip(Icons.loop, 'Cycle $cycleNumber'),
+        ],
+      );
+}
+
+class _Chip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _Chip(this.icon, this.label);
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: Colors.white24),
+          const SizedBox(width: 4),
+          Text(label,
+              style: const TextStyle(color: Colors.white30, fontSize: 11)),
+        ],
       );
 }

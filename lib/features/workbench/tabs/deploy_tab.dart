@@ -17,6 +17,8 @@ import '../../../core/pro_export_data.dart';
 import '../../../core/deploy/pro_hardware_capability.dart';
 import '../../../core/deploy/pro_hardware_context_provider.dart';
 import '../widgets/hardware_apply_flow.dart';
+import '../../../core/deploy/pro_hardware_write_executor.dart';
+import '../../../core/workbench_tab_provider.dart';
 import '../../../shared/pro_widgets.dart';
 
 class DeployTab extends ConsumerStatefulWidget {
@@ -33,11 +35,16 @@ class _DeployTabState extends ConsumerState<DeployTab> {
   DeployPackageKind _selectedKind = DeployPackageKind.fullProjectSnapshot;
   final _nameController = TextEditingController();
   final _notesController = TextEditingController();
+  final _scrollCtrl = ScrollController();
 
   // ── Factory Sound Profile state ──────────────────────────────────────────────
   bool _fpCreating = false;
   bool _fpShowExport = false;
   final _fpNameController = TextEditingController();
+  final _fspKey = GlobalKey();
+
+  // ── Hardware Apply result (for PASS_ACK display) ─────────────────────────────
+  HardwareWriteExecutionResult? _lastHardwareResult;
 
   ProProject? get _project => ref
       .read(proProjectStoreProvider)
@@ -50,6 +57,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
     _nameController.dispose();
     _notesController.dispose();
     _fpNameController.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -184,7 +192,22 @@ class _DeployTabState extends ConsumerState<DeployTab> {
     final deployState = project?.deployState ?? DeployProjectState.createDefault();
     final activePkg = deployState.activePackage;
 
+    ref.listen<DeployScrollTarget?>(deployScrollTargetProvider, (_, target) {
+      if (target == DeployScrollTarget.factoryProfile) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final ctx = _fspKey.currentContext;
+          if (ctx != null) {
+            Scrollable.ensureVisible(ctx,
+                duration: const Duration(milliseconds: 350),
+                curve: Curves.easeOut);
+          }
+        });
+        ref.read(deployScrollTargetProvider.notifier).state = null;
+      }
+    });
+
     return SingleChildScrollView(
+      controller: _scrollCtrl,
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // ── Header ──────────────────────────────────────────────────────────
@@ -252,6 +275,101 @@ class _DeployTabState extends ConsumerState<DeployTab> {
             profile: _hardwareProfileFor(
                 project.exportState.activePackage!.targetPlatform),
             contextFactory: () => ref.read(adau1701Icp5UsbContextProvider),
+            onResult: (result) {
+              if (!mounted) return;
+              setState(() => _lastHardwareResult = result);
+            },
+          ),
+          if (_lastHardwareResult != null) ...[
+            const SizedBox(height: 12),
+            if (_lastHardwareResult!.allWritten)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D1A0D),
+                  border: Border.all(
+                      color: const Color(0xFF4CAF50).withAlpha(80)),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.check_circle_outline,
+                            color: Color(0xFF4CAF50), size: 14),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'PASS_ACK 수신 — DSP 쓰기 완료.',
+                            style: TextStyle(
+                                color: Color(0xFF4CAF50),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.mic_outlined, size: 13),
+                      label: const Text('After 측정 FRD 불러오기'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF4CAF50),
+                        side: const BorderSide(
+                            color: Color(0xFF4CAF50), width: 0.7),
+                        textStyle: const TextStyle(fontSize: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 9),
+                      ),
+                      onPressed: () => ref
+                          .read(workbenchTabProvider.notifier)
+                          .go(kTabGuidedAi),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: kProAmber.withValues(alpha: 0.06),
+                  border: Border.all(color: kProAmber.withValues(alpha: 0.4)),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.block_outlined,
+                        color: kProAmber, size: 14),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'After 측정 차단: ${_lastHardwareResult!.executed ? '일부 쓰기 실패 (${_lastHardwareResult!.failedCount}개)' : _lastHardwareResult!.rejectionReason ?? '쓰기 미실행'}',
+                        style: const TextStyle(
+                            color: kProAmber, fontSize: 11, height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          const SizedBox(height: 20),
+        ] else ...[
+          const _SectionHeader('HARDWARE APPLY', Icons.memory_outlined),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: kProSurface,
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              'Export 탭에서 패키지를 내보내면 Hardware Apply를 실행할 수 있습니다.',
+              style: proSubtitle(size: 11),
+            ),
           ),
           const SizedBox(height: 20),
         ],
@@ -330,7 +448,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
         ],
 
         // ── G: Factory Sound Profile ─────────────────────────────────────────
-        const _SectionHeader('FACTORY SOUND PROFILE', Icons.verified_outlined),
+        _SectionHeader('FACTORY SOUND PROFILE', Icons.verified_outlined, key: _fspKey),
         const SizedBox(height: 8),
         if (project != null)
           _FactoryProfileSection(
@@ -400,6 +518,10 @@ class _ReadinessPanel extends StatelessWidget {
     final hardware = project!.hardwareState;
     final deploy = project!.deployState;
 
+    final tuning = project!.tuningState;
+    final eligibility = FactoryProfileBuilder.checkEligibility(project!);
+    final connState = hardware.connectionState;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
@@ -408,16 +530,25 @@ class _ReadinessPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _InfoRow('Project', project!.name),
+        _InfoRow('Project', '${project!.name} · ${project!.dspTarget}'),
         _InfoRow('Status', project!.profileStatus.label),
         _InfoRow('Measurement', acoustic.readinessLabel),
+        _InfoRow('PEQ bands', '${tuning.totalPeqBands} (${tuning.activePeqBands} active)'),
         _InfoRow('Simulation', simulation.readinessLabel),
         _InfoRow('Protection', protection.readinessLabel),
         _InfoRow('Export', export.readinessLabel),
+        _InfoRow('Connection', connState.transportType.label),
         _InfoRow('Hardware', hardware.readinessLabel),
         _InfoRow('Deploy packages', '${deploy.packageCount}'),
         _InfoRow('Presets', '${deploy.presetCount}'),
         _InfoRow('Readiness', deploy.readinessLabel),
+        _InfoRow(
+          'Factory Profile',
+          eligibility.isApproved
+              ? 'Eligible'
+              : 'Not eligible: ${eligibility.reasons.firstOrNull ?? '—'}',
+          warn: !eligibility.isApproved,
+        ),
       ]),
     );
   }
@@ -842,7 +973,7 @@ class _PresetPanel extends StatelessWidget {
 class _SectionHeader extends StatelessWidget {
   final String label;
   final IconData icon;
-  const _SectionHeader(this.label, this.icon);
+  const _SectionHeader(this.label, this.icon, {super.key});
 
   @override
   Widget build(BuildContext context) => Row(children: [
@@ -855,7 +986,8 @@ class _SectionHeader extends StatelessWidget {
 class _InfoRow extends StatelessWidget {
   final String label;
   final String value;
-  const _InfoRow(this.label, this.value);
+  final bool warn;
+  const _InfoRow(this.label, this.value, {this.warn = false});
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -866,7 +998,10 @@ class _InfoRow extends StatelessWidget {
         child: Text(label, style: proLabel(size: 9, color: Colors.white38)),
       ),
       Expanded(
-        child: Text(value, style: proSubtitle(size: 10)),
+        child: Text(value,
+            style: warn
+                ? proSubtitle(size: 10, color: kProAmber)
+                : proSubtitle(size: 10)),
       ),
     ]),
   );

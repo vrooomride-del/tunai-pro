@@ -1,7 +1,9 @@
 // Sealed state hierarchy for ProGuidedAiController.
 //
-// TRUST BOUNDARY. No DSP value, no frequency, no gain, no Q at any level.
-// Only opaque references, lifecycle labels, and prose strings cross this layer.
+// TRUST BOUNDARY. No raw DSP register value crosses this layer.
+// CandidatePreviewEntry carries display-only values that already exist in the
+// artifact store; they are mirrored here for the confirmation-gate UI only
+// and are never written to hardware directly.
 
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/closed_loop_evaluator.dart';
@@ -39,17 +41,71 @@ class ProGuidedAiExecuting extends ProGuidedAiState {
   });
 }
 
+/// Display-only entry for the confirmation-gate candidate preview table.
+/// Values are mirrored from OptimizedSelectionArtifact in the artifact store.
+/// Safety validation has NOT yet run at the time this is constructed — the
+/// safety status is "pending" for all entries.
+class CandidatePreviewEntry {
+  final int applicationOrder;
+  final double frequencyHz;
+  final double gainDb;
+  final double q;
+  final String grade;
+
+  /// PEQ channel that will receive this candidate on apply.
+  /// Empty string when the analyzed channel could not be determined.
+  final String channelId;
+
+  /// Whether safety validation has cleared this candidate.
+  /// Always false at the confirmation gate (safety runs after user confirms).
+  final bool safetyVerified;
+
+  /// 1-based PEQ slot index that will be used on apply, computed by simulating
+  /// fillNextFreeSlot against the current PeqChannelState at confirmation time.
+  /// Null when the target channel state is unavailable.
+  final int? targetPeqSlot;
+
+  const CandidatePreviewEntry({
+    required this.applicationOrder,
+    required this.frequencyHz,
+    required this.gainDb,
+    required this.q,
+    required this.grade,
+    required this.channelId,
+    this.safetyVerified = false,
+    this.targetPeqSlot,
+  });
+}
+
 class ProGuidedAiConfirmPending extends ProGuidedAiState {
   final ProUserConfirmationRequest request;
   final ProOrchestratorPlan plan;
   final ProExplanation explanation;
   final List<ProStepExecutionRecord> completedSteps;
 
+  /// Display-only preview of candidates at the confirmation gate.
+  /// Null when the OptimizedSelectionArtifact is not yet in the store.
+  final List<CandidatePreviewEntry>? candidatePreview;
+
+  /// Non-null when apply is blocked; contains the human-readable reason.
+  final String? applyBlockedReason;
+
+  /// PEQ channel targeted by this confirmation (same as candidatePreview[].channelId).
+  final String? targetChannelId;
+
+  /// Number of PEQ slots available in the target channel.
+  /// Used to show slot availability vs required count.
+  final int? availablePeqSlots;
+
   const ProGuidedAiConfirmPending({
     required this.request,
     required this.plan,
     required this.explanation,
     required this.completedSteps,
+    this.candidatePreview,
+    this.applyBlockedReason,
+    this.targetChannelId,
+    this.availablePeqSlots,
   });
 }
 
