@@ -5,6 +5,7 @@
 
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/closed_loop_evaluator.dart';
+import '../pro_correction_cycle.dart';
 import 'pro_explanation.dart';
 import 'pro_local_orchestrator_session.dart';
 import 'pro_orchestrator_plan.dart';
@@ -56,13 +57,18 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
 ///
 /// `awaitingMeasurement` — apply succeeded; the UI should prompt the user to
 /// re-measure so a Closed Loop comparison can run.
+/// `awaitingAfterFrd`    — an After FRD import is pending (deploy done, no
+///   after measurement yet). Mutually exclusive with `awaitingMeasurement`.
 /// `evaluated`           — both before/after snapshots were available and
 /// [AcousticClosedLoopEvaluator] produced a [LoopVerdict].
+/// `cycleComplete`       — a [CorrectionCycle] has been evaluated and persisted.
 ///
 /// Never carries a DSP value: this is a lifecycle label only.
 enum ProClosedLoopPhase {
   awaitingMeasurement,
+  awaitingAfterFrd,
   evaluated,
+  cycleComplete,
 }
 
 class ProGuidedAiCompleted extends ProGuidedAiState {
@@ -86,6 +92,10 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
   /// Closed Loop phase after apply. Null when no apply ran.
   final ProClosedLoopPhase? loopPhase;
 
+  /// Completed correction cycle — non-null when [loopPhase] is
+  /// [ProClosedLoopPhase.cycleComplete]. Contains the decision and metrics.
+  final CorrectionCycle? completedCycle;
+
   const ProGuidedAiCompleted({
     required this.outcome,
     required this.explanation,
@@ -93,6 +103,7 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
     this.applyResult,
     this.beforeMeasurementRef,
     this.loopPhase,
+    this.completedCycle,
   });
 }
 

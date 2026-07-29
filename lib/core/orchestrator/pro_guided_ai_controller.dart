@@ -14,10 +14,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/candidate_safety.dart';
+import '../frd_parser.dart';
+import '../pro_correction_cycle.dart';
 import '../pro_tuning_data.dart';
 import '../acoustic/closed_loop_evaluator.dart';
 import '../pro_project.dart';
 import '../spectrum_snapshot.dart';
+import 'correction_cycle_evaluator.dart';
 import 'pro_acoustic_intent.dart';
 import 'pro_guided_ai_state.dart';
 import 'pro_local_orchestrator.dart';
@@ -309,6 +312,112 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       beforeMeasurementRef: beforeRef,
       loopPhase: ProClosedLoopPhase.evaluated,
     );
+  }
+
+  /// Transitions to [ProClosedLoopPhase.awaitingAfterFrd] when the current
+  /// state is completed and [applyResult] succeeded.
+  ///
+  /// Call this when the user taps "Add After Measurement" after a confirmed
+  /// Deploy, before providing the After FRD file.
+  void enterAwaitingAfterFrd() {
+    final current = state;
+    if (current is! ProGuidedAiCompleted) return;
+    if (current.applyResult?.status != TuningApplyStatus.ok) return;
+    state = ProGuidedAiCompleted(
+      outcome: current.outcome,
+      explanation: current.explanation,
+      loopVerdict: current.loopVerdict,
+      applyResult: current.applyResult,
+      beforeMeasurementRef: current.beforeMeasurementRef,
+      loopPhase: ProClosedLoopPhase.awaitingAfterFrd,
+      completedCycle: current.completedCycle,
+    );
+  }
+
+  /// Accepts parsed After FRD [afterFrdPoints] and the Before FRD
+  /// [beforeFrdPoints] (read from the active project's driver channel), builds
+  /// a [CorrectionCycle], transitions to [ProClosedLoopPhase.cycleComplete],
+  /// and returns the completed cycle for the caller to persist.
+  ///
+  /// Returns null when:
+  ///  - the current state is not [ProGuidedAiCompleted.awaitingAfterFrd]
+  ///  - the before/after FRD data is empty
+  ///  - the project/channel identity is invalid
+  ///
+  /// Never produces a fake verdict. The caller is responsible for calling
+  /// [ProProjectStoreNotifier.addCorrectionCycle] / [updateCorrectionCycle].
+  CorrectionCycle? submitAfterFrd({
+    required String projectId,
+    required String channelId,
+    required List<FrdPoint> beforeFrdPoints,
+    required String beforeMeasurementRef,
+    required List<FrdPoint> afterFrdPoints,
+    required String afterMeasurementRef,
+    required String afterMeasurementFileName,
+    required PeqChannelState peqSnapshot,
+    required int cycleNumber,
+    String? deployAckRef,
+  }) {
+    final current = state;
+    if (current is! ProGuidedAiCompleted) return null;
+    if (current.loopPhase != ProClosedLoopPhase.awaitingAfterFrd) return null;
+
+    final evalInput = CorrectionCycleEvalInput(
+      projectId: projectId,
+      channelId: channelId,
+      beforeFrd: beforeFrdPoints,
+      beforeMeasurementRef: beforeMeasurementRef,
+      afterFrd: afterFrdPoints,
+      afterMeasurementRef: afterMeasurementRef,
+      afterMeasurementFileName: afterMeasurementFileName,
+      deployAckRef: deployAckRef,
+    );
+
+    final result = CorrectionCycleEvaluator.evaluate(
+      evalInput,
+      CorrectionCyclePolicy.proProvisional(),
+    );
+
+    final cycle = CorrectionCycle(
+      projectId: projectId,
+      channelId: channelId,
+      cycleNumber: cycleNumber,
+      beforeMeasurementRef: beforeMeasurementRef,
+      peqSnapshot: peqSnapshot,
+      deployAckRef: deployAckRef,
+      createdAt: DateTime.now(),
+    ).withAfterResult(
+      afterMeasurementRef: afterMeasurementRef,
+      afterMeasurementFileName: afterMeasurementFileName,
+      metrics: result.metrics ??
+          const CorrectionCycleMetrics(
+            commonFreqMinHz: 0,
+            commonFreqMaxHz: 0,
+            commonPointCount: 0,
+            meanAbsResidualBefore: 0,
+            meanAbsResidualAfter: 0,
+            improvementDelta: 0,
+            peakErrorBefore: 0,
+            peakErrorBeforeHz: 0,
+            peakErrorAfter: 0,
+            peakErrorAfterHz: 0,
+            worsenedBandCount: 0,
+            improvementCoverage: 0,
+          ),
+      decision: result.decision,
+      reasons: result.reasons,
+    );
+
+    state = ProGuidedAiCompleted(
+      outcome: current.outcome,
+      explanation: current.explanation,
+      loopVerdict: current.loopVerdict,
+      applyResult: current.applyResult,
+      beforeMeasurementRef: current.beforeMeasurementRef,
+      loopPhase: ProClosedLoopPhase.cycleComplete,
+      completedCycle: cycle,
+    );
+    return cycle;
   }
 
   void reset() {

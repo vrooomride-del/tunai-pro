@@ -6,17 +6,22 @@
 //
 // Existing AiScreen (aiTunePro path) is NOT modified by this file.
 
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/acoustic/acoustic_apply_engine.dart';
 import '../../core/acoustic/closed_loop_evaluator.dart';
+import '../../core/frd_parser.dart';
 import '../../core/orchestrator/guided_ai_project_apply.dart';
 import '../../core/orchestrator/pro_guided_ai_controller.dart';
 import '../../core/orchestrator/pro_guided_ai_state.dart';
 import '../../core/orchestrator/pro_local_orchestrator_session.dart';
 import '../../core/orchestrator/pro_orchestrator_plan.dart';
 import '../../core/orchestrator/pro_orchestrator_types.dart';
+import '../../core/pro_correction_cycle.dart';
 import '../../core/pro_project_store.dart';
 import '../../core/spectrum_snapshot.dart';
 import '../mic/mic_measurement_controller.dart';
@@ -36,6 +41,63 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
   void dispose() {
     _goalCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _importAfterFrd() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['frd', 'txt'],
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final file = picked.files.first;
+    if (file.path == null) return;
+
+    final content = await File(file.path!).readAsString();
+    final afterPoints = FrdParser.parseFrd(content);
+    if (afterPoints.isEmpty) return;
+
+    final aiState = ref.read(guidedAiProvider);
+    if (aiState is! ProGuidedAiCompleted) return;
+    if (aiState.loopPhase != ProClosedLoopPhase.awaitingAfterFrd) return;
+
+    final project = ref
+        .read(proProjectStoreProvider)
+        .projects
+        .where((p) => p.id == widget.projectId)
+        .firstOrNull;
+    if (project == null) return;
+
+    final driverCh = project.acousticState.driverChannels.firstOrNull;
+    final beforePoints = driverCh?.frdData?.points
+            .where((p) => p.magnitudeDb != null)
+            .map((p) => FrdPoint(frequency: p.frequencyHz, spl: p.magnitudeDb!))
+            .toList() ??
+        <FrdPoint>[];
+
+    final peqChannel = project.tuningState.peqChannels.firstOrNull;
+    if (peqChannel == null) return;
+
+    final beforeRef = aiState.beforeMeasurementRef ??
+        'before_${widget.projectId}_${DateTime.now().millisecondsSinceEpoch}';
+    final afterRef =
+        'after_${widget.projectId}_${DateTime.now().millisecondsSinceEpoch}';
+
+    final cycle = ref.read(guidedAiProvider.notifier).submitAfterFrd(
+          projectId: widget.projectId,
+          channelId: peqChannel.channelId,
+          beforeFrdPoints: beforePoints,
+          beforeMeasurementRef: beforeRef,
+          afterFrdPoints: afterPoints,
+          afterMeasurementRef: afterRef,
+          afterMeasurementFileName: file.name,
+          peqSnapshot: peqChannel,
+          cycleNumber: project.correctionCycles.length + 1,
+        );
+    if (cycle == null) return;
+
+    await ref
+        .read(proProjectStoreProvider.notifier)
+        .addCorrectionCycle(widget.projectId, cycle);
   }
 
   @override
@@ -234,6 +296,59 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 if (aiState.loopPhase != null) ...[
                   const SizedBox(height: 12),
                   _LoopPhaseCard(phase: aiState.loopPhase!),
+                ],
+                // "Add After Measurement" — shown when apply succeeded and no
+                // after FRD cycle is in progress or complete yet.
+                if (aiState.loopPhase == ProClosedLoopPhase.awaitingMeasurement &&
+                    aiState.applyResult?.status == TuningApplyStatus.ok) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () =>
+                          ref.read(guidedAiProvider.notifier).enterAwaitingAfterFrd(),
+                      icon: const Icon(Icons.upload_file, size: 16),
+                      label: const Text('After 측정 FRD 불러오기'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white70,
+                        side: const BorderSide(color: Colors.white24),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
+                // FRD file import — shown when awaitingAfterFrd.
+                if (aiState.loopPhase == ProClosedLoopPhase.awaitingAfterFrd) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _importAfterFrd,
+                      icon: const Icon(Icons.folder_open_outlined, size: 16),
+                      label: const Text('FRD 파일 선택'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF1E2A3A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
+                // Cycle evaluation result.
+                if (aiState.loopPhase == ProClosedLoopPhase.cycleComplete &&
+                    aiState.completedCycle != null) ...[
+                  const SizedBox(height: 12),
+                  _CycleDecisionCard(
+                    cycle: aiState.completedCycle!,
+                    onContinue: () =>
+                        ref.read(guidedAiProvider.notifier).reset(),
+                    onComplete: () =>
+                        ref.read(guidedAiProvider.notifier).reset(),
+                  ),
                 ],
                 if (aiState.loopVerdict != null) ...[
                   const SizedBox(height: 12),
@@ -488,6 +603,11 @@ class _LoopPhaseCard extends StatelessWidget {
   Widget build(BuildContext context) => switch (phase) {
         ProClosedLoopPhase.awaitingMeasurement =>
           const _AwaitingMeasurementCard(),
+        ProClosedLoopPhase.awaitingAfterFrd => const _StatusCard(
+            icon: Icons.upload_file_outlined,
+            label: 'After FRD 파일 대기 중',
+            color: Colors.white54,
+          ),
         ProClosedLoopPhase.evaluated => const Row(
             children: [
               Icon(Icons.loop, color: Color(0xFF4CAF50), size: 16),
@@ -498,6 +618,11 @@ class _LoopPhaseCard extends StatelessWidget {
                       fontSize: 12,
                       fontWeight: FontWeight.w500)),
             ],
+          ),
+        ProClosedLoopPhase.cycleComplete => const _StatusCard(
+            icon: Icons.check_circle_outline,
+            label: '보정 사이클 완료',
+            color: Color(0xFF4CAF50),
           ),
       };
 }
@@ -590,6 +715,212 @@ class _ApplyResultCard extends StatelessWidget {
               style: TextStyle(color: color, fontSize: 12),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CycleDecisionCard extends StatelessWidget {
+  final CorrectionCycle cycle;
+  final VoidCallback onContinue;
+  final VoidCallback onComplete;
+
+  const _CycleDecisionCard({
+    required this.cycle,
+    required this.onContinue,
+    required this.onComplete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final decision = cycle.decision;
+    final metrics = cycle.metrics;
+
+    final (decisionLabel, decisionColor, icon) = switch (decision) {
+      CorrectionCycleDecision.improvedAndComplete => (
+          '개선 완료',
+          const Color(0xFF4CAF50),
+          Icons.check_circle_outline,
+        ),
+      CorrectionCycleDecision.improvedNeedsAnotherCycle => (
+          '개선됨 — 추가 보정 권장',
+          Colors.amber,
+          Icons.refresh,
+        ),
+      CorrectionCycleDecision.noMeaningfulImprovement => (
+          '의미 있는 개선 없음',
+          Colors.white54,
+          Icons.remove_circle_outline,
+        ),
+      CorrectionCycleDecision.worsened => (
+          '성능 저하 감지',
+          Colors.redAccent,
+          Icons.warning_amber_outlined,
+        ),
+      CorrectionCycleDecision.insufficientEvidence => (
+          '데이터 부족',
+          Colors.white38,
+          Icons.help_outline,
+        ),
+      CorrectionCycleDecision.wrongProjectOrChannel => (
+          '프로젝트/채널 불일치',
+          Colors.redAccent,
+          Icons.error_outline,
+        ),
+      null => ('평가 미완료', Colors.white24, Icons.hourglass_empty),
+    };
+
+    final canContinue = decision == CorrectionCycleDecision.improvedNeedsAnotherCycle;
+    final isTerminal = decision == CorrectionCycleDecision.improvedAndComplete ||
+        decision == CorrectionCycleDecision.worsened ||
+        decision == CorrectionCycleDecision.wrongProjectOrChannel;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141414),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: decisionColor.withAlpha(60)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: decisionColor, size: 16),
+              const SizedBox(width: 8),
+              Text(decisionLabel,
+                  style: TextStyle(
+                      color: decisionColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500)),
+            ],
+          ),
+          if (metrics != null) ...[
+            const SizedBox(height: 12),
+            _MetricRow(
+              label: 'MAR Before',
+              value: '${metrics.meanAbsResidualBefore.toStringAsFixed(2)} dB',
+            ),
+            _MetricRow(
+              label: 'MAR After',
+              value: '${metrics.meanAbsResidualAfter.toStringAsFixed(2)} dB',
+              highlight: metrics.improvementDelta > 0,
+            ),
+            _MetricRow(
+              label: '개선량',
+              value: '${metrics.improvementDelta >= 0 ? '+' : ''}'
+                  '${metrics.improvementDelta.toStringAsFixed(2)} dB',
+              highlight: metrics.improvementDelta > 0,
+            ),
+            if (metrics.worsenedBandCount > 0)
+              _MetricRow(
+                label: '악화 밴드',
+                value: '${metrics.worsenedBandCount}개',
+                warn: true,
+              ),
+          ],
+          if (cycle.reasons.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ...cycle.reasons.map(
+              (r) => Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Text('• $r',
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 11, height: 1.4)),
+              ),
+            ),
+          ],
+          if (decision == CorrectionCycleDecision.worsened ||
+              decision == CorrectionCycleDecision.wrongProjectOrChannel) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withAlpha(25),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                decision == CorrectionCycleDecision.worsened
+                    ? '이전 설정으로 롤백을 권장합니다.'
+                    : '프로젝트 또는 채널을 확인하세요.',
+                style: const TextStyle(
+                    color: Colors.redAccent, fontSize: 11, height: 1.4),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              if (canContinue) ...[
+                Expanded(
+                  child: FilledButton(
+                    onPressed: onContinue,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF2A2A2A),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6)),
+                    ),
+                    child: const Text('추가 보정',
+                        style: TextStyle(color: Colors.white, fontSize: 12)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: FilledButton(
+                  onPressed: onComplete,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: isTerminal
+                        ? const Color(0xFF1A1A1A)
+                        : const Color(0xFF2A2A2A),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6)),
+                  ),
+                  child: const Text('완료',
+                      style: TextStyle(color: Colors.white70, fontSize: 12)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool highlight;
+  final bool warn;
+
+  const _MetricRow({
+    required this.label,
+    required this.value,
+    this.highlight = false,
+    this.warn = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = warn
+        ? Colors.amber
+        : highlight
+            ? const Color(0xFF4CAF50)
+            : Colors.white54;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(color: Colors.white38, fontSize: 11)),
+          Text(value,
+              style: TextStyle(
+                  color: color, fontSize: 11, fontWeight: FontWeight.w500)),
         ],
       ),
     );

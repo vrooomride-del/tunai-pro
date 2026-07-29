@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'pro_acoustic_data.dart';
+import 'pro_correction_cycle.dart';
 import 'pro_tuning_data.dart';
 import 'pro_protection_data.dart';
 import 'pro_optimizer_data.dart';
@@ -81,6 +82,10 @@ class ProProject {
   final DeployProjectState deployState;
   final AddressValidationProjectState addressValidationState;
 
+  /// Closed-loop correction cycles for this project.
+  /// Each entry records one before/apply/deploy/after pass.
+  final List<CorrectionCycle> correctionCycles;
+
   ProProject({
     required this.id,
     required this.name,
@@ -106,6 +111,7 @@ class ProProject {
     HardwareProjectState? hardwareState,
     DeployProjectState? deployState,
     AddressValidationProjectState? addressValidationState,
+    this.correctionCycles = const [],
   }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
        tuningState = tuningState ?? TuningProjectState.createDefault(),
        protectionState = protectionState ?? ProtectionProjectState.createDefault(),
@@ -161,6 +167,7 @@ class ProProject {
     HardwareProjectState? hardwareState,
     DeployProjectState? deployState,
     AddressValidationProjectState? addressValidationState,
+    List<CorrectionCycle>? correctionCycles,
   }) => ProProject(
     id: id,
     name: name ?? this.name,
@@ -186,6 +193,7 @@ class ProProject {
     hardwareState: hardwareState ?? this.hardwareState,
     deployState: deployState ?? this.deployState,
     addressValidationState: addressValidationState ?? this.addressValidationState,
+    correctionCycles: correctionCycles ?? this.correctionCycles,
   );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
@@ -218,6 +226,9 @@ class ProProject {
     'hardwareState': hardwareState.toJson(),
     'deployState': deployState.toJson(),
     'addressValidationState': addressValidationState.toJson(),
+    if (correctionCycles.isNotEmpty)
+      'correctionCycles':
+          correctionCycles.map((c) => c.toJson()).toList(),
   };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
@@ -267,6 +278,10 @@ class ProProject {
         ? AddressValidationProjectState.fromJson(
             Map<String, dynamic>.from(j['addressValidationState'] as Map))
         : null,
+    correctionCycles: (j['correctionCycles'] as List? ?? [])
+        .map((e) =>
+            CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList(),
   );
 
   static String encodeList(List<ProProject> list) =>

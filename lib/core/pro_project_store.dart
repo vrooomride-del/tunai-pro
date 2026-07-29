@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'pro_correction_cycle.dart';
 import 'pro_project.dart';
 import 'pro_acoustic_data.dart';
 import 'pro_tuning_data.dart';
@@ -194,6 +195,28 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     await updateProject(project.copyWith(
         addressValidationState: addressValidationState,
         updatedAt: DateTime.now()));
+  }
+
+  /// Appends a new [CorrectionCycle] to the project's [correctionCycles] list
+  /// and persists. The cycle must have [cycle.projectId] == [id].
+  Future<void> addCorrectionCycle(String id, CorrectionCycle cycle) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    final updated = [
+      ...project.correctionCycles,
+      cycle,
+    ];
+    await updateProject(project.copyWith(
+        correctionCycles: updated, updatedAt: DateTime.now()));
+  }
+
+  /// Replaces the [CorrectionCycle] at [cycleNumber] with [cycle] and persists.
+  Future<void> updateCorrectionCycle(String id, CorrectionCycle cycle) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    final updated = project.correctionCycles
+        .map((c) => c.cycleNumber == cycle.cycleNumber ? cycle : c)
+        .toList();
+    await updateProject(project.copyWith(
+        correctionCycles: updated, updatedAt: DateTime.now()));
   }
 }
 
