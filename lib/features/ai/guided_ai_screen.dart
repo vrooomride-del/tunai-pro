@@ -453,9 +453,11 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                     r.toolId ==
                     ProOrchestratorToolId.acousticValidateSafety)) ...[
                   const SizedBox(height: 12),
-                  const _StatusCard(
+                  _StatusCard(
                     icon: Icons.info_outline,
-                    label: '적용 단계를 실행하지 않았습니다.',
+                    label: aiState.applyBlockedReason != null
+                        ? '적용 차단: ${aiState.applyBlockedReason}'
+                        : '적용 단계를 실행하지 않았습니다.',
                     color: Colors.white38,
                   ),
                 ],

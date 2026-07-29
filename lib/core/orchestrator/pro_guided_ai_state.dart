@@ -139,6 +139,11 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
   /// Contains the applied/skipped band audit — no DSP register values.
   final TuningApplyResult? applyResult;
 
+  /// Non-null when safety validation ran but apply was not permitted.
+  /// Human-readable blocking reason(s). Null when apply ran or safety
+  /// did not run. Never a DSP value.
+  final String? applyBlockedReason;
+
   /// Opaque artifact-store key for the before-apply measurement artifact.
   /// Present when apply succeeded; used to retrieve [MeasurementArtifact] for
   /// the Closed Loop comparison once an after-measurement is available.
@@ -157,6 +162,7 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
     required this.explanation,
     this.loopVerdict,
     this.applyResult,
+    this.applyBlockedReason,
     this.beforeMeasurementRef,
     this.loopPhase,
     this.completedCycle,

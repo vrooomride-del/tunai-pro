@@ -5,10 +5,15 @@
 //   2. Calls ProOrchestrateService (Cloud) → ProOrchestrateResponse.
 //   3. Runs ProLocalOrchestrator (stream) → lifecycle events.
 //   4. Pauses at requiresUserConfirmation gates; caller calls confirm/cancel.
-//   5. After ProPlanCompleted, extracts ImprovementVerdict if the loop ran.
+//   5. After acousticValidateSafety completes with applyPermitted + selected
+//      candidates, emits ProGuidedAiConfirmPending (controller-level gate)
+//      and awaits user confirmation before calling _runApply.
+//   6. After ProPlanCompleted, extracts ImprovementVerdict if the loop ran.
 //
 // [adapterOverrides] is intentionally public for test injection: pass stub
 // adapters to avoid touching the real Acoustic Engine in unit tests.
+
+import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -25,9 +30,11 @@ import 'pro_acoustic_intent.dart';
 import 'pro_guided_ai_state.dart';
 import 'pro_local_orchestrator.dart';
 import 'pro_local_orchestrator_session.dart';
+import 'pro_explanation.dart';
 import 'pro_orchestrate_request.dart';
 import 'pro_orchestrate_service.dart';
 import 'pro_orchestrator_context.dart';
+import 'pro_orchestrator_plan.dart';
 import 'pro_orchestrator_types.dart';
 import 'tools/adapters/acoustic_classify_adapter.dart';
 import 'tools/adapters/acoustic_evaluate_loop_adapter.dart';
@@ -61,6 +68,11 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   // retrieve the before-measurement artifact for closed-loop comparison.
   ProToolArtifactStore? _sessionStore;
   String? _sessionProjectId;
+
+  // Controller-level apply gate: completes true (confirm) or false (cancel).
+  // Non-null only while waiting for user confirmation after safety validation.
+  Completer<bool>? _applyGateCompleter;
+  String? _applyGateStepId;
 
   ProGuidedAiController({
     ProOrchestrateService? service,
@@ -165,21 +177,51 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           );
         case ProStepCompleted(:final record):
           completedSteps.add(record);
-          // Apply gate: runs after safety validation, before plan completion.
-          if (record.toolId == ProOrchestratorToolId.acousticValidateSafety &&
-              onApply != null) {
-            // Identify which driver channel was analyzed so the apply targets
-            // the correct PEQ channel in multi-channel projects.
+          if (record.toolId == ProOrchestratorToolId.acousticValidateSafety) {
+            // Identify which driver channel was analyzed.
             final analyzedChannelId = plan.steps
                 .where(
                     (s) => s.toolId == ProOrchestratorToolId.measurementAnalyze)
                 .firstOrNull
                 ?.inputRefs
                 .firstOrNull;
-            applyResult = _runApply(pid, store, record.outputRef, project,
-                analyzedChannelId: analyzedChannelId);
-            if (applyResult != null) {
-              await onApply(pid, applyResult);
+            final permitted =
+                _isSafetyPermitted(pid, store, record.outputRef);
+            final hasSelected =
+                _hasSelectedCandidates(pid, store, completedSteps);
+            if (permitted && hasSelected && onApply != null) {
+              // Optimizer ran and selected candidates — show preview gate and
+              // wait for user confirmation before applying.
+              _applyGateStepId = 'apply_gate_${record.outputRef}';
+              _applyGateCompleter = Completer<bool>();
+              state = _buildApplyGatePending(
+                pid: pid,
+                store: store,
+                plan: plan,
+                explanation: explanation,
+                completedSteps: completedSteps,
+                project: project,
+                analyzedChannelId: analyzedChannelId,
+                safetyRef: record.outputRef,
+              );
+              final confirmed = await _applyGateCompleter!.future;
+              _applyGateCompleter = null;
+              _applyGateStepId = null;
+              if (confirmed) {
+                applyResult = _runApply(pid, store, record.outputRef, project,
+                    analyzedChannelId: analyzedChannelId);
+                if (applyResult != null) {
+                  await onApply(pid, applyResult);
+                }
+              }
+            } else if (onApply != null) {
+              // No optimizer candidates (e.g. standalone safety check) —
+              // fall through to legacy auto-apply path.
+              applyResult = _runApply(pid, store, record.outputRef, project,
+                  analyzedChannelId: analyzedChannelId);
+              if (applyResult != null) {
+                await onApply(pid, applyResult);
+              }
             }
           }
           state = ProGuidedAiExecuting(
@@ -286,11 +328,15 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
                       applyResult.status != TuningApplyStatus.notPermitted)
                   ? ProClosedLoopPhase.awaitingMeasurement
                   : null;
+          final blockedReason = applyResult == null
+              ? _extractBlockedReason(pid, store, completedSteps)
+              : null;
           state = ProGuidedAiCompleted(
             outcome: outcome,
             explanation: explanation,
             loopVerdict: loopVerdict,
             applyResult: applyResult,
+            applyBlockedReason: blockedReason,
             beforeMeasurementRef: beforeRef,
             loopPhase: loopPhase,
           );
@@ -305,8 +351,23 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     _sessionProjectId = pid;
   }
 
-  void confirm(String stepId) => _orchestrator?.confirm(stepId);
-  void cancel(String stepId) => _orchestrator?.cancel(stepId);
+  void confirm(String stepId) {
+    final completer = _applyGateCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(true);
+      return;
+    }
+    _orchestrator?.confirm(stepId);
+  }
+
+  void cancel(String stepId) {
+    final completer = _applyGateCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(false);
+      return;
+    }
+    _orchestrator?.cancel(stepId);
+  }
 
   /// Receives the after-measurement artifact and transitions the state from
   /// [ProClosedLoopPhase.awaitingMeasurement] to [ProClosedLoopPhase.evaluated].
@@ -502,6 +563,12 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   }
 
   void reset() {
+    final completer = _applyGateCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(false);
+    }
+    _applyGateCompleter = null;
+    _applyGateStepId = null;
     _orchestrator = null;
     _sessionStore = null;
     _sessionProjectId = null;
@@ -524,6 +591,155 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     } catch (_) {
       return null;
     }
+  }
+
+  // ── Apply-gate helpers ───────────────────────────────────────────────────────
+
+  static bool _isSafetyPermitted(
+    String projectId,
+    ProToolArtifactStore store,
+    String safetyRef,
+  ) {
+    if (!store.has(projectId, safetyRef)) return false;
+    try {
+      return store
+          .getTyped<CandidateSafetyArtifact>(projectId, safetyRef)
+          .value
+          .applyPermitted;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static bool _hasSelectedCandidates(
+    String projectId,
+    ProToolArtifactStore store,
+    List<ProStepExecutionRecord> completedSteps,
+  ) {
+    final optRef = completedSteps
+        .where(
+            (r) => r.toolId == ProOrchestratorToolId.acousticOptimizeSelection)
+        .firstOrNull
+        ?.outputRef;
+    if (optRef == null || !store.has(projectId, optRef)) return false;
+    try {
+      return store
+          .getTyped<OptimizedSelectionArtifact>(projectId, optRef)
+          .value
+          .selected
+          .isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static String? _extractBlockedReason(
+    String projectId,
+    ProToolArtifactStore store,
+    List<ProStepExecutionRecord> completedSteps,
+  ) {
+    final safetyRef = completedSteps
+        .where(
+            (r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)
+        .firstOrNull
+        ?.outputRef;
+    if (safetyRef == null || !store.has(projectId, safetyRef)) return null;
+    try {
+      final safety =
+          store.getTyped<CandidateSafetyArtifact>(projectId, safetyRef).value;
+      if (safety.applyPermitted) return null;
+      if (safety.issues.isEmpty) return '안전 검사 미통과';
+      return safety.issues.map((i) => i.detail).join('; ');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ProGuidedAiConfirmPending _buildApplyGatePending({
+    required String pid,
+    required ProToolArtifactStore store,
+    required ProOrchestratorPlan plan,
+    required ProExplanation explanation,
+    required List<ProStepExecutionRecord> completedSteps,
+    required ProProject project,
+    required String? analyzedChannelId,
+    required String safetyRef,
+  }) {
+    final targetChannel = analyzedChannelId != null
+        ? project.tuningState.peqChannels
+            .where((ch) => ch.channelId == analyzedChannelId)
+            .firstOrNull
+        : project.tuningState.peqChannels.firstOrNull;
+    final availableSlots = targetChannel?.bands.length;
+
+    List<CandidatePreviewEntry>? preview;
+    String? applyBlockedReason;
+
+    final optRef = completedSteps
+        .where(
+            (r) => r.toolId == ProOrchestratorToolId.acousticOptimizeSelection)
+        .firstOrNull
+        ?.outputRef;
+    if (optRef != null && store.has(pid, optRef)) {
+      try {
+        final opt = store.getTyped<OptimizedSelectionArtifact>(pid, optRef);
+        final channelLabel = analyzedChannelId ?? '';
+        final needed = opt.value.selected.length;
+        if (availableSlots != null && needed > availableSlots) {
+          applyBlockedReason =
+              '슬롯 부족: $needed개 필요, 채널 ${channelLabel.isNotEmpty ? channelLabel : "—"}에 $availableSlots개 가능';
+        }
+        final slotMap = <int, int?>{};
+        if (targetChannel != null) {
+          var simCh = targetChannel;
+          final sorted = [...opt.value.selected]
+            ..sort(
+                (a, b) => a.applicationOrder.compareTo(b.applicationOrder));
+          for (final sel in sorted) {
+            final norm = simCh.normalized();
+            final idx = norm.bands.indexWhere((b) => !b.enabled);
+            slotMap[sel.applicationOrder] = idx >= 0 ? idx + 1 : null;
+            if (idx >= 0) {
+              simCh = simCh.fillNextFreeSlot(
+                type: PeqBandType.peak,
+                frequencyHz: sel.scoredCandidate.candidate.frequencyHz,
+                gainDb: sel.scoredCandidate.candidate.gainDb,
+                q: sel.scoredCandidate.candidate.q,
+              );
+            }
+          }
+        }
+        preview = [
+          for (final c in opt.value.selected)
+            CandidatePreviewEntry(
+              applicationOrder: c.applicationOrder,
+              frequencyHz: c.scoredCandidate.candidate.frequencyHz,
+              gainDb: c.scoredCandidate.candidate.gainDb,
+              q: c.scoredCandidate.candidate.q,
+              grade: c.scoredCandidate.grade.name,
+              channelId: channelLabel,
+              safetyVerified: false,
+              targetPeqSlot: slotMap[c.applicationOrder],
+            ),
+        ];
+      } catch (_) {}
+    }
+
+    return ProGuidedAiConfirmPending(
+      request: ProUserConfirmationRequest(
+        stepId: _applyGateStepId!,
+        toolId: ProOrchestratorToolId.acousticValidateSafety,
+        objective: '분석된 후보 적용',
+        explanation: explanation,
+      ),
+      plan: plan,
+      explanation: explanation,
+      completedSteps: List.unmodifiable(completedSteps),
+      candidatePreview: preview,
+      applyBlockedReason: applyBlockedReason,
+      targetChannelId: analyzedChannelId,
+      availablePeqSlots: availableSlots,
+    );
   }
 
   /// Reads the CandidateSafetyArtifact at [safetyRef] and calls
