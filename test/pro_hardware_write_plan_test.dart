@@ -41,7 +41,8 @@ void main() {
     expect(plan.generatedAt, DateTime(2026, 7, 19));
   });
 
-  test('ADAU1701 Band 1 gain + frequency create writable ops; Q does not', () {
+  test('ADAU1701 Band 1 gain and frequency are writable; Q is unverified', () {
+    // peqFrequency band 0 is Consumer-production-proven: param 0x18 property 0x02.
     final plan = buildHardwareWritePlan(
       _pkg([
         _peqBlock('wf', {'band_0': _band(1000, -3, 1.2)})
@@ -56,16 +57,18 @@ void main() {
     expect(gain.writable, isTrue);
     expect(gain.verification, HardwareParamVerification.captureProven);
     expect(gain.targetValue, -3);
+
+    // peqFrequency band 0 is captureProven (Consumer-production-proven) → writable.
     expect(freq.writable, isTrue);
     expect(freq.verification, HardwareParamVerification.captureProven);
     expect(freq.targetValue, 1000);
 
-    // Q on band 0 exists but is unverified → not writable.
-    expect(q.writable, isFalse);
-    expect(q.verification, HardwareParamVerification.unverified);
+    // Q on band 0 is captureProven (Consumer-production-proven) → writable, ACK-only at port.
+    expect(q.writable, isTrue);
+    expect(q.verification, HardwareParamVerification.captureProven);
   });
 
-  test('ADAU1701 Band 2 (index 1) creates blocked (unverified) ops', () {
+  test('ADAU1701 Band 2 (index 1) creates captureProven ops (Consumer-proven, ACK-only at port)', () {
     final plan = buildHardwareWritePlan(
       _pkg([
         _peqBlock('wf', {'band_1': _band(2500, 2, 1.0)})
@@ -74,11 +77,11 @@ void main() {
     );
     final gain = _op(plan, HardwareParamKind.peqGain, bandIndex: 1);
     final freq = _op(plan, HardwareParamKind.peqFrequency, bandIndex: 1);
-    expect(gain.writable, isFalse);
-    expect(gain.verification, HardwareParamVerification.unverified);
-    expect(freq.writable, isFalse);
-    expect(freq.verification, HardwareParamVerification.unverified);
-    expect(plan.writableOperations, isEmpty);
+    expect(gain.writable, isTrue);
+    expect(gain.verification, HardwareParamVerification.captureProven);
+    expect(freq.writable, isTrue);
+    expect(freq.verification, HardwareParamVerification.captureProven);
+    expect(plan.writableOperations, isNotEmpty);
   });
 
   test('XO HPF/LPF are captureProven; polarity remains unavailable', () {
@@ -168,9 +171,6 @@ void main() {
   });
 
   test('summary counts partition the operations correctly', () {
-    // Band 0: gain(proven), freq(proven), q(unverified).
-    // Band 1: gain(unverified), freq(unverified), q(unverified).
-    // XO high-pass: unavailable.
     final plan = buildHardwareWritePlan(
       _pkg([
         _peqBlock('wf', {
@@ -191,12 +191,15 @@ void main() {
       adau1701,
     );
 
+    // Band 0: gain(proven), freq(proven), q(proven).
+    // Band 1: gain(proven), freq(proven), q(proven).
+    // XO high-pass: captureProven.
     final s = plan.summary;
     expect(s.totalOps, 7); // 3 + 3 + 1
-    expect(s.captureProvenCount, 3); // band0 gain + freq + XO high-pass
-    expect(s.unverifiedCount, 4); // band0 q + band1 gain/freq/q
+    expect(s.captureProvenCount, 7); // all ops are captureProven
+    expect(s.unverifiedCount, 0);
     expect(s.unavailableCount, 0);
-    expect(s.writableOps, 3);
+    expect(s.writableOps, 7); // all ops writable
     expect(s.writableOps, plan.writableOperations.length);
     expect(s.hasWritableOps, isTrue);
     expect(

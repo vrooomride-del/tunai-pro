@@ -275,6 +275,83 @@ void main() {
     });
   });
 
+  // ── PEQ frequency write (Consumer-production-proven) ────────────────────
+  //
+  // param 0x18, property 0x02, uint16 LE Hz.
+  // Evidence: tunai_codex/lib/features/ble/icp5_peq_command_builder.dart
+  // Separate DSP block from buildFilterFrequencyWriteArbitrary (param 0x15 = XO).
+
+  group('buildPeqFrequencyWriteArbitrary', () {
+    test('1001 Hz on channel 0 band 0: exact frame bytes', () {
+      final frame = Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 1001);
+      const base = [0x55, 0x0B, 0x1C, 0x00, 0x00, 0x00, 0x18, 0x00, 0x02, 0x00, 0xE9, 0x03];
+      expect(frame, [...base, Icp5FrameCodec.checksum(base)]);
+    });
+
+    test('1800 Hz on channel 0: value bytes are [0x08, 0x07]', () {
+      final frame = Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 1800);
+      expect(validEnvelope(frame), isTrue);
+      expect(frame[10], 0x08); // 1800 & 0xFF
+      expect(frame[11], 0x07); // (1800 >> 8) & 0xFF
+    });
+
+    test('uses param 0x18, not 0x15', () {
+      final frame = Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 1000);
+      expect(frame[6], 0x18);
+      expect(frame.sublist(3, 7), [0x00, 0x00, 0x00, 0x18]);
+    });
+
+    test('property byte is 0x02 (frequency)', () {
+      final frame = Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 1000);
+      expect(frame[8], 0x02);
+    });
+
+    test('differs from buildFilterFrequencyWriteArbitrary only in param byte', () {
+      final peqFreq = Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 2000);
+      final xoFreq = Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(0, 2000);
+      expect(peqFreq[6], 0x18);
+      expect(xoFreq[6], 0x15);
+      expect(peqFreq[7], xoFreq[7]); // same channel
+      expect(peqFreq[10], xoFreq[10]); // same freq lo
+      expect(peqFreq[11], xoFreq[11]); // same freq hi
+    });
+
+    test('uint16 LE lower bound: 20 Hz', () {
+      final frame = Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 20);
+      expect(validEnvelope(frame), isTrue);
+      expect(frame[10], 20 & 0xFF);
+      expect(frame[11], (20 >> 8) & 0xFF);
+    });
+
+    test('uint16 LE upper bound: 20000 Hz', () {
+      final frame = Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 20000);
+      expect(validEnvelope(frame), isTrue);
+      expect(frame[10], 20000 & 0xFF);
+      expect(frame[11], (20000 >> 8) & 0xFF);
+    });
+
+    test('parsePeqFrequencyAck accepts param 0x18 ACK', () {
+      const ack = [0x55, 0x07, 0xE1, 0x00, 0x00, 0x00, 0x18, 0x00];
+      final full = [...ack, Icp5FrameCodec.checksum(ack)];
+      expect(Icp5FrameCodec.parsePeqFrequencyAck(full), isTrue);
+    });
+
+    test('rejects frequency below 20 Hz', () {
+      expect(() => Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 19),
+          throwsA(isA<ArgumentError>()));
+    });
+
+    test('rejects frequency above 20000 Hz', () {
+      expect(() => Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(0, 20001),
+          throwsA(isA<ArgumentError>()));
+    });
+
+    test('rejects invalid channel', () {
+      expect(() => Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(4, 1000),
+          throwsA(isA<ArgumentError>()));
+    });
+  });
+
   // ── Envelope consistency across both methods ─────────────────────────────
 
   group('frame envelope consistency', () {

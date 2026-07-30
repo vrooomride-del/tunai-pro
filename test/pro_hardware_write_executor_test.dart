@@ -72,7 +72,7 @@ ExportParameterBlock _peq(String ch, Map<String, dynamic> bands) =>
 Map<String, dynamic> _band(double f, double g, double q) =>
     {'freq_hz': f, 'gain_db': g, 'q': q, 'type': 'peak'};
 
-// Band 1 (index 0) on ADAU1701 → gain + frequency are capture-proven.
+// Band 0 on ADAU1701 → gain + frequency + Q are all captureProven (3 ops).
 HardwareWriteApproval _approvedBand1() {
   final plan = buildHardwareWritePlan(
     _pkg([
@@ -91,9 +91,10 @@ void main() {
         await HardwareWriteExecutor(port).execute(_approvedBand1());
 
     expect(result.executed, isTrue);
-    expect(port.calls, 2); // band0 gain + frequency
-    expect(result.writtenCount, 2);
+    expect(port.calls, 3); // band0 gain + frequency + Q; all captureProven
+    expect(result.writtenCount, 3);
     expect(result.allWritten, isTrue);
+    expect(result.allPassed, isTrue);
     expect(result.unsupportedCount, 0);
     for (final o in result.outcomes) {
       expect(o.status, HardwareWriteOpStatus.written);
@@ -101,16 +102,26 @@ void main() {
   });
 
   test('rejected approval is refused — no port calls', () async {
-    // Build a rejected approval by selecting a non-writable (Q) op.
+    // channelPolarity is unavailable on ADAU1701 → selecting it is rejected.
     final plan = buildHardwareWritePlan(
       _pkg([
-        _peq('wf', {'band_0': _band(1000, -3, 1.2)})
+        _peq('wf', {'band_0': _band(1000, -3, 1.2)}),
+        ExportParameterBlock(
+          id: 'blk_xo',
+          type: ExportBlockType.crossover,
+          channelId: 'wf',
+          title: 'XO',
+          summary: '',
+          parameters: {'polarityInverted': true},
+        ),
       ]),
       HardwareDeviceProfiles.adau1701Icp5,
     );
-    final qOp = plan.operations
-        .firstWhere((o) => o.parameterKind == HardwareParamKind.peqQ);
-    final rejected = HardwareWriteApproval.approve(plan, selection: [qOp]);
+    final polarityOp = plan.operations
+        .firstWhere((o) => o.parameterKind == HardwareParamKind.channelPolarity);
+    expect(polarityOp.writable, isFalse,
+        reason: 'channelPolarity has no ADAU1701 write path');
+    final rejected = HardwareWriteApproval.approve(plan, selection: [polarityOp]);
     expect(rejected.status, HardwareApprovalStatus.rejected);
 
     final port = _FakePort((_) => _written());
@@ -141,10 +152,11 @@ void main() {
         await HardwareWriteExecutor(port).execute(_approvedBand1());
 
     expect(result.executed, isTrue);
-    expect(port.calls, 2);
+    expect(port.calls, 3); // gain + frequency + Q; all blocked
     expect(result.writtenCount, 0);
-    expect(result.blockedCount, 2);
+    expect(result.blockedCount, 3);
     expect(result.allWritten, isFalse);
+    expect(result.allPassed, isFalse);
     expect(result.outcomes.first.message, contains('transport not ready'));
   });
 
@@ -152,15 +164,16 @@ void main() {
     final port = _FakePort((_) => _failed());
     final result =
         await HardwareWriteExecutor(port).execute(_approvedBand1());
-    expect(result.failedCount, 2);
+    expect(result.failedCount, 3);
     expect(result.writtenCount, 0);
   });
 
   test('approved-but-unsupported op fails closed without a port call',
       () async {
-    // Custom profile with the ADAU1701 device id that (incorrectly) proves Q,
-    // so the approval approves a Q op that the executor has no writer for.
-    const provesQ = HardwareDeviceProfile(
+    // Custom profile proves peqGain for all bands (including band 10, which
+    // is outside the executor's 0–9 range). The band-10 gain op is approved
+    // but the executor has no writer for it → fails closed as unsupported.
+    const provesHighBand = HardwareDeviceProfile(
       deviceId: 'adau1701-icp5',
       deviceName: 'ADAU1701 (ICP5)',
       transport: HardwareTransportType.icp5,
@@ -169,33 +182,40 @@ void main() {
             kind: HardwareParamKind.peqGain,
             bandIndex: 0,
             verification: HardwareParamVerification.captureProven),
+        // Band-agnostic entry makes band 10 captureProven too.
         HardwareCapabilityEntry(
-            kind: HardwareParamKind.peqQ,
+            kind: HardwareParamKind.peqGain,
             verification: HardwareParamVerification.captureProven),
       ],
     );
+    // plan has band_0 gain (supported, bandIndex 0) + band_10 gain (unsupported, > 9)
+    // freq/Q are NOT in provesHighBand → unavailable → not in approval.
     final plan = buildHardwareWritePlan(
       _pkg([
-        _peq('wf', {'band_0': _band(1000, -3, 1.2)})
+        _peq('wf', {
+          'band_0': _band(1000, -3, 1.2),
+          'band_10': _band(800, 0, 1.0),
+        })
       ]),
-      provesQ,
+      provesHighBand,
     );
     final approval = HardwareWriteApproval.approve(plan);
-    // gain (supported) + Q (unsupported) are both approved here.
+    // gain band 0 (supported) + gain band 10 (unsupported, > 9) both approved.
     expect(approval.status, HardwareApprovalStatus.approved);
+    expect(approval.approvedCount, 2);
 
     final port = _FakePort((_) => _written());
     final result = await HardwareWriteExecutor(port).execute(approval);
 
     expect(result.executed, isTrue);
-    // Only the gain op reaches the port; Q is failed-closed.
+    // Only band-0 gain reaches the port; band-10 is failed-closed.
     expect(port.calls, 1);
     expect(result.writtenCount, 1);
     expect(result.unsupportedCount, 1);
-    final qOutcome = result.outcomes.firstWhere(
-        (o) => o.op.parameterKind == HardwareParamKind.peqQ);
-    expect(qOutcome.status, HardwareWriteOpStatus.unsupported);
-    expect(qOutcome.report, isNull);
+    final band10Outcome = result.outcomes.firstWhere(
+        (o) => o.op.bandIndex == 10);
+    expect(band10Outcome.status, HardwareWriteOpStatus.unsupported);
+    expect(band10Outcome.report, isNull);
   });
 
   test('result JSON summarizes the execution', () async {
@@ -204,7 +224,7 @@ void main() {
         await HardwareWriteExecutor(port).execute(_approvedBand1());
     final json = result.toJson();
     expect(json['executed'], isTrue);
-    expect(json['writtenCount'], 2);
-    expect((json['outcomes'] as List), hasLength(2));
+    expect(json['writtenCount'], 3);
+    expect((json['outcomes'] as List), hasLength(3));
   });
 }

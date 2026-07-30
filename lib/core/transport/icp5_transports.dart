@@ -550,9 +550,8 @@ class Icp5UsbTransport
     return Adau1701WriteAck(success: r.success, message: r.message);
   }
 
-  /// Writes an arbitrary filter frequency in 20 .. 20 000 Hz for [channel] and
-  /// [band] (0 = Band 1). Uses the confirmed parameter-ID 0x15 encoding. Band 0
-  /// is capture-proven; bands 1..9 are hardware-unverified. Range-validated only.
+  /// Writes an arbitrary crossover filter frequency in 20 .. 20 000 Hz for
+  /// [channel] and [band] (0 = Band 1). Uses param 0x15 (crossover path only).
   @override
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
       {int band = 0}) async {
@@ -560,6 +559,21 @@ class Icp5UsbTransport
       Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(channel, frequencyHz,
           band: band),
       Icp5FrameCodec.parseFilterFrequencyAck,
+    );
+    return Adau1701WriteAck(success: r.success, message: r.message);
+  }
+
+  /// Writes an arbitrary PEQ band frequency in 20 .. 20 000 Hz for [channel]
+  /// and [band] (0 = Band 1). Uses Consumer-production-proven param 0x18
+  /// property 0x02 (uint16 LE Hz). Band 0 is the adopted basis; bands 1..9
+  /// are hardware-unverified. Range-validated only.
+  @override
+  Future<Adau1701WriteAck> writePeqFrequency(int channel, int frequencyHz,
+      {int band = 0}) async {
+    final r = await _writePhaseC(
+      Icp5FrameCodec.buildPeqFrequencyWriteArbitrary(channel, frequencyHz,
+          band: band),
+      Icp5FrameCodec.parsePeqFrequencyAck,
     );
     return Adau1701WriteAck(success: r.success, message: r.message);
   }

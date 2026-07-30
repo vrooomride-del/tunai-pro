@@ -45,8 +45,8 @@ void main() {
     expect(find.text('CAPTURE PROVEN'), findsOneWidget);
     expect(find.text('UNVERIFIED'), findsOneWidget);
     expect(find.text('UNAVAILABLE'), findsOneWidget);
-    // Writable section shows the 2 proven ops (band0 gain + freq).
-    expect(find.text('WRITABLE OPERATIONS (2)'), findsOneWidget);
+    // band_0: gain+freq+Q (3) + band_1: gain+freq+Q (3) = 6 writable ops; all captureProven.
+    expect(find.text('WRITABLE OPERATIONS (6)'), findsOneWidget);
     // Explicit approval notice.
     expect(
         find.textContaining('Hardware write is not implemented / requires approval'),

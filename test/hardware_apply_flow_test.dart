@@ -27,7 +27,8 @@ class _FakeTransport implements Adau1701TuningTransport {
   final bool connected;
   _FakeTransport({this.connected = true});
   final List<(int, double)> gainWrites = [];
-  final List<(int, int)> freqWrites = [];
+  final List<(int, int)> freqWrites = [];     // XO: writeFilterFrequency (param 0x15)
+  final List<(int, int)> peqFreqWrites = [];  // PEQ: writePeqFrequency (param 0x18)
 
   @override
   bool get isConnected => connected;
@@ -56,6 +57,13 @@ class _FakeTransport implements Adau1701TuningTransport {
   }
 
   @override
+  Future<Adau1701WriteAck> writePeqFrequency(int c, int f,
+      {int band = 0}) async {
+    peqFreqWrites.add((c, f));
+    return const Adau1701WriteAck(success: true, message: 'ok');
+  }
+
+  @override
   Future<Adau1701WriteAck> writePeqQ(int c, double q, {int band = 0}) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
 
@@ -68,7 +76,7 @@ DspExportPackage _pkg() => DspExportPackage(id: 'exp1', parameterBlocks: [
       const ExportParameterBlock(
         id: 'blk',
         type: ExportBlockType.peq,
-        channelId: 'wf',
+        channelId: 'ch_wf_l', // defaultChannelResolver: ch_wf_l → ADAU1701 channel 1
         title: 'PEQ',
         summary: '',
         parameters: {
@@ -118,7 +126,8 @@ void main() {
     await tester.tap(_btn('APPROVE VERIFIED WRITE'));
     await tester.pump();
 
-    expect(find.textContaining('Approved 2 operation'), findsOneWidget);
+    // peqGain + peqFrequency + peqQ are all captureProven → 3 ops.
+    expect(find.textContaining('Approved 3 operation'), findsOneWidget);
     expect(find.textContaining('Hardware not ready'), findsOneWidget);
     expect(tester.widget<OutlinedButton>(_btn('APPLY VERIFIED SETTINGS')).onPressed,
         isNull);
@@ -142,9 +151,11 @@ void main() {
     await tester.tap(_btn('APPLY VERIFIED SETTINGS'));
     await tester.pumpAndSettle();
 
-    // Both proven ops were written through the transport.
-    expect(transport.gainWrites, [(0, -1.0)]);
-    expect(transport.freqWrites, [(0, 1800)]);
+    // peqGain + peqFrequency + peqQ all captureProven → written (channel 1 = ch_wf_l).
+    // XO is not involved so writeFilterFrequency (param 0x15) is NOT called.
+    expect(transport.gainWrites, [(1, -1.0)]);
+    expect(transport.peqFreqWrites, [(1, 1800)]); // param 0x18 property 0x02
+    expect(transport.freqWrites, isEmpty);         // XO path not triggered
     expect(find.text('APPLY RESULTS'), findsOneWidget);
     expect(find.text('WRITTEN'), findsOneWidget);
     expect(tester.takeException(), isNull);

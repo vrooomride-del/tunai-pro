@@ -20,13 +20,30 @@ ExportParameterBlock _peq(String ch, Map<String, dynamic> bands) =>
 Map<String, dynamic> _band(double f, double g, double q) =>
     {'freq_hz': f, 'gain_db': g, 'q': q, 'type': 'peak'};
 
-// A plan with band 0 (2 writable ops + 1 unverified Q) on ADAU1701.
+// A plan with band 0 (3 writable ops: peqFrequency + peqGain + peqQ, all captureProven) on ADAU1701.
 HardwareWritePlan _provenPlan() => buildHardwareWritePlan(
       _pkg([
         _peq('wf', {'band_0': _band(1000, -3, 1.2)})
       ]),
       HardwareDeviceProfiles.adau1701Icp5,
       generatedAt: DateTime(2026, 7, 19),
+    );
+
+// A plan that contains a channelPolarity op (unavailable → not writable)
+// alongside writable PEQ ops. Used to test rejection of blocked ops.
+HardwareWritePlan _planWithPolarityOp() => buildHardwareWritePlan(
+      _pkg([
+        _peq('wf', {'band_0': _band(1000, -3, 1.2)}),
+        ExportParameterBlock(
+          id: 'blk_xo',
+          type: ExportBlockType.crossover,
+          channelId: 'wf',
+          title: 'XO',
+          summary: '',
+          parameters: {'polarityInverted': true},
+        ),
+      ]),
+      HardwareDeviceProfiles.adau1701Icp5,
     );
 
 void main() {
@@ -37,7 +54,7 @@ void main() {
 
     expect(approval.status, HardwareApprovalStatus.approved);
     expect(approval.isApproved, isTrue);
-    expect(approval.approvedCount, 2); // band0 gain + frequency
+    expect(approval.approvedCount, 3); // band0 gain + frequency + Q; all captureProven
     expect(approval.approver, 'expert');
     expect(approval.rejectionReason, isNull);
     // Every approved op is capture-proven.
@@ -53,13 +70,16 @@ void main() {
     expect(() => approval.approvedOperations.clear(), throwsUnsupportedError);
   });
 
-  test('selecting a blocked (unverified) op is rejected — nothing approved', () {
-    final plan = _provenPlan();
-    final qOp = plan.operations
-        .firstWhere((o) => o.parameterKind == HardwareParamKind.peqQ);
-    expect(qOp.writable, isFalse);
+  test('selecting a blocked (unavailable) op is rejected — nothing approved', () {
+    // channelPolarity is unavailable (no entry in ADAU1701 profile) → not writable.
+    final plan = _planWithPolarityOp();
+    final polarityOp = plan.operations
+        .firstWhere((o) => o.parameterKind == HardwareParamKind.channelPolarity);
+    expect(polarityOp.writable, isFalse,
+        reason: 'channelPolarity has no ADAU1701 write path');
 
-    final approval = HardwareWriteApproval.approve(plan, selection: [qOp]);
+    final approval =
+        HardwareWriteApproval.approve(plan, selection: [polarityOp]);
     expect(approval.status, HardwareApprovalStatus.rejected);
     expect(approval.isApproved, isFalse);
     expect(approval.approvedOperations, isEmpty);
@@ -67,13 +87,14 @@ void main() {
   });
 
   test('a selection mixing writable + blocked is rejected wholesale', () {
-    final plan = _provenPlan();
+    final plan = _planWithPolarityOp();
     final gain = plan.operations.firstWhere(
         (o) => o.parameterKind == HardwareParamKind.peqGain && o.writable);
-    final qOp = plan.operations
-        .firstWhere((o) => o.parameterKind == HardwareParamKind.peqQ);
+    final polarityOp = plan.operations
+        .firstWhere((o) => o.parameterKind == HardwareParamKind.channelPolarity);
 
-    final approval = HardwareWriteApproval.approve(plan, selection: [gain, qOp]);
+    final approval =
+        HardwareWriteApproval.approve(plan, selection: [gain, polarityOp]);
     expect(approval.status, HardwareApprovalStatus.rejected);
     expect(approval.approvedOperations, isEmpty);
   });
@@ -123,6 +144,6 @@ void main() {
     expect(json['status'], 'approved');
     expect(json['approver'], 'expert');
     expect(json['deviceId'], 'adau1701-icp5');
-    expect((json['approvedOperations'] as List), hasLength(2));
+    expect((json['approvedOperations'] as List), hasLength(3));
   });
 }

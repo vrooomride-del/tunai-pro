@@ -39,10 +39,20 @@ class Adau1701HardwareContext {
       transport.handshakeComplete &&
       transport.detectedProfile != null;
 
-  /// Default channel resolver: only channel 0 / Band 1 is capture-proven, so the
-  /// initial supported scope maps to output channel 0. Override for multi-channel
-  /// capture-proven mappings once they exist.
-  static int defaultChannelResolver(String channelId) => 0;
+  /// Explicit channel resolver for the default 2-way stereo layout.
+  ///
+  /// Maps the four default DriverChannel IDs to ADAU1701 output indices 0–3
+  /// (dspOutputIndex values 1–4 from defaultDriverChannels(), minus 1).
+  /// Returns -1 (fail-closed) for any unmapped channel ID.
+  static const Map<String, int> _adau1701ChannelMap = {
+    'ch_tw_l': 0,
+    'ch_wf_l': 1,
+    'ch_tw_r': 2,
+    'ch_wf_r': 3,
+  };
+
+  static int defaultChannelResolver(String channelId) =>
+      _adau1701ChannelMap[channelId] ?? -1;
 
   /// Wires a context around an already-constructed tuning transport. This is the
   /// composition root; the named transport factories delegate to it.

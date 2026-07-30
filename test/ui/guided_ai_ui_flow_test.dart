@@ -107,6 +107,10 @@ class _FakeTransport implements Adau1701TuningTransport {
   Future<Adau1701WriteAck> writeFilterFrequency(int c, int f,
           {int band = 0}) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
+  @override
+  Future<Adau1701WriteAck> writePeqFrequency(int c, int f,
+          {int band = 0}) async =>
+      const Adau1701WriteAck(success: true, message: 'ok');
 
   @override
   Future<Adau1701WriteAck> writePeqQ(int c, double q, {int band = 0}) async =>
@@ -259,7 +263,7 @@ DspExportPackage _exportPkg() => DspExportPackage(
         const ExportParameterBlock(
           id: 'blk',
           type: ExportBlockType.peq,
-          channelId: 'wf',
+          channelId: 'ch_wf_l', // defaultChannelResolver: ch_wf_l → ADAU1701 channel 1
           title: 'PEQ',
           summary: '',
           parameters: {

@@ -110,6 +110,11 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   }
 
   @override
+  Future<Adau1701WriteAck> writePeqFrequency(int channel, int frequencyHz,
+      {int band = 0}) async =>
+      const Adau1701WriteAck(success: true, message: 'ok');
+
+  @override
   Future<Adau1701WriteAck> writePeqQ(int channel, double q,
       {int band = 0}) async {
     lastQBand = band;

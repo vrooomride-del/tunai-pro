@@ -40,6 +40,11 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   }
 
   @override
+  Future<Adau1701WriteAck> writePeqFrequency(int channel, int frequencyHz,
+      {int band = 0}) async =>
+      const Adau1701WriteAck(success: true, message: 'ok');
+
+  @override
   Future<Adau1701WriteAck> writePeqQ(int channel, double q,
       {int band = 0}) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
@@ -50,7 +55,7 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
 }
 
 const _band1Gain = HardwareWriteOp(
-  channelId: 'wf',
+  channelId: 'ch_wf_l', // defaultChannelResolver: ch_wf_l → ADAU1701 channel 1
   parameterKind: HardwareParamKind.peqGain,
   bandIndex: 0,
   targetValue: -3.0,

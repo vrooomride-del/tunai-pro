@@ -1,13 +1,10 @@
-// Builds a minimal ADAU1701 export package from the current tuning state
-// for engineering manual writes (channel gain, etc.).
+// Builds minimal ADAU1701 export blocks from the current tuning state
+// for engineering manual writes (channel gain, PEQ, crossover).
 //
 // Does NOT require protection verification, FRD data, simulation results,
 // Factory Sound Profile eligibility, or any correction cycle. This is a
 // direct hardware control path for DSP engineers — the same safety chain
 // (preflight → write → ACK) still applies.
-//
-// Only produces ExportBlockType.gain blocks today. PEQ/XO are separate paths
-// that share the same executor.
 
 import '../pro_acoustic_data.dart';
 import '../pro_export_data.dart';
@@ -71,4 +68,66 @@ DspExportPackage buildAdau1701GainExportPackage({
     blockedReason: blocks.isEmpty ? 'No gain changes to write.' : null,
     parameterBlocks: blocks,
   );
+}
+
+/// Builds [ExportParameterBlock]s for PEQ and crossover from [tuning] for
+/// the channels listed in [channels]. Channels with no enabled PEQ bands and
+/// no configured XO filters are skipped.
+///
+/// Band indices in the PEQ blocks are the original positions in [PeqChannelState.bands]
+/// so that the capability layer (band_0 = Band 1 = capture-proven) resolves
+/// correctly.
+List<ExportParameterBlock> buildAdau1701PeqXoExportBlocks({
+  required List<DriverChannel> channels,
+  required TuningProjectState tuning,
+}) {
+  final ts = DateTime.now().millisecondsSinceEpoch;
+  int seq = 0;
+  final channelIds = {for (final ch in channels) ch.id};
+  final blocks = <ExportParameterBlock>[];
+
+  for (final peqCh in tuning.peqChannels) {
+    if (!channelIds.contains(peqCh.channelId)) continue;
+    // Preserve original band positions — band_0 = Band 1 = capture-proven.
+    final bandsJson = <String, dynamic>{};
+    for (var i = 0; i < peqCh.bands.length; i++) {
+      final b = peqCh.bands[i];
+      if (!b.enabled) continue;
+      bandsJson['band_$i'] = {
+        'freq_hz': b.frequencyHz,
+        'gain_db': b.gainDb,
+        'q': b.q,
+      };
+    }
+    if (bandsJson.isEmpty) continue;
+    blocks.add(ExportParameterBlock(
+      id: 'blk_peq_${peqCh.channelId}_${ts}_${seq++}',
+      type: ExportBlockType.peq,
+      channelId: peqCh.channelId,
+      title: '${peqCh.channelId} PEQ',
+      summary: '${bandsJson.length} band(s)',
+      parameters: {'bands': bandsJson},
+    ));
+  }
+
+  for (final xoCh in tuning.crossoverChannels) {
+    if (!channelIds.contains(xoCh.channelId)) continue;
+    if (!xoCh.isConfigured) continue;
+    final params = <String, dynamic>{};
+    if (xoCh.hasHighPass) params['highPass'] = {'freq_hz': xoCh.highPass!.frequencyHz};
+    if (xoCh.hasLowPass) params['lowPass'] = {'freq_hz': xoCh.lowPass!.frequencyHz};
+    blocks.add(ExportParameterBlock(
+      id: 'blk_xo_${xoCh.channelId}_${ts}_${seq++}',
+      type: ExportBlockType.crossover,
+      channelId: xoCh.channelId,
+      title: '${xoCh.channelId} XO',
+      summary: [
+        if (xoCh.hasHighPass) 'HPF @ ${xoCh.highPass!.freqLabel}',
+        if (xoCh.hasLowPass) 'LPF @ ${xoCh.lowPass!.freqLabel}',
+      ].join(' / '),
+      parameters: params,
+    ));
+  }
+
+  return blocks;
 }

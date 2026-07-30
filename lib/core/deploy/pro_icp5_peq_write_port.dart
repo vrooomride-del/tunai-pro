@@ -1,8 +1,8 @@
 // ── TUNAI PRO — Real Icp5PeqWritePort binding ─────────────────────────────────
 // Binds the gated executor's Icp5PeqWritePort to the EXISTING ADAU1701 ICP5
 // chain: Adau1701PeqDeploymentGate (preflight) → Adau1701TuningTransport
-// (writePeqGain / writeFilterFrequency) → Adau1701Ch0Band0ReadService (readback)
-// → Adau1701DeploymentReport.
+// (writePeqGain / writePeqFrequency; XO uses writeFilterFrequency)
+// → Adau1701Ch0Band0ReadService (readback) → Adau1701DeploymentReport.
 //
 // This is a binding/adapter. It modifies none of those components, the DSP
 // codec, address mapping, BLE/GATT, or the USBi executor — it only composes
@@ -45,6 +45,12 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
   final double gainToleranceDb;
   final int frequencyToleranceHz;
 
+  /// Maximum readback attempts for frequency verification after a successful
+  /// write ACK. The device may need a short settling time before the snapshot
+  /// reflects the new value. Attempts are spaced by [readbackRetryDelay].
+  final int maxReadbackAttempts;
+  final Duration readbackRetryDelay;
+
   Adau1701Icp5PeqWritePort({
     required this.transport,
     required this.gate,
@@ -53,6 +59,8 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
     DateTime Function()? clock,
     this.gainToleranceDb = 0.15,
     this.frequencyToleranceHz = 2,
+    this.maxReadbackAttempts = 3,
+    this.readbackRetryDelay = const Duration(milliseconds: 80),
   }) : _clock = clock ?? DateTime.now;
 
   @override
@@ -66,12 +74,13 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
           op, 'Channel id "${op.channelId}" could not be resolved.');
     }
 
-    // crossoverHighPass / crossoverLowPass path: same frame as peqFrequency
-    // (param 0x15, band 0), capture-proven via filter cutoff TEST/RESTORE.
+    // crossoverHighPass / crossoverLowPass path: param 0x15, ACK-only.
+    // XO has no readback via the PEQ read service — comparing the PEQ CH0/Band0
+    // readback to an XO target always mismatches. Write is accepted on ACK only.
     if (op.parameterKind == HardwareParamKind.crossoverHighPass ||
         op.parameterKind == HardwareParamKind.crossoverLowPass) {
-      final preflight = await gate
-          .runPreflight(Adau1701PeqWriteFields(gain: false, frequency: true));
+      final preflight =
+          await gate.runPreflight(Adau1701PeqWriteFields(gain: true));
       final attemptedAt = _clock();
       if (!preflight.passed) {
         return _report(preflight, attemptedAt, allowed: false, result: null);
@@ -79,24 +88,22 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
       final ack = await transport.writeFilterFrequency(
           channel, op.targetValue.round(),
           band: 0);
-      final read = await readService.readOriginalState();
-      final verified = ack.success &&
-          read.succeeded &&
-          (read.originalState!.frequencyHz - op.targetValue.round()).abs() <=
-              frequencyToleranceHz;
       final result = Icp5PhaseCResult(
-        success: verified,
+        success: ack.success,
         wasActualWrite: ack.success,
         writeMayHaveReachedDevice: ack.success,
-        message: _composeMessage(ack, read, verified),
+        message: ack.success
+            ? 'ACK received — crossover readback not yet available.'
+            : 'Crossover write NACK: ${ack.message}',
       );
-      return _report(preflight, attemptedAt, allowed: true, result: result);
+      return _report(preflight, attemptedAt, allowed: true, result: result,
+          isAckOnly: ack.success);
     }
 
     // channelGain path: preflight + write + ACK-only (no readback service yet).
     if (op.parameterKind == HardwareParamKind.channelGain) {
-      final preflight = await gate
-          .runPreflight(Adau1701PeqWriteFields(gain: true, frequency: false));
+      final preflight =
+          await gate.runPreflight(Adau1701PeqWriteFields(gain: true));
       final attemptedAt = _clock();
       if (!preflight.passed) {
         return _report(preflight, attemptedAt, allowed: false, result: null);
@@ -111,12 +118,65 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
             ? 'Channel gain write ACKed (no readback).'
             : 'Channel gain write NACK: ${ack.message}',
       );
-      return _report(preflight, attemptedAt, allowed: true, result: result);
+      return _report(preflight, attemptedAt, allowed: true, result: result,
+          isAckOnly: ack.success);
+    }
+
+    // peqQ path (any band): Consumer-production-proven param 0x18 property 0x00.
+    // No PRO readback for Q → ACK-only.
+    if (op.parameterKind == HardwareParamKind.peqQ) {
+      final preflight =
+          await gate.runPreflight(Adau1701PeqWriteFields(gain: true));
+      final attemptedAt = _clock();
+      if (!preflight.passed) {
+        return _report(preflight, attemptedAt, allowed: false, result: null);
+      }
+      final ack = await transport.writePeqQ(channel, op.targetValue.toDouble(),
+          band: op.bandIndex!);
+      final result = Icp5PhaseCResult(
+        success: ack.success,
+        wasActualWrite: ack.success,
+        writeMayHaveReachedDevice: ack.success,
+        message: ack.success
+            ? 'ACK received — PEQ Q readback not yet available.'
+            : 'PEQ Q write NACK: ${ack.message}',
+      );
+      return _report(preflight, attemptedAt, allowed: true, result: result,
+          isAckOnly: ack.success);
     }
 
     final isGain = op.parameterKind == HardwareParamKind.peqGain;
+    final band = op.bandIndex!;
 
-    // 2. Preflight through the existing gate for exactly the field being written.
+    // PEQ gain/frequency bands 1–9: Consumer-production-proven frame encoding.
+    // No PRO readback for non-band-0 → ACK-only.
+    if (band > 0) {
+      final preflight =
+          await gate.runPreflight(Adau1701PeqWriteFields(gain: true));
+      final attemptedAt = _clock();
+      if (!preflight.passed) {
+        return _report(preflight, attemptedAt, allowed: false, result: null);
+      }
+      final Adau1701WriteAck ack = isGain
+          ? await transport.writePeqGain(channel, op.targetValue.toDouble(),
+              band: band)
+          : await transport.writePeqFrequency(channel, op.targetValue.round(),
+              band: band);
+      final result = Icp5PhaseCResult(
+        success: ack.success,
+        wasActualWrite: ack.success,
+        writeMayHaveReachedDevice: ack.success,
+        message: ack.success
+            ? 'ACK received — PEQ band $band readback not yet available.'
+            : 'PEQ ${isGain ? 'gain' : 'frequency'} band $band write NACK: ${ack.message}',
+      );
+      return _report(preflight, attemptedAt, allowed: true, result: result,
+          isAckOnly: ack.success);
+    }
+
+    // PEQ gain/frequency band 0: full preflight + write + readback-verified path.
+
+    // 2. Preflight for exactly the field being written (band 0 coverage).
     final preflight = await gate
         .runPreflight(Adau1701PeqWriteFields(gain: isGain, frequency: !isGain));
     final attemptedAt = _clock();
@@ -126,26 +186,38 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
       return _report(preflight, attemptedAt, allowed: false, result: null);
     }
 
-    // Write the single field via the existing transport methods (Band 1).
+    // Write the single field via the transport.
+    // peqGain: param 0x18 property 0x01.  peqFrequency: param 0x18 property 0x02.
     final Adau1701WriteAck ack = isGain
         ? await transport.writePeqGain(channel, op.targetValue.toDouble(),
             band: 0)
-        : await transport.writeFilterFrequency(channel, op.targetValue.round(),
+        : await transport.writePeqFrequency(channel, op.targetValue.round(),
             band: 0);
 
     // 4. Read back and verify the written value took effect.
-    final read = await readService.readOriginalState();
-    final verified =
-        ack.success && read.succeeded && _matches(op, read.originalState!);
+    final bool verified;
+    final String verifyMsg;
+    if (isGain) {
+      final read = await readService.readOriginalState();
+      verified =
+          ack.success && read.succeeded && _matches(op, read.originalState!);
+      verifyMsg = _composeMessage(ack, read, verified);
+    } else {
+      final r = await _verifyFreq(ack, op.targetValue.round());
+      verified = r.verified;
+      verifyMsg = r.message;
+    }
 
-    // 5. Compose the deployment report from preflight + write ACK + readback.
+    // 5. Compose the deployment report. Store preflight.originalState as the
+    //    pre-write baseline for PEQ band 0 restore.
     final result = Icp5PhaseCResult(
       success: verified,
       wasActualWrite: ack.success,
       writeMayHaveReachedDevice: ack.success,
-      message: _composeMessage(ack, read, verified),
+      message: verifyMsg,
     );
-    return _report(preflight, attemptedAt, allowed: true, result: result);
+    return _report(preflight, attemptedAt, allowed: true, result: result,
+        capturedOriginalState: preflight.originalState);
   }
 
   void _validateSupported(HardwareWriteOp op) {
@@ -158,14 +230,16 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
     if (op.parameterKind == HardwareParamKind.channelGain ||
         op.parameterKind == HardwareParamKind.crossoverHighPass ||
         op.parameterKind == HardwareParamKind.crossoverLowPass) return;
-    if (op.bandIndex != 0) {
+    // PEQ kinds: gain/frequency/Q for bands 0–9 (Consumer-production-proven).
+    if (op.bandIndex == null || op.bandIndex! < 0 || op.bandIndex! > 9) {
       throw UnsupportedIcp5WriteOperation(
-          op, 'Only PEQ Band 1 (index 0) is supported.');
+          op, 'PEQ bandIndex must be 0–9 (got ${op.bandIndex}).');
     }
     if (op.parameterKind != HardwareParamKind.peqGain &&
-        op.parameterKind != HardwareParamKind.peqFrequency) {
+        op.parameterKind != HardwareParamKind.peqFrequency &&
+        op.parameterKind != HardwareParamKind.peqQ) {
       throw UnsupportedIcp5WriteOperation(op,
-          'Only PEQ gain/frequency (band 0), channelGain, and crossover frequency are supported.');
+          'Only PEQ gain/frequency/Q (bands 0–9), channelGain, and crossover frequency are supported.');
     }
   }
 
@@ -185,11 +259,54 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
     return 'Write ACKed and readback confirmed.';
   }
 
+  /// Bounded readback verification for frequency writes.
+  ///
+  /// After a successful write ACK, reads back up to [maxReadbackAttempts] times
+  /// with [readbackRetryDelay] between attempts. Exits early on first match.
+  /// A NACK skips all reads and returns failure immediately.
+  /// A read error stops retrying and returns failure.
+  Future<({bool verified, String message})> _verifyFreq(
+    Adau1701WriteAck ack,
+    int targetHz,
+  ) async {
+    if (!ack.success) {
+      return (verified: false, message: 'Write NACK: ${ack.message}');
+    }
+    Adau1701Ch0Band0ReadResult? last;
+    for (var i = 0; i < maxReadbackAttempts; i++) {
+      if (i > 0) await Future.delayed(readbackRetryDelay);
+      last = await readService.readOriginalState();
+      if (!last.succeeded) {
+        return (
+          verified: false,
+          message: 'Write ACKed but readback failed: ${last.message}',
+        );
+      }
+      final readHz = last.originalState!.frequencyHz;
+      if ((readHz - targetHz).abs() <= frequencyToleranceHz) {
+        return (
+          verified: true,
+          message: 'Write ACKed and readback confirmed'
+              '${i > 0 ? ' (attempt ${i + 1})' : ''}.',
+        );
+      }
+    }
+    final readHz = last!.originalState!.frequencyHz;
+    return (
+      verified: false,
+      message: 'Write ACKed but readback did not match after '
+          '$maxReadbackAttempts attempt(s): '
+          'target $targetHz Hz, last read $readHz Hz.',
+    );
+  }
+
   Adau1701DeploymentReport _report(
     Adau1701PreflightResult preflight,
     DateTime attemptedAt, {
     required bool allowed,
     required Icp5PhaseCResult? result,
+    bool isAckOnly = false,
+    Adau1701Ch0Band0OriginalState? capturedOriginalState,
   }) {
     return Adau1701DeploymentReport(
       attemptedAt: attemptedAt,
@@ -202,6 +319,8 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
       preflightFailureReason: allowed ? null : preflight.message,
       deploymentAllowed: allowed,
       deploymentResult: result,
+      isAckOnly: isAckOnly,
+      capturedOriginalState: capturedOriginalState,
     );
   }
 }

@@ -16,7 +16,17 @@ abstract interface class Adau1701TuningTransport
   /// hardware-unverified.
   Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb,
       {int band = 0});
+  /// Writes an arbitrary crossover filter frequency (param 0x15, property 0x02)
+  /// in 20 .. 20 000 Hz. This is the CROSSOVER path only — see [writePeqFrequency]
+  /// for the PEQ band frequency path (param 0x18 property 0x02).
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
+      {int band = 0});
+
+  /// Writes an arbitrary PEQ band frequency in 20 .. 20 000 Hz for [channel]
+  /// and [band] (0 = Band 1). Uses Consumer-production-proven param 0x18
+  /// property 0x02 (uint16 LE Hz). Separate DSP memory block from
+  /// [writeFilterFrequency] (param 0x15 = crossover cutoff).
+  Future<Adau1701WriteAck> writePeqFrequency(int channel, int frequencyHz,
       {int band = 0});
 
   /// Writes PEQ Q for [band] (0 = Band 1). NOT capture-proven — adopted from the

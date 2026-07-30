@@ -200,6 +200,7 @@ class _ResultsView extends StatelessWidget {
 
   Color _statusColor(HardwareWriteOpStatus s) => switch (s) {
         HardwareWriteOpStatus.written => kProGreen,
+        HardwareWriteOpStatus.ackOnly => kProAmber,
         HardwareWriteOpStatus.blockedByPreflight => kProAmber,
         HardwareWriteOpStatus.failed => kProRed,
         HardwareWriteOpStatus.unsupported => Colors.white38,

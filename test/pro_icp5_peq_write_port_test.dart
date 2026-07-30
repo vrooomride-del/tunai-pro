@@ -37,7 +37,8 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   _FakeTuningTransport({this.connected = true});
 
   final List<(int, double)> gainWrites = [];
-  final List<(int, int)> freqWrites = [];
+  final List<(int, int)> freqWrites = [];        // XO: writeFilterFrequency (param 0x15)
+  final List<(int, int)> peqFreqWrites = [];     // PEQ: writePeqFrequency (param 0x18)
   final List<(int, double)> qWrites = [];
   final List<(int, double)> outputGainWrites = [];
   bool ackSuccess = true;
@@ -63,7 +64,14 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
       {int band = 0}) async {
     freqWrites.add((channel, frequencyHz));
-    return Adau1701WriteAck(success: ackSuccess, message: 'freq');
+    return Adau1701WriteAck(success: ackSuccess, message: 'filterFreq');
+  }
+
+  @override
+  Future<Adau1701WriteAck> writePeqFrequency(int channel, int frequencyHz,
+      {int band = 0}) async {
+    peqFreqWrites.add((channel, frequencyHz));
+    return Adau1701WriteAck(success: ackSuccess, message: 'peqFreq');
   }
 
   @override
@@ -82,6 +90,7 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
 
 // Injectable read service returning a canned readback.
 class _FakeReadService extends Adau1701Ch0Band0ReadService {
+
   final Adau1701Ch0Band0ReadResult result;
   _FakeReadService(Adau1701RawReadTransport t, this.result)
       : super(transport: t);
@@ -101,6 +110,51 @@ Adau1701Ch0Band0ReadResult _readOk({double gainDb = -1.0, int freq = 1800}) =>
 
 const _readFail = Adau1701Ch0Band0ReadResult.failure(
     Adau1701Ch0Band0ReadStatus.rawReadFailed, 'read failed');
+
+// Stateful read service: returns responses from [responses] in order;
+// the last entry is repeated once exhausted.
+class _SequentialReadService extends Adau1701Ch0Band0ReadService {
+  final List<Adau1701Ch0Band0ReadResult> responses;
+  int _call = 0;
+  _SequentialReadService(Adau1701RawReadTransport t, this.responses)
+      : super(transport: t);
+
+  @override
+  Future<Adau1701Ch0Band0ReadResult> readOriginalState() async {
+    final i = _call < responses.length ? _call : responses.length - 1;
+    _call++;
+    return responses[i];
+  }
+}
+
+// Counts readOriginalState() calls while returning a fixed result.
+class _CountingReadService extends Adau1701Ch0Band0ReadService {
+  final Adau1701Ch0Band0ReadResult result;
+  int callCount = 0;
+  _CountingReadService(Adau1701RawReadTransport t, this.result)
+      : super(transport: t);
+
+  @override
+  Future<Adau1701Ch0Band0ReadResult> readOriginalState() async {
+    callCount++;
+    return result;
+  }
+}
+
+Adau1701Icp5PeqWritePort _retryPort(
+  _FakeTuningTransport t,
+  List<Adau1701Ch0Band0ReadResult> readbacks, {
+  int maxAttempts = 3,
+}) =>
+    Adau1701Icp5PeqWritePort(
+      transport: t,
+      gate: Adau1701PeqDeploymentGate(transport: t),
+      readService: _SequentialReadService(t, readbacks),
+      channelResolver: (id) => id == 'wf' ? 0 : -1,
+      clock: () => DateTime.utc(2026, 7, 19),
+      maxReadbackAttempts: maxAttempts,
+      readbackRetryDelay: Duration.zero,
+    );
 
 // Build a port with the real gate + a fake transport/read service.
 Adau1701Icp5PeqWritePort _port(
@@ -146,31 +200,38 @@ void main() {
         .preflightAndWrite(
             _op(HardwareParamKind.peqFrequency, 2500));
 
-    expect(t.freqWrites, [(0, 2500)]);
+    // Must use writePeqFrequency (param 0x18 property 0x02), NOT writeFilterFrequency.
+    expect(t.peqFreqWrites, [(0, 2500)]);
+    expect(t.freqWrites, isEmpty); // writeFilterFrequency (param 0x15) not called
     expect(t.gainWrites, isEmpty);
     expect(report.deploymentAllowed, isTrue);
     expect(report.deploymentSucceeded, isTrue);
   });
 
-  test('unsupported Q is blocked — throws, no write', () async {
+  test('Q (band 0) dispatches ACK-only — Consumer-production-proven', () async {
     final t = _FakeTuningTransport();
-    await expectLater(
-      _port(t).preflightAndWrite(_op(HardwareParamKind.peqQ, 2.0)),
-      throwsA(isA<UnsupportedIcp5WriteOperation>()),
-    );
+    final report = await _port(t).preflightAndWrite(
+        _op(HardwareParamKind.peqQ, 2.0));
+
+    expect(t.qWrites, [(0, 2.0)]);
     expect(t.gainWrites, isEmpty);
     expect(t.freqWrites, isEmpty);
-    expect(t.qWrites, isEmpty);
+    expect(t.peqFreqWrites, isEmpty);
+    expect(report.deploymentAllowed, isTrue);
+    expect(report.deploymentSucceeded, isTrue);
+    expect(report.isAckOnly, isTrue);
   });
 
-  test('Band 2 (index 1) is blocked — throws, no write', () async {
+  test('Band 1 (index 1) gain dispatches ACK-only — Consumer-production-proven',
+      () async {
     final t = _FakeTuningTransport();
-    await expectLater(
-      _port(t)
-          .preflightAndWrite(_op(HardwareParamKind.peqGain, -3.0, band: 1)),
-      throwsA(isA<UnsupportedIcp5WriteOperation>()),
-    );
-    expect(t.gainWrites, isEmpty);
+    final report = await _port(t)
+        .preflightAndWrite(_op(HardwareParamKind.peqGain, -3.0, band: 1));
+
+    expect(t.gainWrites, [(0, -3.0)]);
+    expect(report.deploymentAllowed, isTrue);
+    expect(report.deploymentSucceeded, isTrue);
+    expect(report.isAckOnly, isTrue);
   });
 
   test('preflight failure blocks the write', () async {
@@ -222,7 +283,8 @@ void main() {
     expect(t.gainWrites, isEmpty);
   });
 
-  test('crossoverHighPass writes through transport and verifies readback', () async {
+  test('crossoverHighPass writes through transport, ACK-only (param 0x15)',
+      () async {
     final t = _FakeTuningTransport();
     const op = HardwareWriteOp(
       channelId: 'wf',
@@ -233,16 +295,19 @@ void main() {
       writable: true,
       reason: 'test',
     );
-    final report = await _port(t, readback: _readOk(freq: 2000))
-        .preflightAndWrite(op);
+    final report = await _port(t).preflightAndWrite(op);
 
     expect(t.freqWrites, [(0, 2000)]);
     expect(t.gainWrites, isEmpty);
     expect(report.deploymentAllowed, isTrue);
     expect(report.deploymentSucceeded, isTrue);
+    // XO uses param 0x15; PEQ readback (param 0x18) cannot verify it → ACK-only.
+    expect(report.isAckOnly, isTrue);
+    expect(report.deploymentResult!.message, contains('crossover'));
   });
 
-  test('crossoverLowPass writes through transport and verifies readback', () async {
+  test('crossoverLowPass writes through transport, ACK-only (param 0x15)',
+      () async {
     final t = _FakeTuningTransport();
     const op = HardwareWriteOp(
       channelId: 'wf',
@@ -253,12 +318,12 @@ void main() {
       writable: true,
       reason: 'test',
     );
-    final report = await _port(t, readback: _readOk(freq: 2000))
-        .preflightAndWrite(op);
+    final report = await _port(t).preflightAndWrite(op);
 
     expect(t.freqWrites, [(0, 2000)]);
     expect(report.deploymentAllowed, isTrue);
     expect(report.deploymentSucceeded, isTrue);
+    expect(report.isAckOnly, isTrue);
   });
 
   test('channelGain writes through transport, ACK-only, no readback required',
@@ -298,5 +363,154 @@ void main() {
 
     expect(report.deploymentAllowed, isFalse);
     expect(t.outputGainWrites, isEmpty);
+  });
+
+  // ── Bounded readback retry tests ────────────────────────────────────────────
+
+  group('Bounded frequency readback retry', () {
+    test(
+        'first readback returns old value, second returns target → Written',
+        () async {
+      final t = _FakeTuningTransport();
+      final port = _retryPort(t, [
+        _readOk(freq: 1800), // attempt 1: old value
+        _readOk(freq: 1000), // attempt 2: target
+      ]);
+
+      final report = await port.preflightAndWrite(
+          _op(HardwareParamKind.peqFrequency, 1000));
+
+      expect(report.deploymentAllowed, isTrue);
+      expect(report.deploymentSucceeded, isTrue,
+          reason: 'second readback matches target');
+      expect(report.deploymentResult!.message, contains('attempt 2'));
+    });
+
+    test(
+        'all readbacks return old value → Failed with target/readback/attempts in message',
+        () async {
+      final t = _FakeTuningTransport();
+      final port = _retryPort(
+        t,
+        [_readOk(freq: 1800)], // always returns old value
+        maxAttempts: 3,
+      );
+
+      final report = await port.preflightAndWrite(
+          _op(HardwareParamKind.peqFrequency, 1000));
+
+      expect(report.deploymentAllowed, isTrue);
+      expect(report.deploymentSucceeded, isFalse);
+      final msg = report.deploymentResult!.message;
+      expect(msg, contains('3 attempt(s)'));
+      expect(msg, contains('1000 Hz'));
+      expect(msg, contains('1800 Hz'));
+    });
+
+    test('NACK → no readback attempted, immediate failure', () async {
+      final t = _FakeTuningTransport()..ackSuccess = false;
+      final counting = _CountingReadService(t, _readOk(freq: 1800));
+      final port = Adau1701Icp5PeqWritePort(
+        transport: t,
+        gate: Adau1701PeqDeploymentGate(transport: t),
+        readService: counting,
+        channelResolver: (id) => 0,
+        clock: () => DateTime.utc(2026),
+        maxReadbackAttempts: 3,
+        readbackRetryDelay: Duration.zero,
+      );
+
+      final report = await port.preflightAndWrite(
+          _op(HardwareParamKind.peqFrequency, 1000));
+
+      expect(report.deploymentSucceeded, isFalse);
+      expect(counting.callCount, 0, reason: 'NACK must skip all readbacks');
+      expect(report.deploymentResult!.message, contains('NACK'));
+    });
+
+    test('readback read error stops retrying immediately', () async {
+      final t = _FakeTuningTransport();
+      final port = _retryPort(t, [
+        _readFail,            // read error on first attempt
+        _readOk(freq: 1000), // would succeed but must not be reached
+      ]);
+
+      final report = await port.preflightAndWrite(
+          _op(HardwareParamKind.peqFrequency, 1000));
+
+      expect(report.deploymentSucceeded, isFalse);
+      expect(report.deploymentResult!.message, contains('readback failed'));
+    });
+
+    test('gain path unchanged — single read, no retry', () async {
+      final t = _FakeTuningTransport();
+      final port = _retryPort(t, [
+        _readOk(gainDb: -3.0), // first read matches
+        _readOk(gainDb: -9.0), // second read would not match — must not be called
+      ], maxAttempts: 3);
+
+      final report = await port.preflightAndWrite(
+          _op(HardwareParamKind.peqGain, -3.0));
+
+      expect(report.deploymentSucceeded, isTrue,
+          reason: 'gain verifies on single read');
+    });
+  });
+
+  // ── ACK-only dispatch: Q + bands 1–9 ────────────────────────────────────────
+
+  test('Q on band 9 (boundary) dispatches ACK-only', () async {
+    final t = _FakeTuningTransport();
+    final report = await _port(t)
+        .preflightAndWrite(_op(HardwareParamKind.peqQ, 0.7, band: 9));
+
+    expect(t.qWrites, [(0, 0.7)]);
+    expect(report.deploymentSucceeded, isTrue);
+    expect(report.isAckOnly, isTrue);
+  });
+
+  test('Band 9 (boundary) frequency dispatches ACK-only', () async {
+    final t = _FakeTuningTransport();
+    final report = await _port(t)
+        .preflightAndWrite(_op(HardwareParamKind.peqFrequency, 4000, band: 9));
+
+    expect(t.peqFreqWrites, [(0, 4000)]);
+    expect(t.freqWrites, isEmpty);
+    expect(report.deploymentSucceeded, isTrue);
+    expect(report.isAckOnly, isTrue);
+  });
+
+  test('ACK-only NACK (transport error) reports failed, not ackOnly', () async {
+    final t = _FakeTuningTransport()..ackSuccess = false;
+    // Band 1 gain → ACK-only path; transport returns NACK.
+    final report = await _port(t)
+        .preflightAndWrite(_op(HardwareParamKind.peqGain, -3.0, band: 1));
+
+    expect(t.gainWrites, [(0, -3.0)]);
+    expect(report.deploymentSucceeded, isFalse);
+    expect(report.isAckOnly, isFalse,
+        reason: 'isAckOnly is only true when the ACK actually succeeded');
+  });
+
+  // ── Channel mapping ──────────────────────────────────────────────────────────
+
+  test('unknown channel fails closed before any I/O', () async {
+    final t = _FakeTuningTransport();
+    // '_port' factory maps only 'wf' → 0; anything else returns -1.
+    const op = HardwareWriteOp(
+      channelId: 'unknown_ch',
+      parameterKind: HardwareParamKind.peqGain,
+      bandIndex: 0,
+      targetValue: -3.0,
+      verification: HardwareParamVerification.captureProven,
+      writable: true,
+      reason: 'test',
+    );
+    await expectLater(
+      _port(t).preflightAndWrite(op),
+      throwsA(isA<UnsupportedIcp5WriteOperation>()),
+    );
+    expect(t.gainWrites, isEmpty);
+    expect(t.freqWrites, isEmpty);
   });
 }

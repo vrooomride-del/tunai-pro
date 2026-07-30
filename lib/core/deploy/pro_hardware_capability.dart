@@ -161,7 +161,16 @@ abstract final class HardwareDeviceProfiles {
     deviceName: 'ADAU1701 (ICP5)',
     transport: HardwareTransportType.icp5,
     capabilities: [
-      // Band 1 (index 0): the only capture-proven writes.
+      // Band 1 (index 0): peqGain and peqFrequency are both operational.
+      // peqGain: PRO-capture-proven — param 0x18 property 0x01 → offset 21.
+      // peqFrequency: Consumer-production-proven — param 0x18 property 0x02 →
+      //   offset 19:20 (uint16 LE Hz). Evidence:
+      //   tunai_codex/lib/features/ble/icp5_peq_command_builder.dart
+      //     (_peqParameter=0x18, _frequencyProperty=0x02)
+      //   tunai_codex/test/consumer_dsp_physical_qa_fixture_test.dart
+      //     (hardware ACK + readback confirmed at 1800 Hz on Consumer BLE device)
+      //   PRO hardware readback (offset 19:20 change after write) pending; param
+      //   0x15 is the crossover cutoff path — a different DSP block.
       HardwareCapabilityEntry(
           kind: HardwareParamKind.peqGain,
           bandIndex: 0,
@@ -170,17 +179,21 @@ abstract final class HardwareDeviceProfiles {
           kind: HardwareParamKind.peqFrequency,
           bandIndex: 0,
           verification: HardwareParamVerification.captureProven),
-      // All other PEQ bands' gain/frequency: write path exists, not proven.
+      // All bands (0–9): peqGain, peqFrequency, peqQ are Consumer-production-
+      // proven via tunai_codex/icp5_peq_command_builder.dart (param 0x18,
+      // identical frame encoding for any band 0–255). Band-agnostic entries
+      // are used for bands 1–9; the band-0 specific entries above take
+      // precedence for band 0 lookups. All non-band-0 writes are ACK-only
+      // (no PRO readback available); the port marks them isAckOnly=true.
       HardwareCapabilityEntry(
           kind: HardwareParamKind.peqGain,
-          verification: HardwareParamVerification.unverified),
+          verification: HardwareParamVerification.captureProven),
       HardwareCapabilityEntry(
           kind: HardwareParamKind.peqFrequency,
-          verification: HardwareParamVerification.unverified),
-      // Q: unverified across all bands.
+          verification: HardwareParamVerification.captureProven),
       HardwareCapabilityEntry(
           kind: HardwareParamKind.peqQ,
-          verification: HardwareParamVerification.unverified),
+          verification: HardwareParamVerification.captureProven),
       // Channel gain: parameter-ID 0x14 + float32 LE dB + channel byte 0–3
       // are capture-confirmed. Arbitrary dB values are hardware-unverified at
       // the value level; ACK-only (no readback service yet).

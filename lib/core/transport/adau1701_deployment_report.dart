@@ -1,3 +1,4 @@
+import 'adau1701_ch0_band0_read_service.dart';
 import 'adau1701_deployment_preflight.dart';
 import 'icp5_transports.dart';
 
@@ -50,6 +51,18 @@ class Adau1701DeploymentReport {
   /// when the deployment was blocked by the preflight.
   final Icp5PhaseCResult? rollbackResult;
 
+  // ── ACK-only / original state ─────────────────────────────────────────────
+
+  /// True when the write reached the device but no readback was performed.
+  /// The write is considered successful (ACK received) but not readback-verified.
+  /// Set for: XO (crossover), PEQ Q, PEQ bands 1–9, channelGain.
+  final bool isAckOnly;
+
+  /// The CH0/Band0 original state captured during preflight, before this write.
+  /// Non-null for PEQ gain/frequency band 0 (readback-verified path only).
+  /// Used as the restore baseline for PEQ band 0 rollback.
+  final Adau1701Ch0Band0OriginalState? capturedOriginalState;
+
   const Adau1701DeploymentReport({
     required this.attemptedAt,
     this.dspIdentity,
@@ -62,6 +75,8 @@ class Adau1701DeploymentReport {
     required this.deploymentAllowed,
     this.deploymentResult,
     this.rollbackResult,
+    this.isAckOnly = false,
+    this.capturedOriginalState,
   });
 
   bool get deploymentSucceeded => deploymentResult?.success == true;

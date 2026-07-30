@@ -230,6 +230,40 @@ abstract final class Icp5FrameCodec {
   static bool parsePeqQAck(List<int> frame) =>
       _parseSuccessAck(frame, peqBandGainParameterId);
 
+  /// Writes an arbitrary PEQ band frequency in 20 .. 20 000 Hz for [channel]
+  /// and [band] (0 = Band 1) using Consumer-production-proven parameter-ID
+  /// 0x18, property 0x02 (uint16 LE Hz).
+  ///
+  /// Evidence: tunai_codex/lib/features/ble/icp5_peq_command_builder.dart —
+  /// _peqParameter=0x18, _frequencyProperty=0x02. Consumer BLE deployed product
+  /// confirms this frame structure ACKs and updates the PEQ band frequency.
+  /// ICP5 param 0x18 property map: 0x00=Q, 0x01=gain, 0x02=frequency.
+  /// [buildFilterFrequencyWriteArbitrary] (param 0x15) is the CROSSOVER path
+  /// and targets a different DSP memory block.
+  static List<int> buildPeqFrequencyWriteArbitrary(int channel, int frequencyHz,
+      {int band = 0}) {
+    if (channel < 0 || channel > 3) {
+      throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
+    }
+    _validatePeqBand(band);
+    if (frequencyHz < 20 || frequencyHz > 20000) {
+      throw ArgumentError.value(
+          frequencyHz, 'frequencyHz', 'Frequency must be in 20 .. 20 000 Hz.');
+    }
+    return _frame(0x0B, peqBandGainParameterId, [
+      channel,
+      0x02,
+      band,
+      frequencyHz & 0xFF,
+      (frequencyHz >> 8) & 0xFF,
+    ]);
+  }
+
+  // ICP5 success ACK does not echo the property byte; param 0x18 ACK is
+  // identical for gain (0x01), Q (0x00), and frequency (0x02).
+  static bool parsePeqFrequencyAck(List<int> frame) =>
+      _parseSuccessAck(frame, peqBandGainParameterId);
+
   /// Writes an arbitrary filter frequency for [channel] and [band] using the
   /// confirmed ICP5 parameter-ID 0x15 encoding. [frequencyHz] in 20 .. 20000.
   ///

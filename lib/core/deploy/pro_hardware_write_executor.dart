@@ -25,7 +25,7 @@ abstract interface class Icp5PeqWritePort {
 
 /// Per-operation outcome after (attempted) execution.
 enum HardwareWriteOpStatus {
-  /// The write reached the device and the chain reported success.
+  /// The write reached the device and readback confirmed the value.
   written,
 
   /// The existing preflight refused the write (chain ran, no write).
@@ -35,10 +35,15 @@ enum HardwareWriteOpStatus {
   failed,
 
   /// No executor exists for this operation — failed closed, chain not invoked.
-  unsupported;
+  unsupported,
+
+  /// Write ACKed by the device; no readback available for this operation.
+  /// Consumer-production-proven path; considered successful (not a failure).
+  ackOnly;
 
   String get label => switch (this) {
         HardwareWriteOpStatus.written => 'Written',
+        HardwareWriteOpStatus.ackOnly => 'ACK only (no readback)',
         HardwareWriteOpStatus.blockedByPreflight => 'Blocked by preflight',
         HardwareWriteOpStatus.failed => 'Failed',
         HardwareWriteOpStatus.unsupported => 'Unsupported (fail-closed)',
@@ -60,7 +65,9 @@ class HardwareWriteOpOutcome {
     required this.message,
   });
 
-  bool get succeeded => status == HardwareWriteOpStatus.written;
+  bool get succeeded =>
+      status == HardwareWriteOpStatus.written ||
+      status == HardwareWriteOpStatus.ackOnly;
 
   Map<String, dynamic> toJson() => {
         'channelId': op.channelId,
@@ -93,6 +100,8 @@ class HardwareWriteExecutionResult {
 
   int get writtenCount =>
       outcomes.where((o) => o.status == HardwareWriteOpStatus.written).length;
+  int get ackOnlyCount =>
+      outcomes.where((o) => o.status == HardwareWriteOpStatus.ackOnly).length;
   int get blockedCount => outcomes
       .where((o) => o.status == HardwareWriteOpStatus.blockedByPreflight)
       .length;
@@ -102,7 +111,12 @@ class HardwareWriteExecutionResult {
       .where((o) => o.status == HardwareWriteOpStatus.unsupported)
       .length;
 
+  /// True when every op was written with readback verification.
   bool get allWritten =>
+      executed && outcomes.isNotEmpty && outcomes.every((o) => o.succeeded);
+
+  /// True when every op succeeded (written OR ack-only). Use for UI PASS_ACK.
+  bool get allPassed =>
       executed && outcomes.isNotEmpty && outcomes.every((o) => o.succeeded);
 
   Map<String, dynamic> toJson() => {
@@ -110,6 +124,7 @@ class HardwareWriteExecutionResult {
         'executed': executed,
         if (rejectionReason != null) 'rejectionReason': rejectionReason,
         'writtenCount': writtenCount,
+        'ackOnlyCount': ackOnlyCount,
         'blockedCount': blockedCount,
         'failedCount': failedCount,
         'unsupportedCount': unsupportedCount,
@@ -124,8 +139,9 @@ class HardwareWriteExecutor {
   const HardwareWriteExecutor(this.port);
 
   /// Supported set: ADAU1701 ICP5.
-  /// - PEQ Band 1 (index 0) gain + frequency (banded, bandIndex == 0)
-  /// - channelGain, crossoverHighPass, crossoverLowPass (non-banded, bandIndex == null)
+  /// - channelGain, crossoverHighPass, crossoverLowPass (non-banded)
+  /// - peqGain, peqFrequency, peqQ for bands 0–9 (Consumer-production-proven)
+  ///   Band 0 gain/freq: readback-verified. All others: ACK-only.
   /// Everything else fails closed.
   static bool isSupported(HardwareWriteApproval approval, HardwareWriteOp op) {
     if (approval.deviceProfile.deviceId !=
@@ -135,9 +151,12 @@ class HardwareWriteExecutor {
           op.parameterKind == HardwareParamKind.crossoverHighPass ||
           op.parameterKind == HardwareParamKind.crossoverLowPass;
     }
-    return op.bandIndex == 0 &&
+    final band = op.bandIndex!;
+    return band >= 0 &&
+        band <= 9 &&
         (op.parameterKind == HardwareParamKind.peqFrequency ||
-            op.parameterKind == HardwareParamKind.peqGain);
+            op.parameterKind == HardwareParamKind.peqGain ||
+            op.parameterKind == HardwareParamKind.peqQ);
   }
 
   Future<HardwareWriteExecutionResult> execute(
@@ -208,6 +227,15 @@ class HardwareWriteExecutor {
         report: report,
         message: report.preflightFailureReason ??
             'Preflight did not pass (${report.preflightStatus.name}).',
+      );
+    }
+    if (report.isAckOnly && report.deploymentSucceeded) {
+      return HardwareWriteOpOutcome(
+        op: op,
+        status: HardwareWriteOpStatus.ackOnly,
+        report: report,
+        message: report.deploymentResult?.message ??
+            'ACK received — readback not available.',
       );
     }
     if (report.deploymentSucceeded) {

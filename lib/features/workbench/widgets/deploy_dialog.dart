@@ -25,12 +25,16 @@ import '../../../shared/pro_widgets.dart';
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Opens the deploy dialog. Call from the top-right DEPLOY button.
+///
+/// [overridePort] is for testing only — injects a fake write port so the
+/// dialog can be exercised without a live hardware context.
 Future<void> showDeployDialog({
   required BuildContext context,
   required String projectId,
   required List<DriverChannel> channels,
   required TuningProjectState tuning,
   required Map<String, double> previousAppliedGains,
+  Icp5PeqWritePort? overridePort,
 }) {
   return showDialog<void>(
     context: context,
@@ -40,6 +44,7 @@ Future<void> showDeployDialog({
       channels: channels,
       tuning: tuning,
       previousAppliedGains: previousAppliedGains,
+      overridePort: overridePort,
     ),
   );
 }
@@ -53,12 +58,14 @@ class _DeployDialogBody extends ConsumerStatefulWidget {
   final List<DriverChannel> channels;
   final TuningProjectState tuning;
   final Map<String, double> previousAppliedGains;
+  final Icp5PeqWritePort? overridePort;
 
   const _DeployDialogBody({
     required this.projectId,
     required this.channels,
     required this.tuning,
     required this.previousAppliedGains,
+    this.overridePort,
   });
 
   @override
@@ -69,6 +76,7 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
   _Phase _phase = _Phase.plan;
   HardwareWriteExecutionResult? _result;
   bool _isRestoring = false;
+  bool _restored = false;
 
   late HardwareWritePlan _plan;
   late bool _hasWritableOps;
@@ -80,10 +88,19 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
   }
 
   void _buildPlan(Map<String, double> previousApplied) {
-    final pkg = buildAdau1701GainExportPackage(
+    final gainPkg = buildAdau1701GainExportPackage(
       channels: widget.channels,
       tuning: widget.tuning,
       previousAppliedGains: previousApplied.isEmpty ? null : previousApplied,
+    );
+    final peqXoBlocks = buildAdau1701PeqXoExportBlocks(
+      channels: widget.channels,
+      tuning: widget.tuning,
+    );
+    final allBlocks = [...gainPkg.parameterBlocks, ...peqXoBlocks];
+    final pkg = gainPkg.copyWith(
+      status: allBlocks.isEmpty ? ExportStatus.notReady : ExportStatus.draftReady,
+      parameterBlocks: allBlocks,
     );
     _plan = buildHardwareWritePlan(pkg, HardwareDeviceProfiles.adau1701Icp5);
     _hasWritableOps = _plan.writableOperations.isNotEmpty;
@@ -91,17 +108,26 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
 
   Future<void> _execute() async {
     if (!_hasWritableOps) return;
-    setState(() => _phase = _Phase.executing);
+    setState(() {
+      _phase = _Phase.executing;
+      _restored = false;
+    });
 
-    // Prefer the active context (BLE when BLE is connected, USB otherwise).
-    // Falls back to USB-only provider so the dialog always has a context to
-    // attempt — the USB context will fail closed via preflight if not ready.
-    final Adau1701HardwareContext ctx =
-        ref.read(activeAdau1701ContextProvider) ??
-            ref.read(adau1701Icp5UsbContextProvider);
+    final Icp5PeqWritePort port;
+    if (widget.overridePort != null) {
+      port = widget.overridePort!;
+    } else {
+      // Prefer the active context (BLE when BLE is connected, USB otherwise).
+      // Falls back to USB-only provider so the dialog always has a context to
+      // attempt — the USB context will fail closed via preflight if not ready.
+      final Adau1701HardwareContext ctx =
+          ref.read(activeAdau1701ContextProvider) ??
+              ref.read(adau1701Icp5UsbContextProvider);
+      port = ctx.writePort;
+    }
     final approval =
         HardwareWriteApproval.approve(_plan, approver: 'deploy-dialog');
-    final executor = HardwareWriteExecutor(ctx.writePort);
+    final executor = HardwareWriteExecutor(port);
     final result = await executor.execute(approval);
 
     // Persist the successfully-written gains for rollback.
@@ -128,13 +154,23 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     }
   }
 
+  bool get _canRestoreGain => widget.previousAppliedGains.isNotEmpty;
+
+  bool get _canRestorePeq =>
+      _result?.outcomes.any((o) => o.report?.capturedOriginalState != null) ==
+      true;
+
+  bool get _canRestore => _canRestoreGain || _canRestorePeq;
+
   Future<void> _restore() async {
-    final prev = widget.previousAppliedGains;
-    if (prev.isEmpty) return;
+    if (!_canRestore) return;
     setState(() => _isRestoring = true);
 
-    // Build a restore package: write each channel's previous value.
-    final restoreBlocks = prev.entries.map((e) {
+    final prev = widget.previousAppliedGains;
+
+    // Gain restore blocks: write each channel's previous applied gain.
+    final restoreBlocks = <ExportParameterBlock>[];
+    for (final e in prev.entries) {
       final ch = widget.channels.firstWhere(
         (c) => c.id == e.key,
         orElse: () => DriverChannel(
@@ -144,15 +180,42 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           side: DriverSide.mono,
         ),
       );
-      return ExportParameterBlock(
-        id: 'restore_${e.key}',
+      restoreBlocks.add(ExportParameterBlock(
+        id: 'restore_gain_${e.key}',
         type: ExportBlockType.gain,
         channelId: e.key,
         title: '${ch.name} Restore',
         summary: '${e.value >= 0 ? '+' : ''}${e.value.toStringAsFixed(1)} dB',
         parameters: {'gainDb': e.value},
-      );
-    }).toList();
+      ));
+    }
+
+    // PEQ band 0 restore blocks: restore to capturedOriginalState for each
+    // channel that has a pre-write snapshot. Deduplicate by channelId/band.
+    final restoredPeqKeys = <String>{};
+    for (final o in (_result?.outcomes ?? <HardwareWriteOpOutcome>[])) {
+      final orig = o.report?.capturedOriginalState;
+      if (orig == null) continue;
+      final bandIdx = o.op.bandIndex ?? 0;
+      final key = '${o.op.channelId}_$bandIdx';
+      if (!restoredPeqKeys.add(key)) continue;
+      restoreBlocks.add(ExportParameterBlock(
+        id: 'restore_peq_$key',
+        type: ExportBlockType.peq,
+        channelId: o.op.channelId,
+        title: '${o.op.channelId} PEQ B${bandIdx + 1} Restore',
+        summary: 'Band ${bandIdx + 1}',
+        parameters: {
+          'bands': {
+            'band_$bandIdx': {
+              'freq_hz': orig.frequencyHz.toDouble(),
+              'gain_db': orig.gainDb,
+              'q': orig.q,
+            }
+          }
+        },
+      ));
+    }
 
     final restorePkg = DspExportPackage(
       id: 'restore_${DateTime.now().millisecondsSinceEpoch}',
@@ -196,6 +259,7 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       setState(() {
         _result = result;
         _isRestoring = false;
+        _restored = result.allPassed;
       });
     }
   }
@@ -257,9 +321,9 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           borderRadius: BorderRadius.circular(4),
         ),
         child: Text(
-          _plan.operations.isEmpty
+          widget.channels.isEmpty
               ? 'No driver channels configured.'
-              : 'No gain changes since last deploy.',
+              : 'No pending writes.',
           style: proSubtitle(size: 11),
         ),
       );
@@ -269,12 +333,12 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           style: proLabel(size: 9, color: Colors.white38, spacing: 1.5)),
       const SizedBox(height: 8),
       ...(_plan.writableOperations.map((op) {
-        final prev = widget.previousAppliedGains[op.channelId];
+        final isGain = op.parameterKind == HardwareParamKind.channelGain;
+        final prev = isGain ? widget.previousAppliedGains[op.channelId] : null;
         final prevLabel = prev != null
             ? '${prev >= 0 ? '+' : ''}${prev.toStringAsFixed(1)} dB'
-            : 'Unknown';
-        final newLabel =
-            '${op.targetValue >= 0 ? '+' : ''}${op.targetValue.toStringAsFixed(1)} dB';
+            : '—';
+        final newLabel = _opValueLabel(op);
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 3),
           child: Row(children: [
@@ -284,7 +348,7 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
                     style: proValue(size: 11, color: Colors.white70))),
             Expanded(
                 flex: 2,
-                child: Text('Channel Gain',
+                child: Text(_opKindLabel(op),
                     style: proSubtitle(size: 10))),
             Expanded(
                 flex: 2,
@@ -309,6 +373,33 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     ]);
   }
 
+  static String _opKindLabel(HardwareWriteOp op) => switch (op.parameterKind) {
+        HardwareParamKind.channelGain => 'Channel Gain',
+        HardwareParamKind.peqGain =>
+          'PEQ B${(op.bandIndex ?? 0) + 1} Gain',
+        HardwareParamKind.peqFrequency =>
+          'PEQ B${(op.bandIndex ?? 0) + 1} Freq',
+        HardwareParamKind.peqQ =>
+          'PEQ B${(op.bandIndex ?? 0) + 1} Q',
+        HardwareParamKind.crossoverHighPass => 'XO HPF',
+        HardwareParamKind.crossoverLowPass => 'XO LPF',
+        _ => op.parameterKind.name,
+      };
+
+  static String _opValueLabel(HardwareWriteOp op) {
+    final v = op.targetValue.toDouble();
+    return switch (op.parameterKind) {
+      HardwareParamKind.peqFrequency ||
+      HardwareParamKind.crossoverHighPass ||
+      HardwareParamKind.crossoverLowPass =>
+        v >= 1000
+            ? '${(v / 1000).toStringAsFixed(v % 1000 == 0 ? 0 : 1)} kHz'
+            : '${v.toStringAsFixed(0)} Hz',
+      HardwareParamKind.peqQ => v.toStringAsFixed(1),
+      _ => '${v >= 0 ? '+' : ''}${v.toStringAsFixed(1)} dB',
+    };
+  }
+
   Widget _executingView() => const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
         child: Text('Writing to DSP…',
@@ -319,12 +410,13 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     final r = _result;
     if (r == null) return const SizedBox.shrink();
 
-    final allWritten = r.allWritten;
-    final color = allWritten ? kProGreen : kProAmber;
-    final label = allWritten
+    final allPassed = r.allPassed;
+    final color = allPassed ? kProGreen : kProAmber;
+    final failureCount = r.failedCount + r.blockedCount;
+    final label = allPassed
         ? 'PASS_ACK — DSP write confirmed.'
         : r.executed
-            ? '일부 쓰기 실패 (${r.failedCount + r.blockedCount}개).'
+            ? '일부 쓰기 실패 (${failureCount}개).'
             : r.rejectionReason ?? '쓰기 미실행';
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -338,7 +430,7 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
         ),
         child: Row(children: [
           Icon(
-            allWritten ? Icons.check_circle_outline : Icons.block_outlined,
+            allPassed ? Icons.check_circle_outline : Icons.block_outlined,
             color: color,
             size: 14,
           ),
@@ -352,24 +444,29 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       if (r.outcomes.isNotEmpty) ...[
         const SizedBox(height: 10),
         ...r.outcomes.map((o) {
-          final c = o.status == HardwareWriteOpStatus.written
-              ? kProGreen
-              : o.status == HardwareWriteOpStatus.blockedByPreflight
-                  ? kProAmber
-                  : kProRed;
+          final c = switch (o.status) {
+            HardwareWriteOpStatus.written => kProGreen,
+            HardwareWriteOpStatus.ackOnly => kProAmber,
+            HardwareWriteOpStatus.blockedByPreflight => kProAmber,
+            _ => kProRed,
+          };
+          final statusText = switch (o.status) {
+            HardwareWriteOpStatus.written => o.status.label,
+            HardwareWriteOpStatus.ackOnly =>
+              o.message.isNotEmpty ? o.message : o.status.label,
+            _ => o.message.isNotEmpty ? o.message : o.status.label,
+          };
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 2),
             child: Row(children: [
               Expanded(
                   child: Text(
-                '${o.op.channelId} Channel Gain',
+                '${o.op.channelId} ${_opKindLabel(o.op)}',
                 style: proSubtitle(size: 10),
               )),
               Flexible(
                 child: Text(
-                  o.status == HardwareWriteOpStatus.blockedByPreflight
-                      ? o.message
-                      : o.status.label,
+                  statusText,
                   style: proValue(size: 10, color: c),
                   textAlign: TextAlign.end,
                 ),
@@ -387,15 +484,35 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
   }
 
   Widget _actions() {
-    final canRestore = widget.previousAppliedGains.isNotEmpty &&
-        _phase == _Phase.result &&
-        !_isRestoring;
+    final canRestore = _canRestore && _phase == _Phase.result && !_isRestoring;
+
+    // Build scope label for RESTORE button (shows only restorable items).
+    final restoreScope = <String>[
+      if (_canRestoreGain) 'GAIN',
+      if (_canRestorePeq) 'PEQ B1',
+    ];
+    final restoreLabel = restoreScope.isEmpty
+        ? 'RESTORE'
+        : 'RESTORE (${restoreScope.join(' + ')})';
 
     return Row(children: [
-      if (canRestore)
+      if (_restored)
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Text(
+            'RESTORED',
+            style: TextStyle(
+              color: kProGreen,
+              fontSize: 10,
+              letterSpacing: 0.8,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        )
+      else if (canRestore)
         OutlinedButton.icon(
           icon: const Icon(Icons.restore, size: 13),
-          label: const Text('RESTORE'),
+          label: Text(restoreLabel),
           style: OutlinedButton.styleFrom(
             foregroundColor: kProAmber,
             side: BorderSide(color: kProAmber.withValues(alpha: 0.5)),

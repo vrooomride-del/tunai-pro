@@ -6,33 +6,48 @@ void main() {
   const adau1466 = HardwareDeviceProfiles.adau1466Developer;
 
   group('ADAU1701 ICP5 capability lookup', () {
-    test('Band 1 (index 0) gain + frequency are capture-proven', () {
+    test('Band 1 (index 0) gain and frequency are both capture-proven', () {
       expect(adau1701.verificationFor(HardwareParamKind.peqGain, bandIndex: 0),
           HardwareParamVerification.captureProven);
+      // Consumer-production-proven: param 0x18 property 0x02 → offset 19:20.
+      // Evidence: tunai_codex icp5_peq_command_builder.dart + physical QA fixture.
       expect(
           adau1701.verificationFor(HardwareParamKind.peqFrequency, bandIndex: 0),
           HardwareParamVerification.captureProven);
     });
 
-    test('Bands 2–10 gain/frequency are unverified', () {
+    test('peqFrequency is captureProven for all bands 0–9 (Consumer-production-proven)', () {
+      // Band 0: explicit band-0 entry (PRO readback + Consumer evidence).
+      expect(
+          adau1701.verificationFor(HardwareParamKind.peqFrequency, bandIndex: 0),
+          HardwareParamVerification.captureProven);
+      // Bands 1–9: band-agnostic entry (Consumer icp5_peq_command_builder evidence).
+      // Port treats bands 1–9 as ACK-only (no PRO readback for non-band-0).
       for (final band in [1, 5, 9]) {
-        expect(
-            adau1701.verificationFor(HardwareParamKind.peqGain, bandIndex: band),
-            HardwareParamVerification.unverified);
         expect(
             adau1701.verificationFor(HardwareParamKind.peqFrequency,
                 bandIndex: band),
-            HardwareParamVerification.unverified);
+            HardwareParamVerification.captureProven,
+            reason: 'band $band: Consumer-proven encoding, ACK-only at port');
       }
     });
 
-    test('Q is unverified on every band (incl. band 0)', () {
+    test('peqGain is captureProven for all bands 0–9 (Consumer-production-proven)', () {
+      for (final band in [0, 1, 5, 9]) {
+        expect(
+            adau1701.verificationFor(HardwareParamKind.peqGain, bandIndex: band),
+            HardwareParamVerification.captureProven,
+            reason: 'band $band');
+      }
+    });
+
+    test('peqQ is captureProven for all bands (Consumer-production-proven, ACK-only at port)', () {
       expect(adau1701.verificationFor(HardwareParamKind.peqQ, bandIndex: 0),
-          HardwareParamVerification.unverified);
+          HardwareParamVerification.captureProven);
       expect(adau1701.verificationFor(HardwareParamKind.peqQ, bandIndex: 4),
-          HardwareParamVerification.unverified);
+          HardwareParamVerification.captureProven);
       expect(adau1701.verificationFor(HardwareParamKind.peqQ),
-          HardwareParamVerification.unverified);
+          HardwareParamVerification.captureProven);
     });
 
     test('delay is unavailable; channelGain and XO frequency are captureProven', () {
@@ -49,9 +64,9 @@ void main() {
           HardwareParamVerification.captureProven);
     });
 
-    test('band-agnostic gain lookup falls back to unverified', () {
+    test('band-agnostic gain lookup returns captureProven (Consumer-proven for all bands)', () {
       expect(adau1701.verificationFor(HardwareParamKind.peqGain),
-          HardwareParamVerification.unverified);
+          HardwareParamVerification.captureProven);
     });
   });
 
@@ -63,16 +78,22 @@ void main() {
     });
 
     test('isWriteEligible mirrors the proven set only', () {
-      expect(
-          adau1701.isWriteEligible(HardwareParamKind.peqGain, bandIndex: 0),
+      // peqGain: all bands 0–9 captureProven (Consumer-production-proven).
+      expect(adau1701.isWriteEligible(HardwareParamKind.peqGain, bandIndex: 0),
           isTrue);
-      expect(
-          adau1701.isWriteEligible(HardwareParamKind.peqGain, bandIndex: 3),
-          isFalse); // unverified
+      expect(adau1701.isWriteEligible(HardwareParamKind.peqGain, bandIndex: 3),
+          isTrue);
+      // peqQ: captureProven for all bands (Consumer-production-proven).
       expect(adau1701.isWriteEligible(HardwareParamKind.peqQ, bandIndex: 0),
-          isFalse); // unverified
+          isTrue);
+      // channelDelay: unavailable — no write path.
       expect(adau1701.isWriteEligible(HardwareParamKind.channelDelay),
-          isFalse); // unavailable
+          isFalse);
+      // peqFrequency: captureProven for all bands.
+      expect(adau1701.isWriteEligible(HardwareParamKind.peqFrequency, bandIndex: 0),
+          isTrue);
+      expect(adau1701.isWriteEligible(HardwareParamKind.peqFrequency, bandIndex: 1),
+          isTrue);
     });
 
     test('enum JSON round-trips; unknown decodes to unavailable', () {
