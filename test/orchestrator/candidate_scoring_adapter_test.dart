@@ -141,11 +141,11 @@ void main() {
       expect(art.value.scoredCandidates, isEmpty);
     });
 
-    test('policyId is pro_provisional', () {
+    test('policyId is pro_provisional_v2', () {
       final store = _chain(_frd10, 'scored:1');
       final art =
           store.getTyped<ScoredCandidateSetArtifact>(_project, 'scored:1');
-      expect(art.value.policyId, 'pro_provisional');
+      expect(art.value.policyId, 'pro_provisional_v2');
     });
 
     test('evidenceRefs propagated from candidateSet', () {
@@ -210,6 +210,7 @@ void main() {
       final result = scorer.run(ctx,
           _step('acousticScoreCandidates', ['cands:1', 'class:1'], 'scored:1'));
       expect(result.summary, contains('status='));
+      expect(result.summary, contains('v2'));
     });
   });
 
