@@ -54,6 +54,10 @@ class _FakeTransport implements Adau1701TuningTransport {
     outputGainWrites.add((c, g));
     return const Adau1701WriteAck(success: true, message: 'ok');
   }
+
+  @override
+  Future<Adau1701WriteAck> writeMasterMute(bool muted) async =>
+      const Adau1701WriteAck(success: true, message: 'ok');
 }
 
 void main() {

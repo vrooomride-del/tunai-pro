@@ -144,10 +144,10 @@ abstract final class Icp5ProtocolEvidenceRegistry {
     masterMutePayloadPrefix: [0x01, 0x00],
     capturedMasterMuteStates: [0x00, 0x01],
     masterMuteValueEncoding:
-        'three-byte payload 01 00 + state byte 00/01; polarity unproven',
+        'three-byte payload 01 00 + state byte 00/01; State 0=MUTED, State 1=UNMUTED; polarity confirmed',
     masterMuteAckParameterId: 0x00000012,
     masterMuteSuccessStatus: 0x00,
-    masterMutePolarityProven: false,
+    masterMutePolarityProven: true,
     outputDac1GainParameterId: 0x00000014,
     outputDac1GainPayloadPrefix: [0x01, 0x00],
     capturedOutputDac1GainValues: [-4.9, -4.8],

@@ -8,6 +8,7 @@ import '../../../core/transport/adau1701_deployment_report.dart';
 import '../../../core/transport/adau1701_peq_deployment_gate.dart';
 import '../../../core/transport/dsp_transport.dart';
 import '../../../core/transport/icp5_bluetooth_driver.dart';
+import '../../../core/transport/icp5_frame_codec.dart';
 import '../../../core/transport/icp5_transports.dart';
 import '../../../core/transport/usbi_dsp_transport.dart';
 import '../../../shared/pro_widgets.dart';
@@ -80,7 +81,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   Icp5MasterVolumeResult? _lastCommand;
   double _confirmedValue = 6.0;
   Icp5MasterMuteResult? _lastMuteCommand;
-  int _confirmedMuteState = 0;
+  int _confirmedMuteState = 1; // default: unmuted (expected hardware boot state)
   Icp5OutputDac1GainResult? _lastDacGainCommand;
   double _confirmedDacGain = -4.8;
   String _dacGainRollback = 'not required';
@@ -103,6 +104,8 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
   String? _discoveryError;
   Icp5BluetoothUiState _bluetoothState = Icp5BluetoothUiState.disconnected;
   String? _bluetoothError;
+  // Mute confirmed state tracking — updated after each TEST/RESTORE write.
+  // Polarity confirmed: State 0=MUTED, State 1=UNMUTED.
   // Preflight gate — holds last preflight result and gates PEQ writes.
   late final Adau1701PeqDeploymentGate _preflightGate;
   Adau1701PreflightResult? _preflightResult;
@@ -429,22 +432,22 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           onTest: () => _test59(transport),
           onRestore: () => _restore60(transport),
         ),
-        _diagnosticActionCard(
-          keyName: 'ble_master_mute',
-          title: 'Master Mute diagnostic',
+        _muteConfirmedPanel(
+          keyPrefix: 'ble',
           transport: transport,
-          parameter: '0x00000012',
-          channel: 'shared master',
-          testLabel: 'TEST State 1',
-          restoreLabel: 'RESTORE State 0',
-          confirmed: 'State $_confirmedMuteState',
-          lastAck: _lastMuteCommand?.message ?? 'not run',
-          rollback: 'guarded exact RESTORE once on ambiguous TEST failure',
-          evidence: 'Audible mute polarity pending.',
           blocked: blocked,
-          onTest: () => _testMuteState1(transport),
-          onRestore: () => _restoreMuteState0(transport),
+          lastResult: _lastMuteCommand,
+          confirmedState: _confirmedMuteState,
+          onTest: () => _confirmAndTestMuteState0(transport),
+          onRestore: () => _restoreMuteState1(transport),
         ),
+        _finalValidationPanel(
+          blocked: blocked,
+          transport: transport,
+          keyPrefix: 'ble_',
+          panelKey: 'ble_final_validation_panel',
+        ),
+        const SizedBox(height: 12),
         for (var channel = 0; channel < 4; channel++)
           _phaseCCard(
             blocked: blocked,
@@ -509,7 +512,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           ),
         for (var channel = 0; channel < 4; channel++)
           _phaseCCard(
-            blocked: blocked,
+            blocked: blocked || !(_preflightResult?.passed == true),
             transport: transport,
             keyPrefix: 'ble_',
             keyName: 'peq$channel',
@@ -610,6 +613,8 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         borderRadius: BorderRadius.circular(3),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _finalValidationPanel(blocked: blocked),
+        const SizedBox(height: 12),
         Text('ICP5 USB · CAPTURE-PROVEN ADAU1701 MASTER VOLUME',
             style: proLabel(size: 9, spacing: 0.8)),
         const SizedBox(height: 6),
@@ -697,45 +702,14 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
             'PASS_ACK only, never VERIFIED · Range, dB mapping, and audible effect pending.',
             style: proSubtitle(size: 9)),
         const SizedBox(height: 12),
-        Container(
-          key: const Key('icp5_master_mute_panel'),
-          padding: const EdgeInsets.all(9),
-          decoration: BoxDecoration(
-            border: Border.all(color: kProBorder),
-            borderRadius: BorderRadius.circular(3),
-          ),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('ADAU1701 Master Mute',
-                style: proLabel(size: 9, spacing: 0.8)),
-            const SizedBox(height: 5),
-            _row('Parameter ID', '0x00000012'),
-            _row('Captured State 0 payload', '01 00 00'),
-            _row('Captured State 1 payload', '01 00 01'),
-            _row('Current confirmed state', 'State $_confirmedMuteState'),
-            _row('Last ACK', _lastMuteCommand?.message ?? 'not run'),
-            const SizedBox(height: 6),
-            Wrap(spacing: 7, runSpacing: 7, children: [
-              FilledButton(
-                key: const Key('icp5_mute_test_state_1_button'),
-                onPressed: blocked || !_icp5Usb.handshakeComplete
-                    ? null
-                    : _testMuteState1,
-                child: const Text('TEST State 1'),
-              ),
-              OutlinedButton(
-                key: const Key('icp5_mute_restore_state_0_button'),
-                onPressed: blocked || !_icp5Usb.handshakeComplete
-                    ? null
-                    : _restoreMuteState0,
-                child: const Text('RESTORE State 0'),
-              ),
-            ]),
-            const SizedBox(height: 6),
-            Text(
-                'PASS_ACK only, never VERIFIED · Audible mute polarity pending.',
-                style: proSubtitle(size: 9)),
-          ]),
+        _muteConfirmedPanel(
+          keyPrefix: 'icp5',
+          transport: _icp5Usb,
+          blocked: blocked,
+          lastResult: _lastMuteCommand,
+          confirmedState: _confirmedMuteState,
+          onTest: () => _confirmAndTestMuteState0(),
+          onRestore: () => _restoreMuteState1(),
         ),
         const SizedBox(height: 12),
         Container(
@@ -807,25 +781,6 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
                   -0.06666946, () => _icp5Usb.runOutputGainTest(channel)),
               onRestore: () => _runPhaseCRestore('gain$channel', -0.06666946,
                   () => _icp5Usb.restoreOutputGain(channel))),
-        const SizedBox(height: 12),
-        Text('Delay candidate DAC0–DAC3',
-            style: proLabel(size: 9, spacing: 0.8)),
-        Text(
-            'Neutral captured values only; engineering unit and range pending.',
-            style: proSubtitle(size: 9)),
-        for (var channel = 0; channel < 4; channel++)
-          _phaseCCard(
-              blocked: blocked,
-              keyName: 'delay$channel',
-              title: 'Delay candidate DAC$channel',
-              parameter: '0x00000017',
-              channelIndex: channel,
-              testLabel: 'TEST 1.0',
-              restoreLabel: 'RESTORE 0.04',
-              onTest: () => _runPhaseCTest('delay$channel', 1.0, 0.04,
-                  () => _icp5Usb.runDelayCandidateTest(channel)),
-              onRestore: () => _runPhaseCRestore('delay$channel', 0.04,
-                  () => _icp5Usb.restoreDelayCandidate(channel))),
         const SizedBox(height: 12),
         Text('Filter cutoff diagnostics',
             style: proLabel(size: 9, spacing: 0.8)),
@@ -1163,30 +1118,28 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
     });
   }
 
-  Future<void> _testMuteState1([Icp5UsbTransport? selectedTransport]) async {
+  // Mute polarity confirmed: State 0=MUTED, State 1=UNMUTED.
+  Future<void> _testMuteState0([Icp5UsbTransport? selectedTransport]) async {
     final transport = selectedTransport ?? _icp5Usb;
     setState(() => _working = true);
-    final outcome = await transport.runMuteTestWithGuardedRestore();
-    if (!mounted) return;
-    setState(() {
-      _working = false;
-      _lastMuteCommand = outcome.restore ?? outcome.test;
-      if (outcome.test.success) _confirmedMuteState = 1;
-      if (!outcome.test.success && outcome.restore?.success == true) {
-        _confirmedMuteState = 0;
-      }
-    });
-  }
-
-  Future<void> _restoreMuteState0([Icp5UsbTransport? selectedTransport]) async {
-    final transport = selectedTransport ?? _icp5Usb;
-    setState(() => _working = true);
-    final result = await transport.restoreMuteStateZeroWithStop();
+    final result = await transport.writeCapturedMasterMuteState(0);
     if (!mounted) return;
     setState(() {
       _working = false;
       _lastMuteCommand = result;
       if (result.success) _confirmedMuteState = 0;
+    });
+  }
+
+  Future<void> _restoreMuteState1([Icp5UsbTransport? selectedTransport]) async {
+    final transport = selectedTransport ?? _icp5Usb;
+    setState(() => _working = true);
+    final result = await transport.writeCapturedMasterMuteState(1);
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _lastMuteCommand = result;
+      if (result.success) _confirmedMuteState = 1;
     });
   }
 
@@ -1404,6 +1357,206 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
           _row('Rollback', 'not required'),
       ]),
     );
+  }
+
+  // ── Mute confirmed panel ──────────────────────────────────────────────────
+
+  /// Mute panel for USB and BLE — polarity confirmed (State 0=MUTED, State 1=UNMUTED).
+  Widget _muteConfirmedPanel({
+    required String keyPrefix,
+    required Icp5UsbTransport transport,
+    required bool blocked,
+    required Icp5MasterMuteResult? lastResult,
+    required int confirmedState,
+    required VoidCallback onTest,
+    required VoidCallback onRestore,
+  }) {
+    final state0Frame = Icp5FrameCodec.buildMasterMuteWrite(0)
+        .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+        .join(' ');
+    final state1Frame = Icp5FrameCodec.buildMasterMuteWrite(1)
+        .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+        .join(' ');
+    final ackHex = lastResult?.rawAck
+        ?.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+        .join(' ');
+    return Container(
+      key: Key('${keyPrefix}_master_mute_confirmed_panel'),
+      margin: const EdgeInsets.only(top: 7),
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('ADAU1701 Master Mute — Polarity Confirmed',
+            style: proLabel(size: 9, spacing: 0.5)),
+        const SizedBox(height: 5),
+        _row('Active transport', transport.displayName),
+        _row('Parameter ID', '0x00000012'),
+        _row('Polarity', 'State 0=MUTED · State 1=UNMUTED (confirmed)'),
+        _row('State 0 TX (MUTE)', state0Frame),
+        _row('State 1 TX (UNMUTE)', state1Frame),
+        _row('Current confirmed state', 'State $confirmedState'),
+        _row('Last ACK', lastResult?.message ?? 'not run'),
+        if (ackHex != null) _row('Last ACK (hex)', ackHex),
+        const SizedBox(height: 6),
+        Text(
+          'Lower audio output before TEST. State 0 will MUTE the output.',
+          style: proSubtitle(size: 9, color: Colors.orangeAccent),
+        ),
+        const SizedBox(height: 6),
+        Wrap(spacing: 7, runSpacing: 7, children: [
+          FilledButton(
+            key: Key('${keyPrefix}_mute_test_button'),
+            onPressed: blocked || !transport.handshakeComplete ? null : onTest,
+            child: const Text('TEST Mute (State 0)'),
+          ),
+          OutlinedButton(
+            key: Key('${keyPrefix}_mute_restore_button'),
+            onPressed: blocked || !transport.handshakeComplete ? null : onRestore,
+            child: const Text('RESTORE Unmute (State 1)'),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        Text(
+          'PASS_ACK only, never VERIFIED · Deploy uses the same param via the standard write path.',
+          style: proSubtitle(size: 9),
+        ),
+      ]),
+    );
+  }
+
+  // ── PEQ Enable/Bypass info card ───────────────────────────────────────────
+
+  Widget _finalValidationPanel({
+    required bool blocked,
+    Icp5UsbTransport? transport,
+    String keyPrefix = '',
+    String panelKey = 'icp5_final_validation_panel',
+  }) {
+    final activeTransport = transport ?? _icp5Usb;
+    return Container(
+      key: Key(panelKey),
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        border: Border.all(color: kProAmber.withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('ADAU1701 MiUMAX — FINAL VALIDATION',
+            style: proLabel(size: 9, color: kProAmber, spacing: 0.8)),
+        const SizedBox(height: 3),
+        Text(
+          'Parameters remaining for real-hardware confirmation. '
+          'ACK-only — no readback. Deploy locked until unit/range confirmed.',
+          style: proSubtitle(size: 9),
+        ),
+        const SizedBox(height: 8),
+        Text('Delay Channel 0–3  (param 0x17)',
+            style: proLabel(size: 9, spacing: 0.5)),
+        Text(
+          'Neutral captured values only. Engineering unit and audible effect '
+          'require real-hardware measurement before Deploy unlock.',
+          style: proSubtitle(size: 9),
+        ),
+        for (var channel = 0; channel < 4; channel++)
+          _phaseCCard(
+            blocked: blocked,
+            transport: transport,
+            keyPrefix: keyPrefix,
+            keyName: 'delay$channel',
+            title: 'Delay candidate DAC$channel',
+            parameter: '0x00000017',
+            channelIndex: channel,
+            testLabel: 'TEST 1.0',
+            restoreLabel: 'RESTORE 0.04',
+            onTest: () => _runPhaseCTest(
+              'delay$channel',
+              1.0,
+              0.04,
+              () => activeTransport.runDelayCandidateTest(channel),
+            ),
+            onRestore: () => _runPhaseCRestore(
+              'delay$channel',
+              0.04,
+              () => activeTransport.restoreDelayCandidate(channel),
+            ),
+          ),
+        _peqEnableBypassCaptureProcedureCard(),
+      ]),
+    );
+  }
+
+  Widget _peqEnableBypassCaptureProcedureCard() => Container(
+        key: const Key('peq_enable_bypass_capture_procedure'),
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          border: Border.all(color: kProAmber.withValues(alpha: 0.4)),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('PEQ ENABLE/BYPASS — SEMANTIC BYPASS VIA GAIN 0.0 dB',
+              style: proLabel(size: 9, color: kProAmber, spacing: 0.5)),
+          const SizedBox(height: 4),
+          _row('Parameter', 'param 0x18  property 0x01 (gain)'),
+          _row('Active', 'Writes stored gain to channel/band'),
+          _row('Bypassed (0 dB unity)',
+              'Writes 0.0 dB gain — DSP nullifies the filter slot'),
+          _row('Re-activate', 'Writes stored gain to restore the filter'),
+          _row('Coverage', 'Channel 0–3, Band 0–9 (param 0x18, band byte)'),
+          _row('Band 0 policy', 'Readback-verified  |  Bands 1–9: ACK-only'),
+          _row('Export behavior',
+              'Disabled bands export with gain=0.0 dB to clear stale DSP values'),
+          const SizedBox(height: 5),
+          Text('ICP5 EVIDENCE',
+              style: proLabel(size: 8, spacing: 0.6)),
+          const SizedBox(height: 3),
+          Text(
+            'No dedicated enable/bypass parameter found in Consumer ICP5 builder or PRO capture set.\n'
+            'Consumer Icp5PeqCommandBuilder exposes only 0x18/0x00=Q, 0x18/0x01=gain, 0x18/0x02=frequency.\n'
+            'Semantic bypass via gain=0.0 dB is safe: 0 dB is within the −6.0..+3.0 dB hardware range '
+            'and silences the filter without altering its frequency or Q stored values.',
+            style: proSubtitle(size: 9),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'No TEST button — real-hardware bypass verification is part of the Deploy flow.',
+            style: proSubtitle(size: 9, color: Colors.white38),
+          ),
+        ]),
+      );
+
+  // ── Mute confirm dialog ───────────────────────────────────────────────────
+
+  Future<void> _confirmAndTestMuteState0([Icp5UsbTransport? transport]) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: kProPanel,
+        title: Text('Mute Test (State 0)',
+            style: proTitle(size: 13)),
+        content: Text(
+          'This will send State 0 (01 00 00) to parameter 0x00000012.\n\n'
+          'Polarity is CONFIRMED: State 0 = MUTED.\n\n'
+          'Lower audio output to a safe level before proceeding.\n\n'
+          'RESTORE Unmute (State 1) is available immediately after.',
+          style: proSubtitle(size: 11),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('CONFIRM TEST'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) _testMuteState0(transport);
   }
 
   String _selectorLabel(DspTransportIdentity identity) => switch (identity) {

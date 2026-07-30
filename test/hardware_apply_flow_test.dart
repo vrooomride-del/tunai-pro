@@ -70,6 +70,10 @@ class _FakeTransport implements Adau1701TuningTransport {
   @override
   Future<Adau1701WriteAck> writeOutputGain(int c, double g) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
+
+  @override
+  Future<Adau1701WriteAck> writeMasterMute(bool muted) async =>
+      const Adau1701WriteAck(success: true, message: 'ok');
 }
 
 DspExportPackage _pkg() => DspExportPackage(id: 'exp1', parameterBlocks: [

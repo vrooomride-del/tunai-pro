@@ -86,6 +86,10 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
     outputGainWrites.add((channel, gainDb));
     return Adau1701WriteAck(success: ackSuccess, message: 'outputGain');
   }
+
+  @override
+  Future<Adau1701WriteAck> writeMasterMute(bool muted) async =>
+      Adau1701WriteAck(success: ackSuccess, message: 'masterMute');
 }
 
 // Injectable read service returning a canned readback.
@@ -490,6 +494,119 @@ void main() {
     expect(report.deploymentSucceeded, isFalse);
     expect(report.isAckOnly, isFalse,
         reason: 'isAckOnly is only true when the ACK actually succeeded');
+  });
+
+  // ── Protocol channel 1 / band 0 regression (실기: ch_wf_l = protocol ch 1) ───
+  //
+  // 실기 재현: ch_wf_l → protocol channel 1 / band 0 write ACKs successfully
+  // but the old code ran the ch0/band0 readback path and compared the ch0 DSP
+  // slot against the ch1 target → guaranteed frequency/gain mismatch.
+  // Fix: channel != 0 at band 0 → ACK-only, same as bands 1–9.
+
+  group('Protocol ch1 / band 0 — ACK-only, no ch0 readback mismatch', () {
+    Adau1701Icp5PeqWritePort _portCh(
+      _FakeTuningTransport t,
+      int protocolChannel, {
+      Adau1701Ch0Band0ReadResult? readback,
+    }) =>
+        Adau1701Icp5PeqWritePort(
+          transport: t,
+          gate: Adau1701PeqDeploymentGate(transport: t),
+          readService: _FakeReadService(t, readback ?? _readOk()),
+          channelResolver: (_) => protocolChannel,
+          clock: () => DateTime.utc(2026, 7, 19),
+        );
+
+    HardwareWriteOp _ch1Op(HardwareParamKind kind, num value) =>
+        HardwareWriteOp(
+          channelId: 'ch_wf_l',
+          parameterKind: kind,
+          bandIndex: 0,
+          targetValue: value,
+          verification: HardwareParamVerification.captureProven,
+          writable: true,
+          reason: 'ch1 regression',
+        );
+
+    test('gain ch1/band0 → ACK-only success, NOT a readback mismatch', () async {
+      final t = _FakeTuningTransport();
+      // ch0 readback returns -1.0 dB; target is -3.0 dB — mismatch if compared.
+      final report = await _portCh(t, 1, readback: _readOk(gainDb: -1.0))
+          .preflightAndWrite(_ch1Op(HardwareParamKind.peqGain, -3.0));
+
+      expect(t.gainWrites, [(1, -3.0)], reason: 'write must use protocol channel 1');
+      expect(report.deploymentAllowed, isTrue);
+      expect(report.deploymentSucceeded, isTrue,
+          reason: 'ch1/band0 gain: ACK-only, ch0 readback must not be compared');
+      expect(report.isAckOnly, isTrue);
+      expect(report.capturedOriginalState, isNull,
+          reason: 'ch0 baseline must not be captured for ch1 writes');
+    });
+
+    test('frequency ch1/band0 → ACK-only success, NOT a readback mismatch',
+        () async {
+      final t = _FakeTuningTransport();
+      // ch0 readback returns 1800 Hz; target is 2500 Hz — mismatch if compared.
+      final report = await _portCh(t, 1, readback: _readOk(freq: 1800))
+          .preflightAndWrite(_ch1Op(HardwareParamKind.peqFrequency, 2500));
+
+      expect(t.peqFreqWrites, [(1, 2500)],
+          reason: 'write must use protocol channel 1');
+      expect(report.deploymentAllowed, isTrue);
+      expect(report.deploymentSucceeded, isTrue,
+          reason: 'ch1/band0 freq: ACK-only, ch0 readback must not be compared');
+      expect(report.isAckOnly, isTrue);
+      expect(report.capturedOriginalState, isNull);
+    });
+
+    test('NACK on ch1/band0 gain → failed, not ackOnly', () async {
+      final t = _FakeTuningTransport()..ackSuccess = false;
+      final report = await _portCh(t, 1)
+          .preflightAndWrite(_ch1Op(HardwareParamKind.peqGain, -3.0));
+
+      expect(report.deploymentSucceeded, isFalse);
+      expect(report.isAckOnly, isFalse,
+          reason: 'isAckOnly is only true when ACK actually succeeded');
+    });
+
+    test('channels 2 and 3 at band 0 also ACK-only (boundary)', () async {
+      for (final ch in [2, 3]) {
+        final t = _FakeTuningTransport();
+        // ch0 readback mismatch would fire if not guarded.
+        final report = await _portCh(t, ch, readback: _readOk(gainDb: -1.0))
+            .preflightAndWrite(_ch1Op(HardwareParamKind.peqGain, -3.0));
+        expect(report.deploymentSucceeded, isTrue,
+            reason: 'ch$ch/band0 must not compare ch0 readback');
+        expect(report.isAckOnly, isTrue,
+            reason: 'ch$ch/band0 must be ACK-only');
+        expect(report.capturedOriginalState, isNull);
+      }
+    });
+
+    test('ch0/band0 gain still readback-verified — regression guard', () async {
+      final t = _FakeTuningTransport();
+      final report = await _port(t, readback: _readOk(gainDb: -3.0))
+          .preflightAndWrite(_op(HardwareParamKind.peqGain, -3.0));
+
+      expect(t.gainWrites, [(0, -3.0)]);
+      expect(report.deploymentSucceeded, isTrue);
+      expect(report.isAckOnly, isFalse,
+          reason: 'ch0/band0 gain must remain readback-verified');
+      expect(report.capturedOriginalState, isNotNull,
+          reason: 'ch0 baseline captured only for ch0/band0');
+    });
+
+    test('ch0/band0 frequency still readback-verified — regression guard',
+        () async {
+      final t = _FakeTuningTransport();
+      final report = await _port(t, readback: _readOk(freq: 2500))
+          .preflightAndWrite(_op(HardwareParamKind.peqFrequency, 2500));
+
+      expect(t.peqFreqWrites, [(0, 2500)]);
+      expect(report.deploymentSucceeded, isTrue);
+      expect(report.isAckOnly, isFalse,
+          reason: 'ch0/band0 freq must remain readback-verified');
+    });
   });
 
   // ── Channel mapping ──────────────────────────────────────────────────────────

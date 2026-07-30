@@ -210,6 +210,12 @@ abstract final class HardwareDeviceProfiles {
       HardwareCapabilityEntry(
           kind: HardwareParamKind.crossoverLowPass,
           verification: HardwareParamVerification.captureProven),
+      // channelMute: parameter-ID 0x12, payload 01 00 + state byte.
+      // Polarity confirmed: State 0=MUTED, State 1=UNMUTED.
+      // ACK-only (no mute readback service). Write is capture-proven.
+      HardwareCapabilityEntry(
+          kind: HardwareParamKind.channelMute,
+          verification: HardwareParamVerification.captureProven),
       HardwareCapabilityEntry(
           kind: HardwareParamKind.channelDelay,
           verification: HardwareParamVerification.unavailable),

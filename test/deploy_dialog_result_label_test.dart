@@ -143,6 +143,10 @@ class _FakeConnectedTransport implements Adau1701TuningTransport {
   @override
   Future<Adau1701WriteAck> writeOutputGain(int c, double g) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
+
+  @override
+  Future<Adau1701WriteAck> writeMasterMute(bool muted) async =>
+      const Adau1701WriteAck(success: true, message: 'ok');
 }
 
 // ── Host widget ───────────────────────────────────────────────────────────────
@@ -272,8 +276,9 @@ void main() {
       await tester.tap(find.text('APPROVE & WRITE'));
       await tester.pumpAndSettle();
 
-      // band_0: gain (written) + frequency (failed) + Q (written) = 2 "Written" labels.
-      expect(find.text('Written'), findsNWidgets(2));
+      // band_0: gain (written) + frequency (failed) + Q (written) = 2 "Written" for band_0.
+      // bands 1–9: 9 bypass gain ops (each written) = 9 more "Written" labels.
+      expect(find.text('Written'), findsNWidgets(11));
     });
   });
 

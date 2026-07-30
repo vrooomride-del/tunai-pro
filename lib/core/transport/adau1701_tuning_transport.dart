@@ -38,4 +38,9 @@ abstract interface class Adau1701TuningTransport
   /// Uses the capture-confirmed ICP5 parameter-ID 0x14 and float32 LE dB
   /// encoding. See [Icp5FrameCodec.buildOutputGainWriteArbitrary].
   Future<Adau1701WriteAck> writeOutputGain(int channel, double gainDb);
+
+  /// Writes the master mute state (param 0x12). Polarity confirmed:
+  /// [muted]=true → State 0 (MUTED); [muted]=false → State 1 (UNMUTED).
+  /// ACK-only — no readback service for mute.
+  Future<Adau1701WriteAck> writeMasterMute(bool muted);
 }

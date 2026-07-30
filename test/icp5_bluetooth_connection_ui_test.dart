@@ -238,6 +238,14 @@ void main() {
           find.byKey(Key('icp5_phase_c_ble_cutoff$channel')), findsOneWidget);
       expect(find.byKey(Key('icp5_phase_c_ble_peq$channel')), findsOneWidget);
     }
+    // FINAL VALIDATION panel (ble_ prefix) must appear after handshake.
+    expect(find.byKey(const Key('ble_final_validation_panel')), findsOneWidget);
+    for (var ch = 0; ch < 4; ch++) {
+      expect(find.byKey(Key('icp5_phase_c_ble_delay$ch')), findsOneWidget,
+          reason: 'BLE FINAL VALIDATION: delay card $ch must exist');
+    }
+    expect(find.byKey(const Key('peq_enable_bypass_capture_procedure')),
+        findsOneWidget);
     expect(connection.writes, [Icp5FrameCodec.identificationRequest]);
     expect(driver.openCalls, 1);
     expect(driver.discoverCalls, 1);

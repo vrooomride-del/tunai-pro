@@ -85,6 +85,10 @@ class _FakeTransport implements Adau1701TuningTransport {
     outputGainWrites.add((channel, gainDb));
     return Adau1701WriteAck(success: ackSuccess, message: 'outputGain');
   }
+
+  @override
+  Future<Adau1701WriteAck> writeMasterMute(bool muted) async =>
+      Adau1701WriteAck(success: ackSuccess, message: 'masterMute');
 }
 
 // ── Fake read service ─────────────────────────────────────────────────────────

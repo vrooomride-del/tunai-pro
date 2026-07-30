@@ -107,8 +107,9 @@ void main() {
 
   group('fail-closed behaviour', () {
     test('parameters with no ADAU1701 entry resolve to unavailable', () {
+      // channelMute is now captureProven (polarity confirmed)
       expect(adau1701.verificationFor(HardwareParamKind.channelMute),
-          HardwareParamVerification.unavailable);
+          HardwareParamVerification.captureProven);
       expect(adau1701.verificationFor(HardwareParamKind.channelPolarity),
           HardwareParamVerification.unavailable);
     });

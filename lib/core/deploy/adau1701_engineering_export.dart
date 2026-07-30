@@ -71,12 +71,16 @@ DspExportPackage buildAdau1701GainExportPackage({
 }
 
 /// Builds [ExportParameterBlock]s for PEQ and crossover from [tuning] for
-/// the channels listed in [channels]. Channels with no enabled PEQ bands and
-/// no configured XO filters are skipped.
+/// the channels listed in [channels]. Channels with no bands and no configured
+/// XO filters are skipped.
 ///
 /// Band indices in the PEQ blocks are the original positions in [PeqChannelState.bands]
 /// so that the capability layer (band_0 = Band 1 = capture-proven) resolves
 /// correctly.
+///
+/// Disabled bands use semantic bypass: gain_db=0.0 is written so the DSP
+/// nullifies that filter slot. Omitting a disabled band would leave stale DSP
+/// values in hardware from any prior write.
 List<ExportParameterBlock> buildAdau1701PeqXoExportBlocks({
   required List<DriverChannel> channels,
   required TuningProjectState tuning,
@@ -92,7 +96,17 @@ List<ExportParameterBlock> buildAdau1701PeqXoExportBlocks({
     final bandsJson = <String, dynamic>{};
     for (var i = 0; i < peqCh.bands.length; i++) {
       final b = peqCh.bands[i];
-      if (!b.enabled) continue;
+      if (!b.enabled) {
+        // Semantic bypass: write only gain=0.0 dB. Frequency and Q are NOT
+        // sent — the hardware retains its stored DSP values (inaudible at
+        // 0 dB). Sending only gain keeps the Deploy list minimal (1 op per
+        // bypassed band instead of 3).
+        bandsJson['band_$i'] = {
+          'gain_db': 0.0,
+          'bypassed': true,
+        };
+        continue;
+      }
       bandsJson['band_$i'] = {
         'freq_hz': b.frequencyHz,
         'gain_db': b.gainDb,
@@ -100,12 +114,19 @@ List<ExportParameterBlock> buildAdau1701PeqXoExportBlocks({
       };
     }
     if (bandsJson.isEmpty) continue;
+    final activeCount =
+        bandsJson.values.where((v) => (v as Map)['bypassed'] != true).length;
+    final bypassCount = bandsJson.length - activeCount;
+    final summaryParts = <String>[
+      if (activeCount > 0) '$activeCount active',
+      if (bypassCount > 0) '$bypassCount bypassed (0 dB unity)',
+    ];
     blocks.add(ExportParameterBlock(
       id: 'blk_peq_${peqCh.channelId}_${ts}_${seq++}',
       type: ExportBlockType.peq,
       channelId: peqCh.channelId,
       title: '${peqCh.channelId} PEQ',
-      summary: '${bandsJson.length} band(s)',
+      summary: summaryParts.join(', '),
       parameters: {'bands': bandsJson},
     ));
   }
@@ -124,6 +145,48 @@ List<ExportParameterBlock> buildAdau1701PeqXoExportBlocks({
       summary: [
         if (xoCh.hasHighPass) 'HPF @ ${xoCh.highPass!.freqLabel}',
         if (xoCh.hasLowPass) 'LPF @ ${xoCh.lowPass!.freqLabel}',
+      ].join(' / '),
+      parameters: params,
+    ));
+  }
+
+  return blocks;
+}
+
+/// Builds [ExportParameterBlock]s for mute and delay state from [tuning] for
+/// the channels listed in [channels].
+///
+/// Mute is now capture-proven (param 0x12, State 0=MUTED, State 1=UNMUTED) and will
+/// produce a writable op in [buildHardwareWritePlan]. Delay remains unavailable:
+/// - **Delay**: only two diagnostic capture values (1.0 / 0.04 float32); unit unknown;
+///   capability profile marks `channelDelay: unavailable`.
+///
+/// The resulting blocks will flow through [buildHardwareWritePlan] and surface as
+/// [HardwareParamVerification.unavailable] (not writable / Blocked). Call this
+/// alongside [buildAdau1701PeqXoExportBlocks] so the deploy plan shows the
+/// Blocked status rather than silently omitting these parameters.
+List<ExportParameterBlock> buildAdau1701MuteDelayExportBlocks({
+  required List<DriverChannel> channels,
+  required TuningProjectState tuning,
+}) {
+  final ts = DateTime.now().millisecondsSinceEpoch;
+  int seq = 0;
+  final blocks = <ExportParameterBlock>[];
+
+  for (final ch in channels) {
+    final ctrl = tuning.getOrCreateControl(ch.id);
+    final params = <String, dynamic>{};
+    if (ctrl.muted) params['muted'] = true;
+    if (ctrl.hasDelay) params['delayMs'] = ctrl.delayMs;
+    if (params.isEmpty) continue;
+    blocks.add(ExportParameterBlock(
+      id: 'blk_mute_delay_${ch.id}_${ts}_${seq++}',
+      type: ExportBlockType.delay,
+      channelId: ch.id,
+      title: '${ch.name} Mute/Delay',
+      summary: [
+        if (ctrl.muted) 'Muted',
+        if (ctrl.hasDelay) '${ctrl.delayMs.toStringAsFixed(1)} ms',
       ].join(' / '),
       parameters: params,
     ));

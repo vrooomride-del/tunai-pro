@@ -148,6 +148,7 @@ class HardwareWriteExecutor {
         HardwareDeviceProfiles.adau1701Icp5.deviceId) return false;
     if (op.bandIndex == null) {
       return op.parameterKind == HardwareParamKind.channelGain ||
+          op.parameterKind == HardwareParamKind.channelMute ||
           op.parameterKind == HardwareParamKind.crossoverHighPass ||
           op.parameterKind == HardwareParamKind.crossoverLowPass;
     }

@@ -115,7 +115,7 @@ void main() {
     expect(pol.verification, HardwareParamVerification.unavailable);
   });
 
-  test('channelGain is captureProven on ADAU1701; delay and mute remain unavailable',
+  test('channelGain and channelMute are captureProven on ADAU1701; delay remains unavailable',
       () {
     final plan = buildHardwareWritePlan(
       _pkg([
@@ -135,7 +135,10 @@ void main() {
     expect(_op(plan, HardwareParamKind.channelGain).verification,
         HardwareParamVerification.captureProven);
     expect(_op(plan, HardwareParamKind.channelDelay).writable, isFalse);
-    expect(_op(plan, HardwareParamKind.channelMute).writable, isFalse);
+    // channelMute is now captureProven — State 0=MUTED confirmed
+    expect(_op(plan, HardwareParamKind.channelMute).writable, isTrue);
+    expect(_op(plan, HardwareParamKind.channelMute).verification,
+        HardwareParamVerification.captureProven);
   });
 
   test('ADAU1466 developer: every op is unavailable / not writable', () {

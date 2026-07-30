@@ -97,7 +97,11 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       channels: widget.channels,
       tuning: widget.tuning,
     );
-    final allBlocks = [...gainPkg.parameterBlocks, ...peqXoBlocks];
+    final muteDelayBlocks = buildAdau1701MuteDelayExportBlocks(
+      channels: widget.channels,
+      tuning: widget.tuning,
+    );
+    final allBlocks = [...gainPkg.parameterBlocks, ...peqXoBlocks, ...muteDelayBlocks];
     final pkg = gainPkg.copyWith(
       status: allBlocks.isEmpty ? ExportStatus.notReady : ExportStatus.draftReady,
       parameterBlocks: allBlocks,
@@ -105,6 +109,9 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     _plan = buildHardwareWritePlan(pkg, HardwareDeviceProfiles.adau1701Icp5);
     _hasWritableOps = _plan.writableOperations.isNotEmpty;
   }
+
+  List<HardwareWriteOp> get _blockedOps =>
+      _plan.operations.where((o) => !o.writable).toList();
 
   Future<void> _execute() async {
     if (!_hasWritableOps) return;
@@ -312,7 +319,8 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
   }
 
   Widget _planView() {
-    if (!_hasWritableOps) {
+    final blocked = _blockedOps;
+    if (!_hasWritableOps && blocked.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -329,52 +337,110 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       );
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('PENDING WRITES',
-          style: proLabel(size: 9, color: Colors.white38, spacing: 1.5)),
-      const SizedBox(height: 8),
-      ...(_plan.writableOperations.map((op) {
-        final isGain = op.parameterKind == HardwareParamKind.channelGain;
-        final prev = isGain ? widget.previousAppliedGains[op.channelId] : null;
-        final prevLabel = prev != null
-            ? '${prev >= 0 ? '+' : ''}${prev.toStringAsFixed(1)} dB'
-            : '—';
-        final newLabel = _opValueLabel(op);
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 3),
-          child: Row(children: [
-            Expanded(
-                flex: 3,
-                child: Text(op.channelId,
-                    style: proValue(size: 11, color: Colors.white70))),
-            Expanded(
-                flex: 2,
-                child: Text(_opKindLabel(op),
-                    style: proSubtitle(size: 10))),
-            Expanded(
-                flex: 2,
-                child: Text(prevLabel,
-                    style: proSubtitle(size: 10,
-                        color: Colors.white38))),
-            const Icon(Icons.arrow_forward, size: 10, color: Colors.white24),
-            const SizedBox(width: 4),
-            Expanded(
-                flex: 2,
-                child: Text(newLabel,
-                    style: proValue(size: 11, color: kProAccent))),
-          ]),
-        );
-      })),
-      const SizedBox(height: 8),
-      Text(
-        'This will write ${_plan.writableOperations.length} operation(s) '
-        'through the connected ICP5 transport.',
-        style: proSubtitle(size: 10, color: Colors.white38),
-      ),
+      if (_hasWritableOps) ...[
+        Text('PENDING WRITES',
+            style: proLabel(size: 9, color: Colors.white38, spacing: 1.5)),
+        const SizedBox(height: 8),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 220),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _plan.writableOperations.map((op) {
+                final isGain =
+                    op.parameterKind == HardwareParamKind.channelGain;
+                final prev =
+                    isGain ? widget.previousAppliedGains[op.channelId] : null;
+                final prevLabel = prev != null
+                    ? '${prev >= 0 ? '+' : ''}${prev.toStringAsFixed(1)} dB'
+                    : '—';
+                final newLabel = _opValueLabel(op);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(children: [
+                    Expanded(
+                        flex: 3,
+                        child: Text(op.channelId,
+                            style: proValue(size: 11, color: Colors.white70))),
+                    Expanded(
+                        flex: 2,
+                        child: Text(_opKindLabel(op),
+                            style: proSubtitle(size: 10))),
+                    Expanded(
+                        flex: 2,
+                        child: Text(prevLabel,
+                            style: proSubtitle(
+                                size: 10, color: Colors.white38))),
+                    const Icon(Icons.arrow_forward,
+                        size: 10, color: Colors.white24),
+                    const SizedBox(width: 4),
+                    Expanded(
+                        flex: 2,
+                        child: Text(newLabel,
+                            style: proValue(size: 11, color: kProAccent))),
+                  ]),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'This will write ${_plan.writableOperations.length} operation(s) '
+          'through the connected ICP5 transport.',
+          style: proSubtitle(size: 10, color: Colors.white38),
+        ),
+      ],
+      if (blocked.isNotEmpty) ...[
+        if (_hasWritableOps) const SizedBox(height: 12),
+        Text('BLOCKED — no confirmed write path',
+            style: proLabel(
+                size: 9,
+                color: kProAmber.withValues(alpha: 0.7),
+                spacing: 1.5)),
+        const SizedBox(height: 6),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 120),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: blocked.map((op) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(children: [
+                      Expanded(
+                          flex: 3,
+                          child: Text(op.channelId,
+                              style: proValue(
+                                  size: 11, color: Colors.white38))),
+                      Expanded(
+                          flex: 3,
+                          child: Text(_opKindLabel(op),
+                              style: proSubtitle(
+                                  size: 10, color: Colors.white38))),
+                      Expanded(
+                          flex: 3,
+                          child: Text(_opValueLabel(op),
+                              style: proSubtitle(
+                                  size: 10, color: Colors.white38))),
+                      Text('BLOCKED',
+                          style: TextStyle(
+                              fontSize: 9,
+                              color: kProAmber.withValues(alpha: 0.7),
+                              letterSpacing: 0.8,
+                              fontWeight: FontWeight.w600)),
+                    ]),
+                  )).toList(),
+            ),
+          ),
+        ),
+      ],
     ]);
   }
 
   static String _opKindLabel(HardwareWriteOp op) => switch (op.parameterKind) {
         HardwareParamKind.channelGain => 'Channel Gain',
+        HardwareParamKind.channelMute => 'Mute',
+        HardwareParamKind.channelDelay => 'Delay',
         HardwareParamKind.peqGain =>
           'PEQ B${(op.bandIndex ?? 0) + 1} Gain',
         HardwareParamKind.peqFrequency =>
@@ -389,6 +455,8 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
   static String _opValueLabel(HardwareWriteOp op) {
     final v = op.targetValue.toDouble();
     return switch (op.parameterKind) {
+      HardwareParamKind.channelMute => 'MUTED (State 0)',
+      HardwareParamKind.channelDelay => '${v.toStringAsFixed(1)} ms',
       HardwareParamKind.peqFrequency ||
       HardwareParamKind.crossoverHighPass ||
       HardwareParamKind.crossoverLowPass =>
@@ -443,7 +511,12 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       ),
       if (r.outcomes.isNotEmpty) ...[
         const SizedBox(height: 10),
-        ...r.outcomes.map((o) {
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 180),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: r.outcomes.map((o) {
           final c = switch (o.status) {
             HardwareWriteOpStatus.written => kProGreen,
             HardwareWriteOpStatus.ackOnly => kProAmber,
@@ -473,7 +546,10 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
               ),
             ]),
           );
-        }),
+        }).toList(),
+            ),
+          ),
+        ),
       ],
       if (_isRestoring) ...[
         const SizedBox(height: 8),

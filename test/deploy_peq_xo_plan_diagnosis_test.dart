@@ -1,10 +1,12 @@
-// Diagnostic: why PEQ Band 1 / XO HPF / XO LPF are absent from the deploy plan.
+// Regression tests for the PEQ/XO deploy plan pipeline.
 //
 // Findings (plist-verified, ADAU1701 project 1785372179650):
 //   peqChannels:       1 channel (ch_tw_l), 10 bands, 0 enabled
 //   crossoverChannels: [] (none stored)
 //
-// This file is temporary diagnostic evidence. Delete after the fix is shipped.
+// Since the semantic bypass fix: disabled bands export with gain_db=0.0
+// (bypassed=true) instead of being skipped entirely. Tests 1a/1c/2 updated
+// to reflect the new behavior.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/deploy/adau1701_engineering_export.dart';
@@ -32,7 +34,7 @@ void main() {
   group('Deploy PEQ/XO plan diagnosis', () {
     // ── 1. PEQ path ───────────────────────────────────────────────────────────
 
-    test('1a. ch_tw_l with 10 disabled slots → buildAdau1701PeqXoExportBlocks returns []', () {
+    test('1a. ch_tw_l with 10 disabled slots → 1 PEQ block with 10 bypass entries (gain=0.0)', () {
       final tuning = _storedTuningState();
       // Verify the stored structure matches plist: 10 bands, all disabled.
       final twL = tuning.peqChannels.first;
@@ -43,8 +45,15 @@ void main() {
 
       final blocks = buildAdau1701PeqXoExportBlocks(
           channels: _kChannels, tuning: tuning);
-      expect(blocks.where((b) => b.type == ExportBlockType.peq).length, 0,
-          reason: 'all 10 bands disabled → bandsJson.isEmpty → channel skipped');
+      final peqBlocks = blocks.where((b) => b.type == ExportBlockType.peq).toList();
+      expect(peqBlocks.length, 1,
+          reason: 'all 10 bands disabled → semantic bypass → 1 block with 10 gain=0.0 entries');
+      final bandsMap = peqBlocks.first.parameters['bands'] as Map;
+      expect(bandsMap.length, 10);
+      for (final v in bandsMap.values) {
+        expect((v as Map)['gain_db'], 0.0, reason: 'each disabled band → bypass gain 0.0 dB');
+        expect((v)['bypassed'], true);
+      }
     });
 
     test('1b. empty crossoverChannels → no XO blocks', () {
@@ -58,16 +67,20 @@ void main() {
           reason: 'loop never runs → 0 XO blocks');
     });
 
-    test('1c. buildAdau1701PeqXoExportBlocks() is called but returns [] for stored state', () {
+    test('1c. buildAdau1701PeqXoExportBlocks() returns 1 PEQ bypass block for stored state', () {
       final tuning = _storedTuningState();
       final blocks = buildAdau1701PeqXoExportBlocks(
           channels: _kChannels, tuning: tuning);
-      expect(blocks, isEmpty);
+      // ch_tw_l has 10 disabled bands → 1 PEQ block with bypass entries.
+      // No crossoverChannels → 0 XO blocks.
+      expect(blocks, hasLength(1));
+      expect(blocks.first.type, ExportBlockType.peq);
+      expect(blocks.first.channelId, 'ch_tw_l');
     });
 
     // ── 2. Combined allBlocks before buildHardwareWritePlan ──────────────────
 
-    test('2. allBlocks contains only gain blocks; PEQ/XO block count = 0', () {
+    test('2. allBlocks: gain block + PEQ bypass block; XO block count = 0', () {
       final tuning = _storedTuningState();
       // Simulate a non-zero gain so gainPkg has at least one block.
       final ctrl = tuning.getOrCreateControl('ch_tw_l').copyWith(gainDb: -3.0);
@@ -82,12 +95,13 @@ void main() {
           reason: 'one gain block for ch_tw_l at -3.0 dB');
       expect(gainPkg.parameterBlocks.first.type, ExportBlockType.gain);
 
-      expect(peqXoBlocks, isEmpty,
-          reason: 'PEQ: 0 enabled bands; XO: empty crossoverChannels');
+      expect(peqXoBlocks, hasLength(1),
+          reason: 'ch_tw_l: 10 disabled bands → 1 PEQ bypass block; XO: empty');
+      expect(peqXoBlocks.first.type, ExportBlockType.peq);
 
       final allBlocks = [...gainPkg.parameterBlocks, ...peqXoBlocks];
-      expect(allBlocks.length, 1);
-      expect(allBlocks.where((b) => b.type == ExportBlockType.peq).length, 0);
+      expect(allBlocks.length, 2);
+      expect(allBlocks.where((b) => b.type == ExportBlockType.peq).length, 1);
       expect(allBlocks.where((b) => b.type == ExportBlockType.crossover).length, 0);
     });
 
@@ -159,18 +173,32 @@ void main() {
       final plan = buildHardwareWritePlan(
           mergedPkg, HardwareDeviceProfiles.adau1701Icp5);
 
-      // Both peqGain and peqFrequency are writable (band 0 is captureProven).
-      final writablePeqOps = plan.writableOperations
-          .where((o) => o.parameterKind == HardwareParamKind.peqGain ||
-                        o.parameterKind == HardwareParamKind.peqFrequency)
-          .toList();
-      expect(writablePeqOps.length, 2,
-          reason: 'Band 1 gain and frequency are both writable');
-      expect(writablePeqOps.map((o) => o.parameterKind),
-          containsAll([HardwareParamKind.peqGain, HardwareParamKind.peqFrequency]));
+      // Band 0 (enabled): peqGain and peqFrequency are writable and captureProven.
+      // Bands 1–9 (disabled): now export via semantic bypass with gain=0.0 dB.
+      // So total gain+freq ops include band 0 active values + bands 1–9 bypass values.
+      final band0GainOp = plan.writableOperations.firstWhere(
+          (o) => o.parameterKind == HardwareParamKind.peqGain && o.bandIndex == 0);
+      final band0FreqOp = plan.writableOperations.firstWhere(
+          (o) => o.parameterKind == HardwareParamKind.peqFrequency && o.bandIndex == 0);
 
-      // Both are captureProven.
-      for (final op in writablePeqOps) {
+      expect(band0GainOp.writable, isTrue);
+      expect(band0GainOp.verification, HardwareParamVerification.captureProven);
+      expect(band0GainOp.targetValue, -3.0,
+          reason: 'Band 0 active: stored gain −3.0 dB');
+
+      expect(band0FreqOp.writable, isTrue);
+      expect(band0FreqOp.verification, HardwareParamVerification.captureProven);
+      expect(band0FreqOp.targetValue, 1000.0,
+          reason: 'Band 0 active: stored freq 1000 Hz');
+
+      // Bands 1–9 (disabled, bypass): gain ops have targetValue=0.0.
+      final bypassGainOps = plan.writableOperations.where(
+          (o) => o.parameterKind == HardwareParamKind.peqGain && o.bandIndex! > 0).toList();
+      expect(bypassGainOps.length, 9,
+          reason: 'Bands 1–9 each produce a bypass gain=0.0 op');
+      for (final op in bypassGainOps) {
+        expect(op.targetValue, 0.0,
+            reason: 'Bypass band ${op.bandIndex}: gain must be 0.0 dB');
         expect(op.writable, isTrue);
         expect(op.verification, HardwareParamVerification.captureProven);
       }

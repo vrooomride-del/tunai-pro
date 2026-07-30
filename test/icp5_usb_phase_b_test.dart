@@ -170,7 +170,8 @@ void main() {
     expect(Icp5ProtocolEvidenceRegistry.usb.capturedMasterMuteStates, [0, 1]);
     expect(Icp5ProtocolEvidenceRegistry.usb.masterMuteAckParameterId, 0x12);
     expect(Icp5ProtocolEvidenceRegistry.usb.masterMuteSuccessStatus, 0);
-    expect(Icp5ProtocolEvidenceRegistry.usb.masterMutePolarityProven, isFalse);
+    // Polarity confirmed: State 0=MUTED, State 1=UNMUTED
+    expect(Icp5ProtocolEvidenceRegistry.usb.masterMutePolarityProven, isTrue);
   });
 
   test('exact Output DAC 1 Gain frames and ACK are capture-locked', () {
@@ -450,9 +451,9 @@ void main() {
     final selector = tester.widget<DropdownButton<String>>(
         find.byKey(const Key('icp5_manual_port_selector')));
     expect(selector.items!.map((item) => item.value), ['COM10', 'COM8']);
-    expect(find.byKey(const Key('icp5_master_mute_panel')), findsOneWidget);
-    expect(find.text('TEST State 1'), findsOneWidget);
-    expect(find.text('RESTORE State 0'), findsOneWidget);
+    expect(find.byKey(const Key('icp5_master_mute_confirmed_panel')), findsOneWidget);
+    expect(find.text('TEST Mute (State 0)'), findsOneWidget);
+    expect(find.text('RESTORE Unmute (State 1)'), findsOneWidget);
     expect(
         find.byKey(const Key('icp5_output_dac_1_gain_panel')), findsOneWidget);
     expect(find.text('TEST -4.9'), findsOneWidget);
@@ -524,13 +525,15 @@ void main() {
                     icp5UsbTransport: transport)))));
     await tester.tap(find.text('ICP5 USB'));
     await tester.pump();
-    expect(find.text('State 0'), findsOneWidget);
+    expect(find.text('State 1'), findsOneWidget); // initial: unmuted (default)
     await tester
-        .ensureVisible(find.byKey(const Key('icp5_mute_test_state_1_button')));
-    await tester.tap(find.byKey(const Key('icp5_mute_test_state_1_button')));
-    await tester.pumpAndSettle();
-    expect(find.text('State 1'), findsOneWidget);
-    expect(connection.writes.last, Icp5FrameCodec.buildMasterMuteWrite(1));
+        .ensureVisible(find.byKey(const Key('icp5_mute_test_button')));
+    await tester.tap(find.byKey(const Key('icp5_mute_test_button')));
+    await tester.pumpAndSettle(); // dialog opens
+    await tester.tap(find.text('CONFIRM TEST'));
+    await tester.pumpAndSettle(); // write completes
+    expect(find.text('State 0'), findsOneWidget); // after mute test: State 0=MUTED
+    expect(connection.writes.last, Icp5FrameCodec.buildMasterMuteWrite(0));
   });
 
   testWidgets('Output DAC 1 Gain confirmed UI state is ACK-gated',

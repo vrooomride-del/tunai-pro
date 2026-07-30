@@ -607,6 +607,14 @@ class Icp5UsbTransport
     return Adau1701WriteAck(success: r.success, message: r.message);
   }
 
+  /// Polarity confirmed: [muted]=true → State 0 (MUTED), [muted]=false → State 1 (UNMUTED).
+  @override
+  Future<Adau1701WriteAck> writeMasterMute(bool muted) async {
+    final state = muted ? 0 : 1;
+    final r = await writeCapturedMasterMuteState(state);
+    return Adau1701WriteAck(success: r.success, message: r.message);
+  }
+
   Future<Icp5PhaseCResult> writeCapturedPeqBand1Gain(
           int channel, double value) =>
       _writePhaseC(Icp5FrameCodec.buildPeqBand1GainWrite(channel, value),
