@@ -45,6 +45,7 @@ class HardwareTab extends ConsumerStatefulWidget {
   final bool initialUsbiDeviceOpen;
   final ValueChanged<bool>? onUsbiDeviceOpenChanged;
   final ValueChanged<bool>? onDspWritesDisabledChanged;
+  final Icp5BluetoothTransport? icp5BluetoothTransport;
   const HardwareTab({
     super.key,
     required this.projectId,
@@ -53,6 +54,7 @@ class HardwareTab extends ConsumerStatefulWidget {
     this.initialUsbiDeviceOpen = false,
     this.onUsbiDeviceOpenChanged,
     this.onDspWritesDisabledChanged,
+    this.icp5BluetoothTransport,
   });
 
   @override
@@ -332,13 +334,30 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     // consumers share one BLE connection. On macOS it stays the local
     // flutter_blue_plus transport, owned and closed by this tab (unchanged).
     // 3 s timeout gives the DSP firmware margin after back-to-back page reads.
-    if (Platform.isWindows) {
+    if (widget.icp5BluetoothTransport != null) {
+      _adau1701BleTransport = widget.icp5BluetoothTransport!;
+      _ownsBleTransport = false;
+      _adau1701BleContext =
+          Adau1701HardwareContext.fromTransport(_adau1701BleTransport);
+    } else if (Platform.isWindows) {
       _adau1701BleTransport =
           ref.read(adau1701Icp5BleWindowsContextProvider).transport
               as Icp5BluetoothTransport;
       _ownsBleTransport = false;
       // Reuse the provider-owned context — do not create a second wrapper.
       _adau1701BleContext = ref.read(adau1701Icp5BleWindowsContextProvider);
+      // The Windows BLE transport is global and survives WorkbenchShell
+      // navigation — it is never closed on back-press. When a new project is
+      // opened while BLE is already connected, onBlePassHandshake never fires
+      // again (no new BLE connection event). Sync the new project's connection
+      // state immediately so the status bar Connected badge and Deploy button
+      // activate without waiting for the next explicit BLE connect.
+      if (_adau1701BleTransport.isConnected &&
+          _adau1701BleTransport.handshakeComplete) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _onBlePassHandshake(widget.projectId);
+        });
+      }
     } else {
       _adau1701BleTransport = Icp5BluetoothTransport(
         readTimeout: const Duration(seconds: 3),
@@ -394,18 +413,36 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     super.dispose();
   }
 
-  void _onBlePassHandshake() {
-    ref.read(activeAdau1701ContextProvider.notifier).state = _adau1701BleContext;
-    ref
-        .read(proProjectStoreProvider.notifier)
-        .updateHardwareConnection(widget.projectId, HardwareConnection.connected);
+  void _onBlePassHandshake(String callbackProjectId) {
+    _syncBleConnection(
+      callbackProjectId,
+      HardwareConnection.connected,
+      _adau1701BleContext,
+    );
   }
 
-  void _onBleDisconnected() {
-    ref.read(activeAdau1701ContextProvider.notifier).state = null;
-    ref
-        .read(proProjectStoreProvider.notifier)
-        .updateHardwareConnection(widget.projectId, HardwareConnection.disconnected);
+  void _onBleDisconnected(String callbackProjectId) {
+    _syncBleConnection(
+      callbackProjectId,
+      HardwareConnection.disconnected,
+      null,
+    );
+  }
+
+  void _syncBleConnection(
+    String callbackProjectId,
+    HardwareConnection connection,
+    Adau1701HardwareContext? activeContext,
+  ) {
+    if (callbackProjectId != widget.projectId) {
+      throw StateError(
+        'Stale BLE callback projectId=$callbackProjectId; '
+        'open Workbench projectId=${widget.projectId}.',
+      );
+    }
+    final notifier = ref.read(proProjectStoreProvider.notifier);
+    notifier.updateHardwareConnection(callbackProjectId, connection);
+    ref.read(activeAdau1701ContextProvider.notifier).state = activeContext;
   }
 
 /// Returns whichever ADAU1701 ICP5 transport is currently ready.
@@ -485,6 +522,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         const _SectionHeader('TRANSPORT ARCHITECTURE — ICP5 PHASE A', Icons.alt_route_outlined),
         const SizedBox(height: 8),
         TransportConnectionPanel(
+          projectId: widget.projectId,
           backend: _usbiNativeBackend,
           deviceOpen: _usbiDeviceOpen,
           dspWritesStopped: _dspWritesDisabledForSession,

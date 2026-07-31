@@ -155,6 +155,7 @@ Widget _app(Icp5BluetoothTransport transport) => MaterialApp(
       home: Scaffold(
         body: SingleChildScrollView(
           child: TransportConnectionPanel(
+            projectId: 'test-project',
             backend: const ProUsbiNativeBackendDisabled(),
             deviceOpen: false,
             isMacOS: true,

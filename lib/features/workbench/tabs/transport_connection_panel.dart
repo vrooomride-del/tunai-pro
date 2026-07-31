@@ -46,6 +46,7 @@ enum Icp5BluetoothUiState {
 }
 
 class TransportConnectionPanel extends StatefulWidget {
+  final String projectId;
   final ProUsbiNativeBackend backend;
   final bool deviceOpen;
   final bool dspWritesStopped;
@@ -53,10 +54,11 @@ class TransportConnectionPanel extends StatefulWidget {
   final Icp5UsbTransport? icp5UsbTransport;
   final Icp5BluetoothTransport? icp5BluetoothTransport;
   final bool? isMacOS;
-  final VoidCallback? onBlePassHandshake;
-  final VoidCallback? onBleDisconnected;
+  final ValueChanged<String>? onBlePassHandshake;
+  final ValueChanged<String>? onBleDisconnected;
   const TransportConnectionPanel({
     super.key,
+    this.projectId = '',
     required this.backend,
     required this.deviceOpen,
     this.dspWritesStopped = false,
@@ -1025,7 +1027,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
         }
       }
     });
-    if (passed) widget.onBlePassHandshake?.call();
+    if (passed) widget.onBlePassHandshake?.call(widget.projectId);
   }
 
   Future<void> _disconnectBluetooth() async {
@@ -1037,7 +1039,7 @@ class _TransportConnectionPanelState extends State<TransportConnectionPanel> {
       _bluetoothState = Icp5BluetoothUiState.disconnected;
       _bluetoothError = null;
     });
-    widget.onBleDisconnected?.call();
+    widget.onBleDisconnected?.call(widget.projectId);
   }
 
   Icp5BluetoothUiState _classifyBluetoothFailure(String? message) {
