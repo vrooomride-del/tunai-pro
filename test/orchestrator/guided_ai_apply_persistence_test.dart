@@ -230,7 +230,14 @@ void main() {
       expect(band.q, 3.8);
     });
 
-    test('P4: wrong channelId → channelNotFound → no persisted mutation', () async {
+    test(
+        'P4: channelId not yet in project → upsert writes → '
+        'persisted after updateTuningState call',
+        () async {
+      // Verifies the Import-flow path: project starts with ch_correct in
+      // peqChannels; a Guided AI result for a DIFFERENT channel (ch_new, e.g.
+      // a newly-imported FRD that hasn't had tuning applied yet) must be
+      // persisted via upsert, not silently dropped.
       final container = _freshContainer();
       addTearDown(container.dispose);
       container.read(proProjectStoreProvider);
@@ -239,24 +246,38 @@ void main() {
       final proj = _project(channelId: 'ch_correct');
       await container.read(proProjectStoreProvider.notifier).addProject(proj);
 
-      // Engine result targets a channel that doesn't exist in the project.
       final safety = _permitted(500.0, -5.0, 3.0);
       final engineResult = AcousticApplyEngine.apply(
-          safety, PeqChannelState.fixed('ch_wrong'));
+          safety, PeqChannelState.fixed('ch_new'));
       final op = GuidedAiProjectApply.apply(
         projectId: proj.id,
         applyResult: engineResult,
         latestProject: proj,
       );
-      expect(op.outcome, GuidedAiProjectApplyOutcome.channelNotFound);
-      // Guard failed — no updateTuningState call.
+      expect(op.outcome, GuidedAiProjectApplyOutcome.wrote,
+          reason: 'upsert must succeed even if channel is not yet in peqChannels');
+      expect(op.wrote, isTrue);
+
+      // Caller persists via updateTuningState.
+      await container
+          .read(proProjectStoreProvider.notifier)
+          .updateTuningState(proj.id, op.updatedProject!.tuningState);
 
       final stored = container
           .read(proProjectStoreProvider)
           .projects
           .where((p) => p.id == proj.id)
           .single;
-      expect(stored.tuningState.peqChannels.single.activeBandCount, 0);
+      expect(
+          stored.tuningState.peqChannels.map((c) => c.channelId).toSet(),
+          {'ch_correct', 'ch_new'},
+          reason: 'both original and upserted channels must be present');
+      expect(
+          stored.tuningState.peqChannels
+              .firstWhere((c) => c.channelId == 'ch_new')
+              .activeBandCount,
+          greaterThan(0),
+          reason: 'upserted channel must carry the applied PEQ bands');
     });
 
     test('P5: wrong project → projectNotFound → no persisted mutation', () async {

@@ -203,6 +203,7 @@ class _ResultsView extends StatelessWidget {
         HardwareWriteOpStatus.ackOnly => kProAmber,
         HardwareWriteOpStatus.blockedByPreflight => kProAmber,
         HardwareWriteOpStatus.failed => kProRed,
+        HardwareWriteOpStatus.timedOut => kProRed,
         HardwareWriteOpStatus.unsupported => Colors.white38,
       };
 

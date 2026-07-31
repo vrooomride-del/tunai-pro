@@ -98,8 +98,7 @@ class CandidatePolicy {
     if (!minimumGainDb.isFinite ||
         minimumGainDb <= 0 ||
         minimumGainDb > maxCutDb) {
-      throw CandidatePolicyException(
-          'minimumGainDb must be in (0, maxCutDb].');
+      throw CandidatePolicyException('minimumGainDb must be in (0, maxCutDb].');
     }
   }
 
@@ -110,6 +109,18 @@ class CandidatePolicy {
         id: 'pro_provisional',
         version: 1,
         maxCutDb: 9.0,
+        minQ: 0.5,
+        maxQ: 10.0,
+        gainScale: 1.0,
+        broadQ: 1.0,
+        minimumGainDb: 1.0,
+      );
+
+  /// ADAU1701 ICP5 envelope; shared defaults remain unchanged.
+  factory CandidatePolicy.adau1701Icp5() => const CandidatePolicy(
+        id: 'adau1701_icp5',
+        version: 1,
+        maxCutDb: 6.0,
         minQ: 0.5,
         maxQ: 10.0,
         gainScale: 1.0,
@@ -281,7 +292,8 @@ abstract final class CandidateGenerator {
           featureId: directive.featureId,
           featureType: directive.featureType,
           disposition: directive.disposition,
-          reason: 'disposition ${directive.disposition.name} — not correctable.',
+          reason:
+              'disposition ${directive.disposition.name} — not correctable.',
         ));
         continue;
       }
@@ -354,8 +366,7 @@ abstract final class CandidateGenerator {
     if (rawMagnitude < policy.minimumGainDb) return null;
 
     // gainDb is always a cut (negative). Clamped within policy bounds.
-    final gainDb =
-        -(rawMagnitude.clamp(policy.minimumGainDb, policy.maxCutDb));
+    final gainDb = -(rawMagnitude.clamp(policy.minimumGainDb, policy.maxCutDb));
 
     // broadShape uses a fixed wide Q; narrow cuts clamp from measured estimatedQ.
     final double q = directive.intent == CorrectionIntent.broadShape

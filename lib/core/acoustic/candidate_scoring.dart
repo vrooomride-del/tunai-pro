@@ -207,6 +207,10 @@ class ScoredCandidateSet {
   /// All scored candidates in rank order (rank 1 first).
   final List<ScoredCandidate> scoredCandidates;
 
+  /// Propagated from [ScoredCandidateSetV2.requiresExpertApproval].
+  /// True when scoring ran under single-sweep (analysisOnly) evidence.
+  final bool requiresExpertApproval;
+
   final List<String> reasons;
   final String policyId;
   final int policyVersion;
@@ -215,6 +219,7 @@ class ScoredCandidateSet {
   const ScoredCandidateSet({
     required this.status,
     required this.scoredCandidates,
+    this.requiresExpertApproval = false,
     required this.reasons,
     required this.policyId,
     required this.policyVersion,
@@ -234,6 +239,7 @@ class ScoredCandidateSet {
   Map<String, dynamic> toJson() => {
         'status': status.name,
         'scoredCandidates': [for (final c in scoredCandidates) c.toJson()],
+        if (requiresExpertApproval) 'requiresExpertApproval': true,
         'reasons': reasons,
         'policyId': policyId,
         'policyVersion': policyVersion,

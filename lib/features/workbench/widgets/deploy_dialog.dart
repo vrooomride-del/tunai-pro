@@ -75,6 +75,7 @@ class _DeployDialogBody extends ConsumerStatefulWidget {
 class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
   _Phase _phase = _Phase.plan;
   HardwareWriteExecutionResult? _result;
+  HardwareWriteProgress? _progress;
   bool _isRestoring = false;
   bool _restored = false;
 
@@ -101,9 +102,14 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       channels: widget.channels,
       tuning: widget.tuning,
     );
-    final allBlocks = [...gainPkg.parameterBlocks, ...peqXoBlocks, ...muteDelayBlocks];
+    final allBlocks = [
+      ...gainPkg.parameterBlocks,
+      ...peqXoBlocks,
+      ...muteDelayBlocks
+    ];
     final pkg = gainPkg.copyWith(
-      status: allBlocks.isEmpty ? ExportStatus.notReady : ExportStatus.draftReady,
+      status:
+          allBlocks.isEmpty ? ExportStatus.notReady : ExportStatus.draftReady,
       parameterBlocks: allBlocks,
     );
     _plan = buildHardwareWritePlan(pkg, HardwareDeviceProfiles.adau1701Icp5);
@@ -117,6 +123,7 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     if (!_hasWritableOps) return;
     setState(() {
       _phase = _Phase.executing;
+      _progress = null;
       _restored = false;
     });
 
@@ -135,7 +142,12 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     final approval =
         HardwareWriteApproval.approve(_plan, approver: 'deploy-dialog');
     final executor = HardwareWriteExecutor(port);
-    final result = await executor.execute(approval);
+    final result = await executor.execute(
+      approval,
+      onProgress: (p) {
+        if (mounted) setState(() => _progress = p);
+      },
+    );
 
     // Persist the successfully-written gains for rollback.
     if (result.executed) {
@@ -241,8 +253,8 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     final Adau1701HardwareContext ctx =
         ref.read(activeAdau1701ContextProvider) ??
             ref.read(adau1701Icp5UsbContextProvider);
-    final approval =
-        HardwareWriteApproval.approve(restorePlan, approver: 'deploy-dialog-restore');
+    final approval = HardwareWriteApproval.approve(restorePlan,
+        approver: 'deploy-dialog-restore');
     final executor = HardwareWriteExecutor(ctx.writePort);
     final result = await executor.execute(approval);
 
@@ -274,8 +286,7 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
   @override
   Widget build(BuildContext context) => Dialog(
         backgroundColor: kProPanel,
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520, minWidth: 360),
           child: Padding(
@@ -305,8 +316,8 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           const SizedBox(
             width: 14,
             height: 14,
-            child: CircularProgressIndicator(
-                strokeWidth: 1.5, color: kProAccent),
+            child:
+                CircularProgressIndicator(strokeWidth: 1.5, color: kProAccent),
           ),
       ]);
 
@@ -369,8 +380,8 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
                     Expanded(
                         flex: 2,
                         child: Text(prevLabel,
-                            style: proSubtitle(
-                                size: 10, color: Colors.white38))),
+                            style:
+                                proSubtitle(size: 10, color: Colors.white38))),
                     const Icon(Icons.arrow_forward,
                         size: 10, color: Colors.white24),
                     const SizedBox(width: 4),
@@ -404,32 +415,34 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: blocked.map((op) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    child: Row(children: [
-                      Expanded(
-                          flex: 3,
-                          child: Text(op.channelId,
-                              style: proValue(
-                                  size: 11, color: Colors.white38))),
-                      Expanded(
-                          flex: 3,
-                          child: Text(_opKindLabel(op),
-                              style: proSubtitle(
-                                  size: 10, color: Colors.white38))),
-                      Expanded(
-                          flex: 3,
-                          child: Text(_opValueLabel(op),
-                              style: proSubtitle(
-                                  size: 10, color: Colors.white38))),
-                      Text('BLOCKED',
-                          style: TextStyle(
-                              fontSize: 9,
-                              color: kProAmber.withValues(alpha: 0.7),
-                              letterSpacing: 0.8,
-                              fontWeight: FontWeight.w600)),
-                    ]),
-                  )).toList(),
+              children: blocked
+                  .map((op) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Row(children: [
+                          Expanded(
+                              flex: 3,
+                              child: Text(op.channelId,
+                                  style: proValue(
+                                      size: 11, color: Colors.white38))),
+                          Expanded(
+                              flex: 3,
+                              child: Text(_opKindLabel(op),
+                                  style: proSubtitle(
+                                      size: 10, color: Colors.white38))),
+                          Expanded(
+                              flex: 3,
+                              child: Text(_opValueLabel(op),
+                                  style: proSubtitle(
+                                      size: 10, color: Colors.white38))),
+                          Text('BLOCKED',
+                              style: TextStyle(
+                                  fontSize: 9,
+                                  color: kProAmber.withValues(alpha: 0.7),
+                                  letterSpacing: 0.8,
+                                  fontWeight: FontWeight.w600)),
+                        ]),
+                      ))
+                  .toList(),
             ),
           ),
         ),
@@ -441,12 +454,10 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
         HardwareParamKind.channelGain => 'Channel Gain',
         HardwareParamKind.channelMute => 'Mute',
         HardwareParamKind.channelDelay => 'Delay',
-        HardwareParamKind.peqGain =>
-          'PEQ B${(op.bandIndex ?? 0) + 1} Gain',
+        HardwareParamKind.peqGain => 'PEQ B${(op.bandIndex ?? 0) + 1} Gain',
         HardwareParamKind.peqFrequency =>
           'PEQ B${(op.bandIndex ?? 0) + 1} Freq',
-        HardwareParamKind.peqQ =>
-          'PEQ B${(op.bandIndex ?? 0) + 1} Q',
+        HardwareParamKind.peqQ => 'PEQ B${(op.bandIndex ?? 0) + 1} Q',
         HardwareParamKind.crossoverHighPass => 'XO HPF',
         HardwareParamKind.crossoverLowPass => 'XO LPF',
         _ => op.parameterKind.name,
@@ -468,11 +479,46 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     };
   }
 
-  Widget _executingView() => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Text('Writing to DSP…',
-            style: TextStyle(color: Colors.white54, fontSize: 12)),
-      );
+  Widget _executingView() {
+    final p = _progress;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text(
+            'Writing to DSP…',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          if (p != null) ...[
+            const SizedBox(width: 8),
+            Text(
+              '${p.completed + 1} / ${p.total}',
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+          ],
+        ]),
+        if (p != null) ...[
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: p.total > 0 ? p.completed / p.total : null,
+              backgroundColor: Colors.white12,
+              color: kProAccent,
+              minHeight: 3,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            p.label,
+            style: const TextStyle(color: Colors.white38, fontSize: 10),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ]),
+    );
+  }
 
   Widget _resultView() {
     final r = _result;
@@ -480,17 +526,22 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
 
     final allPassed = r.allPassed;
     final color = allPassed ? kProGreen : kProAmber;
-    final failureCount = r.failedCount + r.blockedCount;
-    final label = allPassed
-        ? 'PASS_ACK — DSP write confirmed.'
-        : r.executed
-            ? '일부 쓰기 실패 (${failureCount}개).'
-            : r.rejectionReason ?? '쓰기 미실행';
+    final failures = r.failures;
+    final firstFailure = failures.isEmpty ? null : failures.first;
+    final firstFailureIndex =
+        firstFailure == null ? null : r.outcomes.indexOf(firstFailure) + 1;
+    final label = failures.isEmpty
+        ? 'PASS_ACK'
+        : 'FAIL ${failures.length}개 · '
+            '$firstFailureIndex/${r.outcomes.length} · '
+            'channel=${firstFailure!.op.channelId} · '
+            'band=${firstFailure.op.bandIndex == null ? "-" : firstFailure.op.bandIndex! + 1} · '
+            'kind=${firstFailure.op.parameterKind.name} · '
+            'message=${firstFailure.message}';
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.08),
           border: Border.all(color: color.withValues(alpha: 0.4)),
@@ -504,8 +555,7 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child:
-                Text(label, style: proValue(size: 11, color: color)),
+            child: Text(label, style: proValue(size: 11, color: color)),
           ),
         ]),
       ),
@@ -516,37 +566,42 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: r.outcomes.map((o) {
-          final c = switch (o.status) {
-            HardwareWriteOpStatus.written => kProGreen,
-            HardwareWriteOpStatus.ackOnly => kProAmber,
-            HardwareWriteOpStatus.blockedByPreflight => kProAmber,
-            _ => kProRed,
-          };
-          final statusText = switch (o.status) {
-            HardwareWriteOpStatus.written => o.status.label,
-            HardwareWriteOpStatus.ackOnly =>
-              o.message.isNotEmpty ? o.message : o.status.label,
-            _ => o.message.isNotEmpty ? o.message : o.status.label,
-          };
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(children: [
-              Expanded(
-                  child: Text(
-                '${o.op.channelId} ${_opKindLabel(o.op)}',
-                style: proSubtitle(size: 10),
-              )),
-              Flexible(
-                child: Text(
-                  statusText,
-                  style: proValue(size: 10, color: c),
-                  textAlign: TextAlign.end,
-                ),
-              ),
-            ]),
-          );
-        }).toList(),
+              children: r.outcomes.asMap().entries.map((entry) {
+                final index = entry.key;
+                final o = entry.value;
+                final c = switch (o.status) {
+                  HardwareWriteOpStatus.written => kProGreen,
+                  HardwareWriteOpStatus.ackOnly => kProAmber,
+                  _ when o.isFailure => kProRed,
+                  _ => kProRed,
+                };
+                final statusText = switch (o.status) {
+                  HardwareWriteOpStatus.written => o.status.label,
+                  HardwareWriteOpStatus.ackOnly =>
+                    o.message.isNotEmpty ? o.message : o.status.label,
+                  _ => o.message.isNotEmpty ? o.message : o.status.label,
+                };
+                return Padding(
+                  key: o.isFailure
+                      ? ValueKey('deploy-failure-row-$index')
+                      : ValueKey('deploy-success-row-$index'),
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(children: [
+                    Expanded(
+                        child: Text(
+                      '${o.op.channelId} ${_opKindLabel(o.op)}',
+                      style: proSubtitle(size: 10),
+                    )),
+                    Flexible(
+                      child: Text(
+                        statusText,
+                        style: proValue(size: 10, color: c),
+                        textAlign: TextAlign.end,
+                      ),
+                    ),
+                  ]),
+                );
+              }).toList(),
             ),
           ),
         ),
@@ -592,10 +647,8 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           style: OutlinedButton.styleFrom(
             foregroundColor: kProAmber,
             side: BorderSide(color: kProAmber.withValues(alpha: 0.5)),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            textStyle:
-                const TextStyle(fontSize: 10, letterSpacing: 0.8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            textStyle: const TextStyle(fontSize: 10, letterSpacing: 0.8),
           ),
           onPressed: _restore,
         ),
@@ -616,10 +669,8 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           style: OutlinedButton.styleFrom(
             foregroundColor: kProAccent,
             side: BorderSide(color: kProAccent.withValues(alpha: 0.5)),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            textStyle:
-                const TextStyle(fontSize: 10, letterSpacing: 0.8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            textStyle: const TextStyle(fontSize: 10, letterSpacing: 0.8),
           ),
           onPressed: _execute,
         ),

@@ -1,7 +1,8 @@
 import '../../../acoustic/candidate_scoring.dart';
 import '../../../acoustic/candidate_scoring_v2.dart';
 import '../../../adau1701_peq_response.dart' show PeqResponseBand;
-import '../../../pro_response_error.dart' show ProResponseError, ResponseErrorResult;
+import '../../../pro_response_error.dart'
+    show ProResponseError, ResponseErrorResult;
 import '../../../pro_simulation_optimizer.dart' show ProSimulationOptimizer;
 import '../../pro_orchestrator_plan.dart';
 import '../../pro_orchestrator_result.dart';
@@ -63,7 +64,8 @@ class CandidateScoringAdapter implements ProToolAdapter {
 
     if (channelRef != null) {
       try {
-        final input = ctx.resolver.resolveSimulationInput(ctx.projectId, channelRef);
+        final input =
+            ctx.resolver.resolveSimulationInput(ctx.projectId, channelRef);
         final freqs = input.freqs;
         if (freqs.isNotEmpty) {
           final flatTarget = List<double>.filled(freqs.length, 0.0);
@@ -138,14 +140,22 @@ class CandidateScoringAdapter implements ProToolAdapter {
       classificationResult: classArtifact.value,
       perCandidateSimulatedError: perCandidateErrors,
     );
+    final isAdau1701 = ctx.resolver
+            .resolveProjectSnapshot(ctx.projectId)
+            ?.dspTarget
+            .toUpperCase() ==
+        'ADAU1701';
     final v2result = CandidateScorerV2.score(
-        v2ctx, CandidateScoringPolicyV2.proProvisional());
+        v2ctx,
+        isAdau1701
+            ? CandidateScoringPolicyV2.adau1701Icp5()
+            : CandidateScoringPolicyV2.proProvisional());
 
     // Bridge v2 → v1 so the downstream optimizer receives the expected type.
     final bridged = _toV1(v2result);
 
-    ctx.store
-        .put(ctx.projectId, step.outputRef, ScoredCandidateSetArtifact(bridged));
+    ctx.store.put(
+        ctx.projectId, step.outputRef, ScoredCandidateSetArtifact(bridged));
 
     return referenceResult(
       step,
@@ -157,9 +167,13 @@ class CandidateScoringAdapter implements ProToolAdapter {
 
   // ── v2 → v1 bridge ──────────────────────────────────────────────────────
 
-  static ScoredCandidateSet _toV1(ScoredCandidateSetV2 v2) => ScoredCandidateSet(
+  static ScoredCandidateSet _toV1(ScoredCandidateSetV2 v2) =>
+      ScoredCandidateSet(
         status: _mapStatus(v2.status),
-        scoredCandidates: [for (final c in v2.scoredCandidates) _candidateToV1(c)],
+        scoredCandidates: [
+          for (final c in v2.scoredCandidates) _candidateToV1(c)
+        ],
+        requiresExpertApproval: v2.requiresExpertApproval,
         reasons: v2.reasons,
         policyId: v2.policyId,
         policyVersion: v2.policyVersion,

@@ -68,17 +68,15 @@ abstract final class GuidedAiProjectApply {
       return const GuidedAiProjectApplyResult._(
           outcome: GuidedAiProjectApplyOutcome.projectNotFound);
     }
-    final targetExists = latestProject.tuningState.peqChannels
-        .any((ch) => ch.channelId == applyResult.channelId);
-    if (!targetExists) {
-      return const GuidedAiProjectApplyResult._(
-          outcome: GuidedAiProjectApplyOutcome.channelNotFound);
-    }
-    final channels = latestProject.tuningState.peqChannels
-        .map((ch) => ch.channelId == applyResult.channelId
-            ? applyResult.updatedChannel
-            : ch)
-        .toList();
+    // Upsert: add the channel if it doesn't exist, replace it if it does.
+    // Import-flow projects start with no peqChannels; the first apply call
+    // from each channel creates its entry. Subsequent Guided sessions update
+    // the existing entry.
+    final channels = [
+      ...latestProject.tuningState.peqChannels
+          .where((ch) => ch.channelId != applyResult.channelId),
+      applyResult.updatedChannel,
+    ];
     final updated = latestProject.copyWith(
         tuningState: latestProject.tuningState.copyWith(peqChannels: channels));
     return GuidedAiProjectApplyResult._(

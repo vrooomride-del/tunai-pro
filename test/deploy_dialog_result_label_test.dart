@@ -30,7 +30,8 @@ class _FakePort implements Icp5PeqWritePort {
   _FakePort(this.responder);
 
   @override
-  Future<Adau1701DeploymentReport> preflightAndWrite(HardwareWriteOp op) async =>
+  Future<Adau1701DeploymentReport> preflightAndWrite(
+          HardwareWriteOp op) async =>
       responder(op);
 }
 
@@ -127,7 +128,8 @@ class _FakeConnectedTransport implements Adau1701TuningTransport {
         payload: _fakeStatePayload(),
       );
   @override
-  Future<Adau1701WriteAck> writePeqGain(int c, double g, {int band = 0}) async =>
+  Future<Adau1701WriteAck> writePeqGain(int c, double g,
+          {int band = 0}) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
   @override
   Future<Adau1701WriteAck> writeFilterFrequency(int c, int f,
@@ -208,7 +210,8 @@ Widget _host(
 TuningProjectState _tuningWithPeq() {
   final base = PeqChannelState.fixed('ch_tw_l');
   final bands = List<PeqBand>.from(base.bands);
-  bands[0] = bands[0].copyWith(enabled: true, frequencyHz: 1000.0, gainDb: -3.0, q: 1.0);
+  bands[0] = bands[0]
+      .copyWith(enabled: true, frequencyHz: 1000.0, gainDb: -3.0, q: 1.0);
   return TuningProjectState(
     peqChannels: [base.copyWith(bands: bands)],
     crossoverChannels: const [],
@@ -223,8 +226,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   group('Deploy result view labels', () {
-    testWidgets(
-        'gain written → label is "PEQ B1 Gain", not "Channel Gain"',
+    testWidgets('gain written → label is "PEQ B1 Gain", not "Channel Gain"',
         (tester) async {
       // Both peqGain and peqFrequency are captureProven and reach the port.
       // Verify the gain label is correct (not the hardcoded "Channel Gain").
@@ -238,14 +240,14 @@ void main() {
 
       // Must NOT show hardcoded Channel Gain label
       expect(find.textContaining('Channel Gain'), findsNothing,
-          reason: 'hardcoded "Channel Gain" must be replaced with _opKindLabel');
+          reason:
+              'hardcoded "Channel Gain" must be replaced with _opKindLabel');
 
       // Correct label for the only writable op (peqGain)
       expect(find.textContaining('PEQ B1 Gain'), findsOneWidget);
     });
 
-    testWidgets(
-        'gain failed → failure message is shown, not just "Failed"',
+    testWidgets('gain failed → failure message is shown, not just "Failed"',
         (tester) async {
       // Both peqGain and peqFrequency are deployed; both fail with the same message.
       // Verify that when ops fail, o.message is shown in the result view.
@@ -259,6 +261,35 @@ void main() {
 
       expect(find.textContaining(failMsg), findsAtLeastNWidgets(1),
           reason: 'failure message must be visible in result view');
+    });
+
+    testWidgets(
+        'header count and rendered failure rows share the same predicate',
+        (tester) async {
+      const failMsg = 'frequency readback mismatch';
+      final port = _FakePort((op) =>
+          op.parameterKind == HardwareParamKind.peqFrequency
+              ? _failed(failMsg)
+              : _written());
+
+      await tester.pumpWidget(_host(port, _tuningWithPeq()));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('APPROVE & WRITE'));
+      await tester.pumpAndSettle();
+
+      final failureRows = find.byWidgetPredicate(
+        (widget) =>
+            widget.key is ValueKey<String> &&
+            (widget.key! as ValueKey<String>)
+                .value
+                .startsWith('deploy-failure-row-'),
+      );
+      expect(failureRows, findsOneWidget);
+      expect(find.textContaining('FAIL 1개'), findsOneWidget);
+      expect(find.textContaining('channel=ch_tw_l'), findsOneWidget);
+      expect(find.textContaining('band=1'), findsOneWidget);
+      expect(find.textContaining('kind=peqFrequency'), findsOneWidget);
+      expect(find.textContaining('message=$failMsg'), findsOneWidget);
     });
 
     testWidgets(
@@ -329,7 +360,8 @@ void main() {
           reason: 'raw enum name must not appear');
     });
 
-    testWidgets('Band 10 Q label is "PEQ B10 Q" in result view', (tester) async {
+    testWidgets('Band 10 Q label is "PEQ B10 Q" in result view',
+        (tester) async {
       final port = _FakePort((_) => _written());
 
       await tester.pumpWidget(_host(port, _tuningWithBand10Q()));
@@ -367,7 +399,8 @@ void main() {
       expect(find.textContaining('-3.0 dB'), findsAtLeastNWidgets(1));
     });
 
-    testWidgets('Frequency value in pending list keeps Hz format', (tester) async {
+    testWidgets('Frequency value in pending list keeps Hz format',
+        (tester) async {
       final port = _FakePort((_) => _written());
 
       await tester.pumpWidget(_host(port, _tuningWithQ()));
@@ -412,7 +445,8 @@ void main() {
           matching: find.bySubtype<OutlinedButton>(),
         ),
         findsOneWidget,
-        reason: 'RESTORE button must appear after deploy when previous gains exist',
+        reason:
+            'RESTORE button must appear after deploy when previous gains exist',
       );
 
       // Tap restore — connected fake transport acks gain write → allPassed

@@ -210,19 +210,23 @@ void _addOp(
   }
 
   final verification = profile.verificationFor(kind, bandIndex: bandIndex);
+  final adau1701GainInRange = profile.deviceId != 'adau1701-icp5' ||
+      kind != HardwareParamKind.peqGain ||
+      (value >= -6.0 && value <= 3.0);
   ops.add(HardwareWriteOp(
     channelId: channelId,
     parameterKind: kind,
     bandIndex: bandIndex,
     targetValue: value,
     verification: verification,
-    writable: verification.isWriteEligible,
-    reason: _reasonFor(verification, profile),
+    writable: verification.isWriteEligible && adau1701GainInRange,
+    reason: adau1701GainInRange
+        ? _reasonFor(verification, profile)
+        : 'ADAU1701 PEQ gain must be between -6.0 and +3.0 dB.',
   ));
 }
 
-String _reasonFor(
-    HardwareParamVerification v, HardwareDeviceProfile profile) {
+String _reasonFor(HardwareParamVerification v, HardwareDeviceProfile profile) {
   switch (v) {
     case HardwareParamVerification.captureProven:
       return 'Capture-proven write path on ${profile.deviceName}.';

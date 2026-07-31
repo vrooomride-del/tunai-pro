@@ -33,10 +33,17 @@ class CandidateGenerationAdapter implements ProToolAdapter {
     final classArtifact =
         ctx.store.getTyped<ClassificationArtifact>(ctx.projectId, classRef);
 
+    final isAdau1701 = ctx.resolver
+            .resolveProjectSnapshot(ctx.projectId)
+            ?.dspTarget
+            .toUpperCase() ==
+        'ADAU1701';
     final candidateSet = CandidateGenerator.generate(
       planArtifact.value,
       classArtifact.value,
-      CandidatePolicy.proProvisional(),
+      isAdau1701
+          ? CandidatePolicy.adau1701Icp5()
+          : CandidatePolicy.proProvisional(),
     );
 
     ctx.store

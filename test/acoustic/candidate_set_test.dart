@@ -28,7 +28,8 @@ AcousticObservedFeature _feat({
   double deviationDb = 8.0,
   double estimatedQ = 4.0,
   AcousticFeatureQuality quality = AcousticFeatureQuality.confident,
-  AcousticActionability actionability = AcousticActionability.safePeqCutCandidate,
+  AcousticActionability actionability =
+      AcousticActionability.safePeqCutCandidate,
 }) =>
     AcousticObservedFeature(
       featureId: id,
@@ -76,8 +77,7 @@ CandidateSet _generate(
       MeasurementConfidenceInterpretation.correctableAllowed,
   CandidatePolicy policy = _candidatePolicy,
 }) {
-  final result = _result(features,
-      status: classStatus, interp: interp);
+  final result = _result(features, status: classStatus, interp: interp);
   final plan = CorrectionPlanner.plan(result, _correctionPolicy);
   return CandidateGenerator.generate(plan, result, policy);
 }
@@ -85,6 +85,20 @@ CandidateSet _generate(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 void main() {
+  test('ADAU1701 candidate generation limits -9 dB input to -6 dB', () {
+    final set = _generate(
+      [_feat(id: 'adau1701-cut', deviationDb: 9.0)],
+      policy: CandidatePolicy.adau1701Icp5(),
+    );
+    expect(set.status, CandidateSetStatus.ok);
+    expect(set.candidates.single.gainDb, -6.0);
+  });
+
+  test('shared candidate policy remains unchanged for ADAU1466/default', () {
+    final set = _generate([_feat(id: 'shared-cut', deviationDb: 9.0)]);
+    expect(set.candidates.single.gainDb, -9.0);
+  });
+
   group('correctable → candidate generated', () {
     test('safePeqCutCandidate feature produces a PeqCandidate with cut intent',
         () {
@@ -117,8 +131,7 @@ void main() {
     test('candidateId is always candidate:<featureId>', () {
       final feat = _feat(id: 'narrowPeak@200Hz#0');
       final cs = _generate([feat]);
-      expect(
-          cs.candidates.single.candidateId, 'candidate:narrowPeak@200Hz#0');
+      expect(cs.candidates.single.candidateId, 'candidate:narrowPeak@200Hz#0');
     });
 
     test('frequencyHz equals the feature centerHz (observation, not command)',
@@ -251,7 +264,8 @@ void main() {
           AcousticFeatureType.deepNull);
     });
 
-    test('deepNull mixed with correctable → only correctable produces candidate',
+    test(
+        'deepNull mixed with correctable → only correctable produces candidate',
         () {
       final peak = _feat(id: 'pk');
       final null_ = _feat(
@@ -285,6 +299,36 @@ void main() {
       final cs = _generate([],
           classStatus: AcousticClassificationStatus.insufficientEvidence);
       expect(cs.status, CandidateSetStatus.insufficientEvidence);
+      expect(cs.candidates, isEmpty);
+    });
+    test(
+        'analysisOnly + narrowPeak (safePeqCutCandidate) → candidate generated',
+        () {
+      // Simulates single-sweep FRD: narrowPeak retains safePeqCutCandidate
+      // actionability after the analysisOnly fix; Expert approval UI gate
+      // enforces review before Apply.
+      final feat = _feat(
+        id: 'narrowPeak@1000Hz',
+        type: AcousticFeatureType.narrowPeak,
+        actionability: AcousticActionability.safePeqCutCandidate,
+        quality: AcousticFeatureQuality.confident,
+      );
+      final cs = _generate([feat],
+          interp: MeasurementConfidenceInterpretation.analysisOnly);
+      expect(cs.status, CandidateSetStatus.ok);
+      expect(cs.candidates, isNotEmpty);
+    });
+    test(
+        'analysisOnly + risingTrend → noCorrectableDirectives (trend stays blocked)',
+        () {
+      final feat = _feat(
+        id: 'risingTrend@500Hz',
+        type: AcousticFeatureType.risingTrend,
+        actionability: AcousticActionability.noAutomaticCorrection,
+      );
+      final cs = _generate([feat],
+          interp: MeasurementConfidenceInterpretation.analysisOnly);
+      expect(cs.status, CandidateSetStatus.noCorrectableDirectives);
       expect(cs.candidates, isEmpty);
     });
   });

@@ -20,12 +20,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/candidate_safety.dart';
 import '../acoustic/measurement_confidence.dart' show ConfidenceStatus;
+import '../deploy/pro_hardware_capability.dart';
+import '../deploy/pro_hardware_write_plan.dart';
 import '../frd_parser.dart';
 import '../pro_correction_cycle.dart';
 import '../pro_tuning_report_data.dart' show GuidedTuningSessionSummary;
 import '../pro_tuning_data.dart';
 import '../acoustic/closed_loop_evaluator.dart';
 import '../pro_project.dart';
+import '../pro_export_data.dart';
 import '../spectrum_snapshot.dart';
 import 'correction_cycle_evaluator.dart';
 import 'pro_acoustic_intent.dart';
@@ -59,6 +62,13 @@ final guidedAiProvider =
 );
 
 class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
+  static const List<String> requiredFullSystemChannelIds = [
+    'ch_tw_l',
+    'ch_wf_l',
+    'ch_tw_r',
+    'ch_wf_r',
+  ];
+
   final ProOrchestrateService _cloudService;
 
   // Null → production adapters; non-null → test stub adapters.
@@ -94,13 +104,18 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     // Called after acousticValidateSafety completes to persist the apply result.
     // Null → apply step is skipped (tests, offline mode).
     Future<void> Function(String projectId, TuningApplyResult)? onApply,
+    Future<void> Function(String projectId, HardwareWritePlan plan)?
+        onHardwareWritePlan,
+    Future<void> Function(String projectId, DspExportPackage package)?
+        onExportPackage,
   }) async {
     if (state is! ProGuidedAiIdle) return;
     state = const ProGuidedAiCloudCalling();
 
     final pid = project.id;
 
-    final measRefs = targetChannelId != null
+    // Cloud request includes all channel IDs for full context.
+    final cloudMeasRefs = targetChannelId != null
         ? [targetChannelId]
         : [for (final ch in project.acousticState.driverChannels) ch.id];
 
@@ -124,7 +139,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       context: ProOrchestratorContext(
         projectId: pid,
         connectionState: ProConnectionState.disconnected,
-        measurementRefs: measRefs,
+        measurementRefs: cloudMeasRefs,
       ),
     );
 
@@ -132,21 +147,25 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
 
     final ProOrchestratorPlan plan;
     final ProExplanation explanation;
+    // Local project truth only: Cloud responses cannot make Full Apply ready.
+    final frdReadyChannelIds = _frdReadyRequiredChannelIds(project);
 
-    if (cloudOutcome is ProOrchestrateFailure) {
-      // Cloud unavailable — fall back to a local deterministic plan that runs
-      // the full acoustic pipeline without AI explanation. Fail-closed only when
-      // there are no channels to analyze.
-      if (measRefs.isEmpty) {
+    if (frdReadyChannelIds.isEmpty) {
+      if (cloudOutcome is ProOrchestrateFailure) {
         state = const ProGuidedAiFailed('분석할 채널이 없습니다.');
         return;
       }
-      plan = _buildLocalFallbackPlan(pid, measRefs);
-      explanation = _localFallbackExplanation;
-    } else {
+      // Cloud success with no local FRD: run the cloud plan as-is (edge case).
       final response = (cloudOutcome as ProOrchestrateSuccess).response;
       plan = response.plan;
       explanation = response.explanation;
+    } else {
+      // FRD data available: always run the local deterministic 4-channel plan.
+      // Cloud explanation is kept when Cloud succeeded; local text otherwise.
+      plan = _buildLocalFallbackPlan(pid, frdReadyChannelIds);
+      explanation = cloudOutcome is ProOrchestrateSuccess
+          ? cloudOutcome.response.explanation
+          : _localFallbackExplanation;
     }
 
     final adapters = _adapterOverrides ??
@@ -178,6 +197,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     _orchestrator = ProLocalOrchestrator(registry);
     final completedSteps = <ProStepExecutionRecord>[];
     TuningApplyResult? applyResult;
+    HardwareWritePlan? hardwareWritePlan;
 
     await for (final event in _orchestrator!.run(plan, ctx)) {
       switch (event) {
@@ -191,49 +211,92 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
         case ProStepCompleted(:final record):
           completedSteps.add(record);
           if (record.toolId == ProOrchestratorToolId.acousticValidateSafety) {
-            // Identify which driver channel was analyzed.
-            final analyzedChannelId = plan.steps
-                .where(
-                    (s) => s.toolId == ProOrchestratorToolId.measurementAnalyze)
-                .firstOrNull
-                ?.inputRefs
-                .firstOrNull;
-            final permitted =
-                _isSafetyPermitted(pid, store, record.outputRef);
-            final hasSelected =
-                _hasSelectedCandidates(pid, store, completedSteps);
-            if (permitted && hasSelected && onApply != null) {
-              // Optimizer ran and selected candidates — show preview gate and
-              // wait for user confirmation before applying.
-              _applyGateStepId = 'apply_gate_${record.outputRef}';
-              _applyGateCompleter = Completer<bool>();
-              state = _buildApplyGatePending(
-                pid: pid,
-                store: store,
-                plan: plan,
-                explanation: explanation,
-                completedSteps: completedSteps,
-                project: project,
-                analyzedChannelId: analyzedChannelId,
-                safetyRef: record.outputRef,
+            // Fire the apply gate only after ALL safety steps in the plan have
+            // completed (multi-channel plans have one safety step per channel).
+            final totalSafetySteps = plan.steps
+                .where((s) =>
+                    s.toolId == ProOrchestratorToolId.acousticValidateSafety)
+                .length;
+            final completedSafetySteps = completedSteps
+                .where((r) =>
+                    r.toolId == ProOrchestratorToolId.acousticValidateSafety)
+                .length;
+
+            if (completedSafetySteps == totalSafetySteps) {
+              // Identify the primary analyzed channel (first measurementAnalyze).
+              final analyzedChannelId = plan.steps
+                  .where((s) =>
+                      s.toolId == ProOrchestratorToolId.measurementAnalyze)
+                  .firstOrNull
+                  ?.inputRefs
+                  .firstOrNull;
+              final anyPermitted =
+                  _anyChannelSafetyPermitted(pid, store, completedSteps);
+              final hasSelected =
+                  _anyChannelHasSelected(pid, store, completedSteps);
+              // fullSystemReady is always computed here so both the gate path
+              // and the legacy path share the same 4-channel condition.
+              final missingChannelIds = _missingFullSystemChannelIds(
+                project,
+                completedSteps,
+                plan,
               );
-              final confirmed = await _applyGateCompleter!.future;
-              _applyGateCompleter = null;
-              _applyGateStepId = null;
-              if (confirmed) {
+              final fullSystemReady = missingChannelIds.isEmpty;
+              if (anyPermitted &&
+                  hasSelected &&
+                  (onApply != null || onHardwareWritePlan != null)) {
+                // At least one channel has approved candidates — show the
+                // review gate. Full Apply remains blocked until all 4 required
+                // channels have local FRD evidence and completed safety output.
+                _applyGateStepId = 'apply_gate_${record.outputRef}';
+                _applyGateCompleter = Completer<bool>();
+                state = _buildApplyGatePending(
+                  pid: pid,
+                  store: store,
+                  plan: plan,
+                  explanation: explanation,
+                  completedSteps: completedSteps,
+                  project: project,
+                  analyzedChannelId: analyzedChannelId,
+                  safetyRef: record.outputRef,
+                  fullSystemReady: fullSystemReady,
+                  missingChannelIds: missingChannelIds,
+                );
+                final confirmed = await _applyGateCompleter!.future;
+                _applyGateCompleter = null;
+                _applyGateStepId = null;
+                if (confirmed && fullSystemReady) {
+                  final multiResults = _runMultiChannelApply(
+                      pid, store, completedSteps, plan, project);
+                  final fullResults = _validatedFullSystemResults(multiResults);
+                  if (fullResults != null) {
+                    for (final r in fullResults) {
+                      if (onApply != null) await onApply(pid, r);
+                      applyResult ??= r;
+                    }
+                    final buildResult =
+                        _buildFullSystemHardwareWritePlan(pid, fullResults);
+                    if (buildResult != null) {
+                      final (exportPkg, writePlan) = buildResult;
+                      hardwareWritePlan = writePlan;
+                      if (onExportPackage != null) {
+                        await onExportPackage(pid, exportPkg);
+                      }
+                      if (onHardwareWritePlan != null) {
+                        await onHardwareWritePlan(pid, writePlan);
+                      }
+                    }
+                  }
+                }
+              } else if (onApply != null && anyPermitted && fullSystemReady) {
+                // Safety passed without optimizer candidates — legacy auto-apply.
+                // Gated behind fullSystemReady: single/partial-channel sessions
+                // must not bypass the 4-channel completeness requirement.
                 applyResult = _runApply(pid, store, record.outputRef, project,
                     analyzedChannelId: analyzedChannelId);
                 if (applyResult != null) {
                   await onApply(pid, applyResult);
                 }
-              }
-            } else if (onApply != null) {
-              // No optimizer candidates (e.g. standalone safety check) —
-              // fall through to legacy auto-apply path.
-              applyResult = _runApply(pid, store, record.outputRef, project,
-                  analyzedChannelId: analyzedChannelId);
-              if (applyResult != null) {
-                await onApply(pid, applyResult);
               }
             }
           }
@@ -246,8 +309,8 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           // Determine the channel that will be written on apply — same logic
           // as the apply gate below.
           final analyzedChannelId = plan.steps
-              .where((s) =>
-                  s.toolId == ProOrchestratorToolId.measurementAnalyze)
+              .where(
+                  (s) => s.toolId == ProOrchestratorToolId.measurementAnalyze)
               .firstOrNull
               ?.inputRefs
               .firstOrNull;
@@ -257,7 +320,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
               ? project.tuningState.peqChannels
                   .where((ch) => ch.channelId == analyzedChannelId)
                   .firstOrNull
-              : project.tuningState.peqChannels.firstOrNull;
+              : null;
           final availableSlots = targetChannel?.bands.length;
 
           List<CandidatePreviewEntry>? preview;
@@ -283,19 +346,16 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
               final slotMap = <int, int?>{};
               if (targetChannel != null) {
                 var simCh = targetChannel;
-                final sorted = [...opt.value.selected]
-                  ..sort((a, b) =>
-                      a.applicationOrder.compareTo(b.applicationOrder));
+                final sorted = [...opt.value.selected]..sort(
+                    (a, b) => a.applicationOrder.compareTo(b.applicationOrder));
                 for (final sel in sorted) {
                   final norm = simCh.normalized();
                   final idx = norm.bands.indexWhere((b) => !b.enabled);
-                  slotMap[sel.applicationOrder] =
-                      idx >= 0 ? idx + 1 : null;
+                  slotMap[sel.applicationOrder] = idx >= 0 ? idx + 1 : null;
                   if (idx >= 0) {
                     simCh = simCh.fillNextFreeSlot(
                       type: PeqBandType.peak,
-                      frequencyHz:
-                          sel.scoredCandidate.candidate.frequencyHz,
+                      frequencyHz: sel.scoredCandidate.candidate.frequencyHz,
                       gainDb: sel.scoredCandidate.candidate.gainDb,
                       q: sel.scoredCandidate.candidate.q,
                     );
@@ -356,6 +416,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             applyBlockedReason: blockedReason,
             beforeMeasurementRef: beforeRef,
             loopPhase: loopPhase,
+            hardwareWritePlan: hardwareWritePlan,
             guidedTuningSession: guidedSession,
           );
         case ProPlanFailed(:final outcome):
@@ -427,6 +488,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       applyResult: current.applyResult,
       beforeMeasurementRef: beforeRef,
       loopPhase: ProClosedLoopPhase.evaluated,
+      hardwareWritePlan: current.hardwareWritePlan,
     );
   }
 
@@ -471,6 +533,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       applyResult: current.applyResult,
       beforeMeasurementRef: beforeRef,
       loopPhase: ProClosedLoopPhase.evaluated,
+      hardwareWritePlan: current.hardwareWritePlan,
     );
   }
 
@@ -491,6 +554,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       beforeMeasurementRef: current.beforeMeasurementRef,
       loopPhase: ProClosedLoopPhase.awaitingAfterFrd,
       completedCycle: current.completedCycle,
+      hardwareWritePlan: current.hardwareWritePlan,
     );
   }
 
@@ -576,6 +640,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       beforeMeasurementRef: current.beforeMeasurementRef,
       loopPhase: ProClosedLoopPhase.cycleComplete,
       completedCycle: cycle,
+      hardwareWritePlan: current.hardwareWritePlan,
     );
     return cycle;
   }
@@ -629,26 +694,212 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     }
   }
 
-  static bool _hasSelectedCandidates(
+  /// True when at least one completed safety step has applyPermitted=true.
+  static bool _anyChannelSafetyPermitted(
     String projectId,
     ProToolArtifactStore store,
     List<ProStepExecutionRecord> completedSteps,
   ) {
-    final optRef = completedSteps
-        .where(
-            (r) => r.toolId == ProOrchestratorToolId.acousticOptimizeSelection)
-        .firstOrNull
-        ?.outputRef;
-    if (optRef == null || !store.has(projectId, optRef)) return false;
-    try {
-      return store
-          .getTyped<OptimizedSelectionArtifact>(projectId, optRef)
-          .value
-          .selected
-          .isNotEmpty;
-    } catch (_) {
-      return false;
+    return completedSteps
+        .where((r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)
+        .any((r) => _isSafetyPermitted(projectId, store, r.outputRef));
+  }
+
+  /// True when at least one completed optimize step has non-empty selected list.
+  static bool _anyChannelHasSelected(
+    String projectId,
+    ProToolArtifactStore store,
+    List<ProStepExecutionRecord> completedSteps,
+  ) {
+    for (final r in completedSteps.where(
+        (r) => r.toolId == ProOrchestratorToolId.acousticOptimizeSelection)) {
+      if (!store.has(projectId, r.outputRef)) continue;
+      try {
+        if (store
+            .getTyped<OptimizedSelectionArtifact>(projectId, r.outputRef)
+            .value
+            .selected
+            .isNotEmpty) {
+          return true;
+        }
+      } catch (_) {}
     }
+    return false;
+  }
+
+  static List<String> _frdReadyRequiredChannelIds(ProProject project) {
+    final ready = <String>[];
+    for (final id in requiredFullSystemChannelIds) {
+      final channel = project.acousticState.driverChannels
+          .where((ch) => ch.id == id)
+          .firstOrNull;
+      if (channel?.hasParsedFrd == true) ready.add(id);
+    }
+    return List.unmodifiable(ready);
+  }
+
+  static Set<String> _completedSafetyChannelIds(
+    List<ProStepExecutionRecord> completedSteps,
+    ProOrchestratorPlan plan,
+  ) {
+    final ids = <String>{};
+    for (final record in completedSteps.where(
+        (r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)) {
+      final channelId = _resolveChannelForSafetyRef(record.outputRef, plan);
+      if (channelId != null &&
+          requiredFullSystemChannelIds.contains(channelId)) {
+        ids.add(channelId);
+      }
+    }
+    return ids;
+  }
+
+  static List<String> _missingFullSystemChannelIds(
+    ProProject project,
+    List<ProStepExecutionRecord> completedSteps,
+    ProOrchestratorPlan plan,
+  ) {
+    final frdReady = _frdReadyRequiredChannelIds(project).toSet();
+    final safetyReady = _completedSafetyChannelIds(completedSteps, plan);
+    return [
+      for (final id in requiredFullSystemChannelIds)
+        if (!frdReady.contains(id) || !safetyReady.contains(id)) id,
+    ];
+  }
+
+  static List<TuningApplyResult>? _validatedFullSystemResults(
+    List<TuningApplyResult> results,
+  ) {
+    final byChannel = <String, TuningApplyResult>{};
+    for (final result in results) {
+      if (!requiredFullSystemChannelIds.contains(result.channelId)) continue;
+      byChannel[result.channelId] = result;
+    }
+    if (!requiredFullSystemChannelIds.every(byChannel.containsKey)) {
+      return null;
+    }
+    return [
+      for (final id in requiredFullSystemChannelIds) byChannel[id]!,
+    ];
+  }
+
+  // Returns (exportPackage, writePlan) so callers can store the package in
+  // project export state for the Deploy tab's HardwareApplyFlow.
+  static (DspExportPackage, HardwareWritePlan)? _buildFullSystemHardwareWritePlan(
+    String projectId,
+    List<TuningApplyResult> results,
+  ) {
+    final fullResults = _validatedFullSystemResults(results);
+    if (fullResults == null) return null;
+
+    final blocks = <ExportParameterBlock>[];
+    for (final result in fullResults) {
+      final bands = <String, dynamic>{};
+      final normalized = result.updatedChannel.normalized();
+      for (var i = 0; i < normalized.bands.length; i++) {
+        final band = normalized.bands[i];
+        if (!band.enabled) continue;
+        bands['band_$i'] = {
+          'freq_hz': band.frequencyHz,
+          'gain_db': band.gainDb,
+          'q': band.q,
+          'type': band.type.name,
+        };
+      }
+      if (bands.isEmpty) continue;
+      blocks.add(ExportParameterBlock(
+        id: 'guided-${result.channelId}-peq',
+        type: ExportBlockType.peq,
+        channelId: result.channelId,
+        title: 'Guided Tuning PEQ ${result.channelId}',
+        summary: 'Guided tuning verified PEQ changes',
+        parameters: {'bands': bands},
+      ));
+    }
+
+    if (blocks.isEmpty) return null;
+    final package = DspExportPackage(
+      id: 'guided-full-system-$projectId',
+      targetPlatform: DspTargetPlatform.adau1701,
+      format: ExportFormat.hardwareWritePlanPlaceholder,
+      status: ExportStatus.draftReady,
+      projectName: projectId,
+      parameterBlocks: blocks,
+      notes: 'Generated from confirmed 4-channel Guided Tuning results.',
+    );
+    return (package, buildHardwareWritePlan(package, HardwareDeviceProfiles.adau1701Icp5));
+  }
+
+  /// Applies all completed safety artifacts to their respective PEQ channels
+  /// and returns one [TuningApplyResult] per channel that was applied.
+  static List<TuningApplyResult> _runMultiChannelApply(
+    String projectId,
+    ProToolArtifactStore store,
+    List<ProStepExecutionRecord> completedSteps,
+    ProOrchestratorPlan plan,
+    ProProject project,
+  ) {
+    final results = <TuningApplyResult>[];
+    for (final safetyRecord in completedSteps.where(
+        (r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)) {
+      final channelId =
+          _resolveChannelForSafetyRef(safetyRecord.outputRef, plan);
+      final result = _runApply(
+          projectId, store, safetyRecord.outputRef, project,
+          analyzedChannelId: channelId);
+      if (result != null) results.add(result);
+    }
+    return results;
+  }
+
+  /// Traces the plan's dependency chain backwards from a safety outputRef to
+  /// find the channel ID used in the scoring step's inputRefs[2].
+  /// Returns null when the chain cannot be resolved (e.g. cloud plans).
+  static String? _resolveChannelForSafetyRef(
+      String safetyRef, ProOrchestratorPlan plan) {
+    final safetyStep =
+        plan.steps.where((s) => s.outputRef == safetyRef).firstOrNull;
+    if (safetyStep == null || safetyStep.inputRefs.isEmpty) return null;
+    // Fast path: local plan convention — safety→opt→score→inputRefs[2]=channel.
+    final viaOpt = _resolveChannelForOptRef(safetyStep.inputRefs.first, plan);
+    if (viaOpt != null) return viaOpt;
+    // Fallback for cloud plans: BFS backward through the dependency graph until
+    // a required channel ID is found as a leaf input ref.
+    return _resolveChannelByGraphBfs(safetyRef, plan);
+  }
+
+  /// BFS backward from [startOutputRef] through plan step inputRefs until a
+  /// ref that equals one of [requiredFullSystemChannelIds] is encountered.
+  /// Returns null when no required channel ID is reachable.
+  static String? _resolveChannelByGraphBfs(
+      String startOutputRef, ProOrchestratorPlan plan) {
+    final stepByOutput = {for (final s in plan.steps) s.outputRef: s};
+    final startStep = stepByOutput[startOutputRef];
+    if (startStep == null) return null;
+    final visited = <String>{startOutputRef};
+    final queue = [...startStep.inputRefs];
+    while (queue.isNotEmpty) {
+      final ref = queue.removeLast();
+      if (visited.contains(ref)) continue;
+      visited.add(ref);
+      if (requiredFullSystemChannelIds.contains(ref)) return ref;
+      final step = stepByOutput[ref];
+      if (step != null) queue.addAll(step.inputRefs);
+    }
+    return null;
+  }
+
+  /// Traces: optimizedRef → scoreStep.inputRefs[2] = channelRef.
+  static String? _resolveChannelForOptRef(
+      String optimizedRef, ProOrchestratorPlan plan) {
+    final optimizeStep =
+        plan.steps.where((s) => s.outputRef == optimizedRef).firstOrNull;
+    if (optimizeStep == null || optimizeStep.inputRefs.isEmpty) return null;
+    final scoredRef = optimizeStep.inputRefs.first;
+    final scoreStep =
+        plan.steps.where((s) => s.outputRef == scoredRef).firstOrNull;
+    if (scoreStep == null || scoreStep.inputRefs.length < 3) return null;
+    return scoreStep.inputRefs[2];
   }
 
   static String? _extractBlockedReason(
@@ -657,8 +908,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     List<ProStepExecutionRecord> completedSteps,
   ) {
     final safetyRef = completedSteps
-        .where(
-            (r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)
+        .where((r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)
         .firstOrNull
         ?.outputRef;
     if (safetyRef == null || !store.has(projectId, safetyRef)) return null;
@@ -682,28 +932,47 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     required ProProject project,
     required String? analyzedChannelId,
     required String safetyRef,
+    required bool fullSystemReady,
+    required List<String> missingChannelIds,
   }) {
-    final targetChannel = analyzedChannelId != null
-        ? project.tuningState.peqChannels
-            .where((ch) => ch.channelId == analyzedChannelId)
-            .firstOrNull
-        : project.tuningState.peqChannels.firstOrNull;
-    final availableSlots = targetChannel?.bands.length;
-
     List<CandidatePreviewEntry>? preview;
     String? applyBlockedReason;
 
-    final optRef = completedSteps
+    // Block apply when local evidence cannot prove the full 4-channel system.
+    if (!fullSystemReady) {
+      final missing = missingChannelIds.isEmpty
+          ? requiredFullSystemChannelIds.join(', ')
+          : missingChannelIds.join(', ');
+      applyBlockedReason = 'Full Tuning Apply 차단: 4채널 분석/안전 확인이 모두 필요합니다. '
+          '누락: $missing.';
+    }
+
+    // Collect per-channel preview entries from all optimize artifacts.
+    final allOptRecords = completedSteps
         .where(
             (r) => r.toolId == ProOrchestratorToolId.acousticOptimizeSelection)
-        .firstOrNull
-        ?.outputRef;
-    if (optRef != null && store.has(pid, optRef)) {
+        .toList();
+
+    final previewEntries = <CandidatePreviewEntry>[];
+    for (final optRecord in allOptRecords) {
+      final optRef = optRecord.outputRef;
+      if (!store.has(pid, optRef)) continue;
       try {
         final opt = store.getTyped<OptimizedSelectionArtifact>(pid, optRef);
-        final channelLabel = analyzedChannelId ?? '';
+        // Resolve channel for this optimize step by tracing plan dependencies.
+        final channelLabel =
+            _resolveChannelForOptRef(optRef, plan) ?? analyzedChannelId ?? '';
+        final targetChannel = channelLabel.isNotEmpty
+            ? (project.tuningState.peqChannels
+                    .where((ch) => ch.channelId == channelLabel)
+                    .firstOrNull ??
+                PeqChannelState.fixed(channelLabel))
+            : project.tuningState.peqChannels.firstOrNull;
+        final availableSlots = targetChannel?.normalized().bands.length;
         final needed = opt.value.selected.length;
-        if (availableSlots != null && needed > availableSlots) {
+        if (applyBlockedReason == null &&
+            availableSlots != null &&
+            needed > availableSlots) {
           applyBlockedReason =
               '슬롯 부족: $needed개 필요, 채널 ${channelLabel.isNotEmpty ? channelLabel : "—"}에 $availableSlots개 가능';
         }
@@ -711,8 +980,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
         if (targetChannel != null) {
           var simCh = targetChannel;
           final sorted = [...opt.value.selected]
-            ..sort(
-                (a, b) => a.applicationOrder.compareTo(b.applicationOrder));
+            ..sort((a, b) => a.applicationOrder.compareTo(b.applicationOrder));
           for (final sel in sorted) {
             final norm = simCh.normalized();
             final idx = norm.bands.indexWhere((b) => !b.enabled);
@@ -727,63 +995,66 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             }
           }
         }
-        preview = [
-          for (final c in opt.value.selected)
-            CandidatePreviewEntry(
-              applicationOrder: c.applicationOrder,
-              frequencyHz: c.scoredCandidate.candidate.frequencyHz,
-              gainDb: c.scoredCandidate.candidate.gainDb,
-              q: c.scoredCandidate.candidate.q,
-              grade: c.scoredCandidate.grade.name,
-              channelId: channelLabel,
-              safetyVerified: false,
-              targetPeqSlot: slotMap[c.applicationOrder],
-            ),
-        ];
+        for (final c in opt.value.selected) {
+          previewEntries.add(CandidatePreviewEntry(
+            applicationOrder: c.applicationOrder,
+            frequencyHz: c.scoredCandidate.candidate.frequencyHz,
+            gainDb: c.scoredCandidate.candidate.gainDb,
+            q: c.scoredCandidate.candidate.q,
+            grade: c.scoredCandidate.grade.name,
+            channelId: channelLabel,
+            safetyVerified: false,
+            targetPeqSlot: slotMap[c.applicationOrder],
+          ));
+        }
       } catch (_) {}
     }
+    if (previewEntries.isNotEmpty) preview = previewEntries;
 
-    // Detect insufficientEvidence confidence from the measurement artifact.
+    // insufficientEvidence: any channel with single-sweep measurement.
     bool insufficientEvidence = false;
-    final measureRef = completedSteps
-        .where((r) => r.toolId == ProOrchestratorToolId.measurementAnalyze)
-        .firstOrNull
-        ?.outputRef;
-    if (measureRef != null && store.has(pid, measureRef)) {
+    for (final mRecord in completedSteps
+        .where((r) => r.toolId == ProOrchestratorToolId.measurementAnalyze)) {
+      if (!store.has(pid, mRecord.outputRef)) continue;
       try {
-        final mArt = store.getTyped<MeasurementArtifact>(pid, measureRef);
-        insufficientEvidence =
-            mArt.confidence?.status == ConfidenceStatus.insufficientEvidence;
+        final mArt =
+            store.getTyped<MeasurementArtifact>(pid, mRecord.outputRef);
+        if (mArt.confidence?.status == ConfidenceStatus.insufficientEvidence) {
+          insufficientEvidence = true;
+          break;
+        }
       } catch (_) {}
     }
 
-    // Read Before/After simulation summary from scoring side-channel artifact.
+    // Before/After summary: aggregate best improvement across all channels.
     String? beforeAfterSummary;
-    final scoreRef = completedSteps
-        .where((r) => r.toolId == ProOrchestratorToolId.acousticScoreCandidates)
-        .firstOrNull
-        ?.outputRef;
-    if (scoreRef != null) {
-      final simErrRef = '$scoreRef:sim_err';
-      if (store.has(pid, simErrRef)) {
-        try {
-          final simErr =
-              store.getTyped<SimulationErrorArtifact>(pid, simErrRef);
-          final bestAfterRms = simErr.perCandidateErrors.values
-              .map((e) => e.weightedRmsDb)
-              .fold<double>(double.infinity, (a, b) => b < a ? b : a);
-          if (bestAfterRms != double.infinity) {
+    double bestImprovement = 0.0;
+    String? bestSummary;
+    for (final scoreRecord in completedSteps.where(
+        (r) => r.toolId == ProOrchestratorToolId.acousticScoreCandidates)) {
+      final simErrRef = '${scoreRecord.outputRef}:sim_err';
+      if (!store.has(pid, simErrRef)) continue;
+      try {
+        final simErr = store.getTyped<SimulationErrorArtifact>(pid, simErrRef);
+        final bestAfterRms = simErr.perCandidateErrors.values
+            .map((e) => e.weightedRmsDb)
+            .fold<double>(double.infinity, (a, b) => b < a ? b : a);
+        if (bestAfterRms != double.infinity) {
+          final improvement = simErr.beforeError.weightedRmsDb - bestAfterRms;
+          if (improvement > bestImprovement) {
+            bestImprovement = improvement;
             final before = simErr.beforeError.weightedRmsDb.toStringAsFixed(1);
             final after = bestAfterRms.toStringAsFixed(1);
             final modeLabel = simErr.simulationMode == 'phase-aware'
                 ? ', phase-aware'
                 : ', magnitude-only';
-            beforeAfterSummary =
-                'Before ${before} dB → After ${after} dB (가중 RMS${modeLabel})';
+            bestSummary =
+                'Before $before dB → After $after dB (가중 RMS$modeLabel)';
           }
-        } catch (_) {}
-      }
+        }
+      } catch (_) {}
     }
+    beforeAfterSummary = bestSummary;
 
     return ProGuidedAiConfirmPending(
       request: ProUserConfirmationRequest(
@@ -798,8 +1069,9 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       candidatePreview: preview,
       applyBlockedReason: applyBlockedReason,
       targetChannelId: analyzedChannelId,
-      availablePeqSlots: availableSlots,
       beforeAfterSummary: beforeAfterSummary,
+      fullSystemReady: fullSystemReady,
+      missingChannelIds: List.unmodifiable(missingChannelIds),
       insufficientEvidence: insufficientEvidence,
     );
   }
@@ -830,15 +1102,11 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       return null;
     }
     if (!safety.applyPermitted) return null;
-    final PeqChannelState? channel;
-    if (analyzedChannelId != null) {
-      channel = project.tuningState.peqChannels
-          .where((ch) => ch.channelId == analyzedChannelId)
-          .firstOrNull;
-    } else {
-      channel = project.tuningState.peqChannels.firstOrNull;
-    }
-    if (channel == null) return null;
+    if (analyzedChannelId == null) return null;
+    final channel = project.tuningState.peqChannels
+            .where((ch) => ch.channelId == analyzedChannelId)
+            .firstOrNull ??
+        PeqChannelState.fixed(analyzedChannelId);
     return AcousticApplyEngine.apply(safety, channel);
   }
 
@@ -922,7 +1190,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           final modeLabel = simErr.simulationMode == 'phase-aware'
               ? ', phase-aware'
               : ', magnitude-only';
-          simSummary = 'Before ${before} dB → After ${after} dB (가중 RMS${modeLabel})';
+          simSummary = 'Before $before dB → After $after dB (가중 RMS$modeLabel)';
         }
         simMode = simErr.simulationMode;
       } catch (_) {}
@@ -965,77 +1233,84 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   );
 
   /// Builds the deterministic acoustic pipeline plan used when Cloud is
-  /// unavailable. Uses [measRefs.first] as the channel to analyze (consistent
-  /// with the post-safety analyzed-channel resolution logic).
+  /// unavailable. Generates one 7-step chain per channel in [measRefs] so that
+  /// all channels are analyzed and applied as a single atomic full-system plan.
   static ProOrchestratorPlan _buildLocalFallbackPlan(
     String projectId,
     List<String> measRefs,
   ) {
-    final channelRef = measRefs.first;
+    final steps = <ProOrchestratorStep>[];
+    for (final channelRef in measRefs) {
+      // Use the channel ID as a step-name segment (safe: IDs are alphanumeric+_).
+      final p = 'local-$channelRef';
+      steps.addAll([
+        ProOrchestratorStep(
+          stepId: '$p-s1-measure',
+          toolId: ProOrchestratorToolId.measurementAnalyze,
+          objective: '측정 데이터 분석 ($channelRef)',
+          inputRefs: [channelRef],
+          outputRef: '$p-measure',
+          requiresUserConfirmation: false,
+        ),
+        ProOrchestratorStep(
+          stepId: '$p-s2-classify',
+          toolId: ProOrchestratorToolId.acousticClassify,
+          objective: '음향 문제 분류 ($channelRef)',
+          inputRefs: ['$p-measure'],
+          outputRef: '$p-classify',
+          requiresUserConfirmation: false,
+        ),
+        ProOrchestratorStep(
+          stepId: '$p-s3-plan',
+          toolId: ProOrchestratorToolId.acousticPlan,
+          objective: '수정 계획 수립 ($channelRef)',
+          inputRefs: ['$p-classify'],
+          outputRef: '$p-plan',
+          requiresUserConfirmation: false,
+        ),
+        ProOrchestratorStep(
+          stepId: '$p-s4-generate',
+          toolId: ProOrchestratorToolId.acousticGenerateCandidates,
+          objective: '보정 후보 생성 ($channelRef)',
+          inputRefs: ['$p-plan', '$p-classify'],
+          outputRef: '$p-candidates',
+          requiresUserConfirmation: false,
+        ),
+        ProOrchestratorStep(
+          stepId: '$p-s5-score',
+          toolId: ProOrchestratorToolId.acousticScoreCandidates,
+          objective: '후보 점수화 ($channelRef)',
+          // inputRefs[2] = channelRef lets the scorer run phase-aware simulation
+          // and enables _resolveChannelForSafetyRef to trace back to this channel.
+          inputRefs: ['$p-candidates', '$p-classify', channelRef],
+          outputRef: '$p-scored',
+          requiresUserConfirmation: false,
+        ),
+        ProOrchestratorStep(
+          stepId: '$p-s6-optimize',
+          toolId: ProOrchestratorToolId.acousticOptimizeSelection,
+          objective: '최적 후보 선정 ($channelRef)',
+          inputRefs: ['$p-scored'],
+          outputRef: '$p-optimized',
+          requiresUserConfirmation: false,
+        ),
+        ProOrchestratorStep(
+          stepId: '$p-s7-safety',
+          toolId: ProOrchestratorToolId.acousticValidateSafety,
+          objective: '안전 검증 ($channelRef)',
+          inputRefs: ['$p-optimized'],
+          outputRef: '$p-safety',
+          requiresUserConfirmation: false,
+        ),
+      ]);
+    }
     return ProOrchestratorPlan(
       planId: 'local-offline-$projectId',
       intentRef: 'local-intent',
       contextRef: 'local-offline',
-      summary: '오프라인 결정론 분석 플랜 (Cloud 없음)',
-      completionCriteria: 'acousticValidateSafety 완료',
-      steps: [
-        ProOrchestratorStep(
-          stepId: 'local-s1-measure',
-          toolId: ProOrchestratorToolId.measurementAnalyze,
-          objective: '측정 데이터 분석',
-          inputRefs: [channelRef],
-          outputRef: 'local-out-measure',
-          requiresUserConfirmation: false,
-        ),
-        ProOrchestratorStep(
-          stepId: 'local-s2-classify',
-          toolId: ProOrchestratorToolId.acousticClassify,
-          objective: '음향 문제 분류',
-          inputRefs: ['local-out-measure'],
-          outputRef: 'local-out-classify',
-          requiresUserConfirmation: false,
-        ),
-        ProOrchestratorStep(
-          stepId: 'local-s3-plan',
-          toolId: ProOrchestratorToolId.acousticPlan,
-          objective: '수정 계획 수립',
-          inputRefs: ['local-out-classify'],
-          outputRef: 'local-out-plan',
-          requiresUserConfirmation: false,
-        ),
-        ProOrchestratorStep(
-          stepId: 'local-s4-generate',
-          toolId: ProOrchestratorToolId.acousticGenerateCandidates,
-          objective: '보정 후보 생성',
-          inputRefs: ['local-out-plan', 'local-out-measure'],
-          outputRef: 'local-out-candidates',
-          requiresUserConfirmation: false,
-        ),
-        ProOrchestratorStep(
-          stepId: 'local-s5-score',
-          toolId: ProOrchestratorToolId.acousticScoreCandidates,
-          objective: '후보 점수화',
-          inputRefs: ['local-out-candidates', 'local-out-classify', channelRef],
-          outputRef: 'local-out-scored',
-          requiresUserConfirmation: false,
-        ),
-        ProOrchestratorStep(
-          stepId: 'local-s6-optimize',
-          toolId: ProOrchestratorToolId.acousticOptimizeSelection,
-          objective: '최적 후보 선정',
-          inputRefs: ['local-out-scored'],
-          outputRef: 'local-out-optimized',
-          requiresUserConfirmation: false,
-        ),
-        ProOrchestratorStep(
-          stepId: 'local-s7-safety',
-          toolId: ProOrchestratorToolId.acousticValidateSafety,
-          objective: '안전 검증',
-          inputRefs: ['local-out-optimized'],
-          outputRef: 'local-out-safety',
-          requiresUserConfirmation: false,
-        ),
-      ],
+      summary: '오프라인 전체 시스템 분석 플랜 (${measRefs.length}채널, Cloud 없음)',
+      completionCriteria: 'acousticValidateSafety 완료 (전 채널)',
+      steps: steps,
     );
   }
 }

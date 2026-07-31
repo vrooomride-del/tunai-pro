@@ -505,32 +505,52 @@ void main() {
       expect(op.wrote, isFalse);
     });
 
-    test('applyResult.channelId not in project → outcome channelNotFound', () {
+    test('applyResult.channelId not in project → upsert adds the new channel',
+        () {
       final safety =
           _permitted([_sel(featureId: 'f1', frequencyHz: 500.0)]);
-      // Engine applied to 'ch_wrong'.
+      // Engine applied to 'ch_new' (e.g. Import-flow channel not yet in PEQ state).
       final engineResult =
-          AcousticApplyEngine.apply(safety, _emptyChannel('ch_wrong'));
-      // Project has 'ch_correct', not 'ch_wrong'.
+          AcousticApplyEngine.apply(safety, _emptyChannel('ch_new'));
+      // Project has 'ch_correct', not 'ch_new'.
       final proj = _project(peqChannels: [_emptyChannel('ch_correct')]);
       final op = GuidedAiProjectApply.apply(
         projectId: proj.id, applyResult: engineResult, latestProject: proj);
-      expect(op.outcome, GuidedAiProjectApplyOutcome.channelNotFound);
-      expect(op.wrote, isFalse);
+      // Upsert: ch_new is added alongside ch_correct.
+      expect(op.outcome, GuidedAiProjectApplyOutcome.wrote);
+      expect(op.wrote, isTrue);
+      expect(
+          op.updatedProject!.tuningState.peqChannels
+              .map((c) => c.channelId)
+              .toSet(),
+          {'ch_correct', 'ch_new'},
+          reason: 'both the existing and the new channel must be present');
+      expect(
+          op.updatedProject!.tuningState.peqChannels
+              .firstWhere((c) => c.channelId == 'ch_new')
+              .activeBandCount,
+          greaterThan(0),
+          reason: 'the upserted channel must carry the applied PEQ bands');
     });
 
-    test('channelNotFound → updatedProject is null', () {
+    test('upsert: existing channels are not mutated by the upserted channel',
+        () {
       final safety =
           _permitted([_sel(featureId: 'f1', frequencyHz: 500.0)]);
       final engineResult =
-          AcousticApplyEngine.apply(safety, _emptyChannel('ch_wrong'));
+          AcousticApplyEngine.apply(safety, _emptyChannel('ch_new'));
       final proj = _project(
           id: 'p', peqChannels: [_emptyChannel('ch_a'), _emptyChannel('ch_b')]);
       final op = GuidedAiProjectApply.apply(
         projectId: 'p', applyResult: engineResult, latestProject: proj);
-      expect(op.updatedProject, isNull);
-      expect(proj.tuningState.peqChannels
-          .every((c) => c.activeBandCount == 0), isTrue);
+      expect(op.wrote, isTrue);
+      // ch_a and ch_b are untouched.
+      expect(
+          op.updatedProject!.tuningState.peqChannels
+              .where((c) => c.channelId != 'ch_new')
+              .every((c) => c.activeBandCount == 0),
+          isTrue,
+          reason: 'existing channels must not be mutated by the upsert');
     });
   });
 }

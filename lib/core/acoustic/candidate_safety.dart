@@ -36,6 +36,10 @@ class CandidateSafetyPolicy {
   /// Candidates with |gainDb| > maxCutDb are rejected with [cutTooDeep].
   final double maxCutDb;
 
+  /// Device-specific gain envelope; shared defaults remain unchanged.
+  final double minGainDb;
+  final double maxGainDb;
+
   /// Lower bound of the valid frequency range (Hz, inclusive).
   final double minFrequencyHz;
 
@@ -50,6 +54,8 @@ class CandidateSafetyPolicy {
     required this.id,
     required this.version,
     required this.maxCutDb,
+    this.minGainDb = double.negativeInfinity,
+    this.maxGainDb = 0.0,
     required this.minFrequencyHz,
     required this.maxFrequencyHz,
     required this.availableSlots,
@@ -64,6 +70,10 @@ class CandidateSafetyPolicy {
     }
     if (!maxCutDb.isFinite || maxCutDb <= 0) {
       throw CandidateSafetyPolicyException('maxCutDb must be finite and > 0.');
+    }
+    if (minGainDb.isNaN || maxGainDb.isNaN || minGainDb > maxGainDb) {
+      throw CandidateSafetyPolicyException(
+          'gain envelope must have minGainDb <= maxGainDb.');
     }
     if (!minFrequencyHz.isFinite || minFrequencyHz <= 0) {
       throw CandidateSafetyPolicyException(
@@ -81,11 +91,21 @@ class CandidateSafetyPolicy {
   /// PRO provisional safety policy.
   /// maxCutDb matches [CandidatePolicy.proProvisional]; frequency range spans
   /// the full audible band; slots align with [PeqChannelState.bandCount].
-  factory CandidateSafetyPolicy.proProvisional() =>
-      const CandidateSafetyPolicy(
+  factory CandidateSafetyPolicy.proProvisional() => const CandidateSafetyPolicy(
         id: 'pro_provisional',
         version: 1,
         maxCutDb: 9.0,
+        minFrequencyHz: 20.0,
+        maxFrequencyHz: 20000.0,
+        availableSlots: 10,
+      );
+
+  factory CandidateSafetyPolicy.adau1701Icp5() => const CandidateSafetyPolicy(
+        id: 'adau1701_icp5',
+        version: 1,
+        maxCutDb: 6.0,
+        minGainDb: -6.0,
+        maxGainDb: 3.0,
         minFrequencyHz: 20.0,
         maxFrequencyHz: 20000.0,
         availableSlots: 10,
@@ -102,6 +122,9 @@ enum CandidateSafetyViolationCode {
 
   /// |gainDb| > maxCutDb: cut magnitude exceeds the safety ceiling.
   cutTooDeep,
+
+  /// Candidate gain is outside the target device envelope.
+  gainOutOfRange,
 
   /// frequencyHz < minFrequencyHz or > maxFrequencyHz.
   frequencyOutOfRange,
@@ -217,9 +240,12 @@ abstract final class AcousticSelectionValidator {
       final c = sel.scoredCandidate.candidate;
 
       // 1. No boost — gainDb must be ≤ 0.
-      if (c.gainDb > 0) {
+      if (c.gainDb > policy.maxGainDb ||
+          (c.gainDb > 0 && policy.maxGainDb <= 0)) {
         issues.add(CandidateSafetyIssue(
-          code: CandidateSafetyViolationCode.noBoostGuard,
+          code: policy.maxGainDb > 0 && c.gainDb > policy.maxGainDb
+              ? CandidateSafetyViolationCode.gainOutOfRange
+              : CandidateSafetyViolationCode.noBoostGuard,
           candidateId: c.candidateId,
           detail: 'gainDb ${c.gainDb.toStringAsFixed(2)} dB is positive — '
               'the acoustic engine must never produce a boost.',
@@ -227,7 +253,7 @@ abstract final class AcousticSelectionValidator {
       }
 
       // 2. Cut depth ceiling.
-      if (c.gainDb < -policy.maxCutDb) {
+      if (c.gainDb < policy.minGainDb || c.gainDb < -policy.maxCutDb) {
         issues.add(CandidateSafetyIssue(
           code: CandidateSafetyViolationCode.cutTooDeep,
           candidateId: c.candidateId,

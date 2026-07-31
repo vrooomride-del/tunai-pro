@@ -30,9 +30,16 @@ class CandidateSafetyAdapter implements ProToolAdapter {
     final optimArtifact =
         ctx.store.getTyped<OptimizedSelectionArtifact>(ctx.projectId, ref);
 
+    final isAdau1701 = ctx.resolver
+            .resolveProjectSnapshot(ctx.projectId)
+            ?.dspTarget
+            .toUpperCase() ==
+        'ADAU1701';
     final safetyResult = AcousticSelectionValidator.validate(
       optimArtifact.value,
-      CandidateSafetyPolicy.proProvisional(),
+      isAdau1701
+          ? CandidateSafetyPolicy.adau1701Icp5()
+          : CandidateSafetyPolicy.proProvisional(),
     );
 
     ctx.store.put(

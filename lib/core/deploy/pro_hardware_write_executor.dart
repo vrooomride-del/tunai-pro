@@ -8,6 +8,8 @@
 // It only validates the approval, filters to supported operations, delegates to
 // the port, and aggregates the existing per-attempt reports.
 
+import 'dart:async';
+
 import '../transport/adau1701_deployment_report.dart';
 import 'pro_hardware_capability.dart';
 import 'pro_hardware_write_approval.dart';
@@ -39,7 +41,10 @@ enum HardwareWriteOpStatus {
 
   /// Write ACKed by the device; no readback available for this operation.
   /// Consumer-production-proven path; considered successful (not a failure).
-  ackOnly;
+  ackOnly,
+
+  /// port.preflightAndWrite did not complete within the per-operation timeout.
+  timedOut;
 
   String get label => switch (this) {
         HardwareWriteOpStatus.written => 'Written',
@@ -47,6 +52,7 @@ enum HardwareWriteOpStatus {
         HardwareWriteOpStatus.blockedByPreflight => 'Blocked by preflight',
         HardwareWriteOpStatus.failed => 'Failed',
         HardwareWriteOpStatus.unsupported => 'Unsupported (fail-closed)',
+        HardwareWriteOpStatus.timedOut => 'Timed out',
       };
 }
 
@@ -68,6 +74,15 @@ class HardwareWriteOpOutcome {
   bool get succeeded =>
       status == HardwareWriteOpStatus.written ||
       status == HardwareWriteOpStatus.ackOnly;
+
+  bool get isFailure =>
+      status == HardwareWriteOpStatus.failed ||
+      status == HardwareWriteOpStatus.timedOut ||
+      status == HardwareWriteOpStatus.blockedByPreflight;
+
+  bool get isTerminalFailure =>
+      status == HardwareWriteOpStatus.timedOut ||
+      status == HardwareWriteOpStatus.failed;
 
   Map<String, dynamic> toJson() => {
         'channelId': op.channelId,
@@ -105,8 +120,9 @@ class HardwareWriteExecutionResult {
   int get blockedCount => outcomes
       .where((o) => o.status == HardwareWriteOpStatus.blockedByPreflight)
       .length;
-  int get failedCount =>
-      outcomes.where((o) => o.status == HardwareWriteOpStatus.failed).length;
+  List<HardwareWriteOpOutcome> get failures =>
+      outcomes.where((o) => o.isFailure).toList(growable: false);
+  int get failedCount => failures.length;
   int get unsupportedCount => outcomes
       .where((o) => o.status == HardwareWriteOpStatus.unsupported)
       .length;
@@ -116,8 +132,7 @@ class HardwareWriteExecutionResult {
       executed && outcomes.isNotEmpty && outcomes.every((o) => o.succeeded);
 
   /// True when every op succeeded (written OR ack-only). Use for UI PASS_ACK.
-  bool get allPassed =>
-      executed && outcomes.isNotEmpty && outcomes.every((o) => o.succeeded);
+  bool get allPassed => executed && outcomes.isNotEmpty && failedCount == 0;
 
   Map<String, dynamic> toJson() => {
         'planId': planId,
@@ -132,11 +147,40 @@ class HardwareWriteExecutionResult {
       };
 }
 
+/// Progress update emitted after each operation attempt during [execute].
+class HardwareWriteProgress {
+  /// Number of operations fully processed (succeeded, failed, or skipped).
+  final int completed;
+
+  /// Total number of approved operations to process.
+  final int total;
+
+  /// The operation currently being attempted.
+  final HardwareWriteOp current;
+
+  const HardwareWriteProgress({
+    required this.completed,
+    required this.total,
+    required this.current,
+  });
+
+  String get label => '${current.channelId} · ${current.parameterKind.name}'
+      '${current.bandIndex != null ? ' band ${current.bandIndex}' : ''}';
+}
+
 /// Gated executor adapter. Only ever acts on an approved approval, and only
 /// invokes the port for supported operations.
 class HardwareWriteExecutor {
   final Icp5PeqWritePort port;
-  const HardwareWriteExecutor(this.port);
+
+  /// Per-operation timeout applied to every [port.preflightAndWrite] call.
+  /// Defaults to 10 s — enough for a BLE round-trip + readback retries.
+  final Duration opTimeout;
+
+  const HardwareWriteExecutor(
+    this.port, {
+    this.opTimeout = const Duration(seconds: 10),
+  });
 
   /// Supported set: ADAU1701 ICP5.
   /// - channelGain, crossoverHighPass, crossoverLowPass (non-banded)
@@ -160,8 +204,16 @@ class HardwareWriteExecutor {
             op.parameterKind == HardwareParamKind.peqQ);
   }
 
+  /// Executes all approved operations sequentially.
+  ///
+  /// [onProgress] is called before each operation with the current progress.
+  /// Each port call is wrapped in [opTimeout]; a hung call produces a
+  /// [HardwareWriteOpStatus.timedOut] outcome and execution stops early —
+  /// already-written operations are not re-attempted.
   Future<HardwareWriteExecutionResult> execute(
-      HardwareWriteApproval approval) async {
+    HardwareWriteApproval approval, {
+    void Function(HardwareWriteProgress)? onProgress,
+  }) async {
     // Rule 1 — reject empty / rejected / non-approved up front. No port calls.
     if (approval.status != HardwareApprovalStatus.approved) {
       return HardwareWriteExecutionResult(
@@ -181,8 +233,18 @@ class HardwareWriteExecutor {
       );
     }
 
+    final ops = approval.approvedOperations;
+    final total = ops.length;
     final outcomes = <HardwareWriteOpOutcome>[];
-    for (final op in approval.approvedOperations) {
+
+    for (var i = 0; i < ops.length; i++) {
+      final op = ops[i];
+      onProgress?.call(HardwareWriteProgress(
+        completed: outcomes.length,
+        total: total,
+        current: op,
+      ));
+
       // Defence in depth: an approval must only carry writable ops.
       if (!op.writable) {
         outcomes.add(HardwareWriteOpOutcome(
@@ -190,6 +252,20 @@ class HardwareWriteExecutor {
           status: HardwareWriteOpStatus.unsupported,
           report: null,
           message: 'Operation is not capture-proven; fail closed.',
+        ));
+        continue;
+      }
+      // Device envelope guard: never send an out-of-range ADAU1701 PEQ gain
+      // to the existing write port, even if an invalid approval was assembled.
+      if (approval.deviceProfile.deviceId ==
+              HardwareDeviceProfiles.adau1701Icp5.deviceId &&
+          op.parameterKind == HardwareParamKind.peqGain &&
+          (op.targetValue < -6.0 || op.targetValue > 3.0)) {
+        outcomes.add(HardwareWriteOpOutcome(
+          op: op,
+          status: HardwareWriteOpStatus.unsupported,
+          report: null,
+          message: 'ADAU1701 PEQ gain outside -6.0…+3.0 dB envelope.',
         ));
         continue;
       }
@@ -207,8 +283,35 @@ class HardwareWriteExecutor {
       }
 
       // Rule 3 — delegate to the existing safety chain via the port.
-      final report = await port.preflightAndWrite(op);
-      outcomes.add(_mapReport(op, report));
+      // Apply per-operation timeout so a hung future does not block forever.
+      try {
+        final report = await port.preflightAndWrite(op).timeout(opTimeout);
+        outcomes.add(_mapReport(op, report));
+      } on TimeoutException {
+        final successCount = outcomes.where((o) => o.succeeded).length;
+        outcomes.add(HardwareWriteOpOutcome(
+          op: op,
+          status: HardwareWriteOpStatus.timedOut,
+          report: null,
+          message: 'Operation timed out after ${opTimeout.inSeconds}s '
+              '(${op.channelId}·${op.parameterKind.name}'
+              '${op.bandIndex != null ? '·band${op.bandIndex}' : ''}). '
+              '$successCount/$total completed.',
+        ));
+        break; // stop; do not re-attempt already-written ops
+      } catch (e) {
+        final successCount = outcomes.where((o) => o.succeeded).length;
+        outcomes.add(HardwareWriteOpOutcome(
+          op: op,
+          status: HardwareWriteOpStatus.failed,
+          report: null,
+          message: 'Unexpected error: $e '
+              '(${op.channelId}·${op.parameterKind.name}'
+              '${op.bandIndex != null ? '·band${op.bandIndex}' : ''}). '
+              '$successCount/$total completed.',
+        ));
+        break;
+      }
     }
 
     return HardwareWriteExecutionResult(

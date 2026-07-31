@@ -390,8 +390,10 @@ void main() {
           reason: 'cancel must not trigger onApply either');
     });
 
-    // ── 4. Confirmation → existing Apply path ────────────────────────────────
-    test('4. confirm() triggers onApply exactly once', () async {
+    // ── 4. Confirmation with !fullSystemReady → apply blocked ───────────────
+    // Single-channel project (woofer-l) is not one of the 4 required channels,
+    // so fullSystemReady=false. Confirming the gate must NOT call onApply.
+    test('4. confirm() with !fullSystemReady does not trigger onApply', () async {
       int applyCallCount = 0;
       final ctrl = _ctrl([
         const _PassAdapter(ProOrchestratorToolId.measurementAnalyze),
@@ -419,16 +421,18 @@ void main() {
       });
 
       final pending = states.whereType<ProGuidedAiConfirmPending>().first;
+      expect(pending.fullSystemReady, isFalse,
+          reason: 'single-channel project must not be fullSystemReady');
       ctrl.confirm(pending.request.stepId);
       await future;
 
-      expect(applyCallCount, 1,
-          reason: 'onApply must be called exactly once after confirm');
+      expect(applyCallCount, 0,
+          reason: 'onApply must not fire when fullSystemReady is false');
 
       final completed = states.whereType<ProGuidedAiCompleted>().lastOrNull;
       expect(completed, isNotNull);
-      expect(completed!.applyResult, isNotNull,
-          reason: 'completed state must carry applyResult after confirm');
+      expect(completed!.applyResult, isNull,
+          reason: 'applyResult must be null when apply is blocked');
     });
 
     // ── 5. Blocked safety result → no confirmation ───────────────────────────

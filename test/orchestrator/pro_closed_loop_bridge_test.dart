@@ -192,7 +192,10 @@ void main() {
   // ── 1. apply 완료 후 awaitingMeasurement 상태 ─────────────────────────────
 
   group('1. awaitingMeasurement after apply', () {
-    test('loopPhase is awaitingMeasurement when apply permitted and ran', () async {
+    // Single-channel safety-only plans cannot bypass the 4-channel gate:
+    // loopPhase stays null when fullSystemReady=false (project has only ch_wf_l,
+    // 3 required channels missing → legacy auto-apply is gated behind fullSystemReady).
+    test('loopPhase is null when safety-only plan and !fullSystemReady', () async {
       final steps = [
         _step('s0', ProOrchestratorToolId.measurementAnalyze,
             outputRef: 'out-meas'),
@@ -207,7 +210,7 @@ void main() {
         ],
         onApply: (_, __) async {},
       );
-      expect(done.loopPhase, equals(ProClosedLoopPhase.awaitingMeasurement));
+      expect(done.loopPhase, isNull);
     });
 
     test('loopPhase is null when apply not permitted', () async {
@@ -309,7 +312,9 @@ void main() {
   // ── 3. after 없음 → loopPhase stays awaitingMeasurement (not evaluated) ──
 
   group('3. without after-measurement, phase does not advance', () {
-    test('loopPhase is awaitingMeasurement, not evaluated', () async {
+    // With the 4-channel gate, single-channel safety-only plans set loopPhase=null
+    // (apply never runs). The phase cannot be 'evaluated' in either case.
+    test('loopPhase is null (not evaluated) when !fullSystemReady', () async {
       final steps = [
         _step('s0', ProOrchestratorToolId.measurementAnalyze,
             outputRef: 'out-meas'),
@@ -325,7 +330,7 @@ void main() {
         onApply: (_, __) async {},
       );
       expect(done.loopPhase, isNot(equals(ProClosedLoopPhase.evaluated)));
-      expect(done.loopPhase, equals(ProClosedLoopPhase.awaitingMeasurement));
+      expect(done.loopPhase, isNull);
     });
 
     test('loopVerdict is null when acousticEvaluateLoop did not run', () async {
@@ -364,7 +369,7 @@ void main() {
       }
     });
 
-    test('loopPhase and beforeMeasurementRef carry no numeric values', () async {
+    test('loopPhase null; beforeMeasurementRef is opaque string (no numeric)', () async {
       final steps = [
         _step('s0', ProOrchestratorToolId.measurementAnalyze,
             outputRef: 'out-meas'),
@@ -379,9 +384,9 @@ void main() {
         ],
         onApply: (_, __) async {},
       );
-      // loopPhase is an enum — structural check only
-      expect(done.loopPhase, isA<ProClosedLoopPhase>());
-      // beforeMeasurementRef is a string ref, not a number
+      // Single-channel → fullSystemReady=false → apply blocked → loopPhase null.
+      expect(done.loopPhase, isNull);
+      // beforeMeasurementRef is set from measurementAnalyze output, not apply.
       expect(done.beforeMeasurementRef, isA<String>());
       expect(double.tryParse(done.beforeMeasurementRef!), isNull,
           reason: 'beforeMeasurementRef must not be a parseable number');

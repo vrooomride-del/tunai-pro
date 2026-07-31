@@ -243,7 +243,9 @@ void main() {
       expect(r.blockedAutomaticCorrections,
           contains(AcousticFeatureType.deepNull));
     });
-    test('25. insufficientEvidence → analysis ok, no auto correction', () {
+    test(
+        '25. insufficientEvidence → narrowPeak remains safePeqCutCandidate (provisional)',
+        () {
       final r = _run(_input(grid, _bump(grid, fc: 1000, amp: 6, sigmaOct: 0.08),
           conf: _conf(status: ConfidenceStatus.insufficientEvidence)));
       expect(r.status, AcousticClassificationStatus.ok);
@@ -251,7 +253,9 @@ void main() {
           MeasurementConfidenceInterpretation.analysisOnly);
       final feat = r.observedFeatures
           .firstWhere((f) => f.type == AcousticFeatureType.narrowPeak);
-      expect(feat.actionability, AcousticActionability.noAutomaticCorrection);
+      // narrowPeak cut stays as safePeqCutCandidate; Expert approval UI gate
+      // enforces review before Apply.
+      expect(feat.actionability, AcousticActionability.safePeqCutCandidate);
     });
     test('26. invalid confidence → remeasure', () {
       final r = _run(_input(grid, _bump(grid, fc: 1000, amp: 6, sigmaOct: 0.08),
@@ -270,14 +274,36 @@ void main() {
           .firstWhere((f) => f.type == AcousticFeatureType.narrowPeak);
       expect(feat.actionability, AcousticActionability.cautiousBroadCorrection);
     });
-    test('28. imported single FRD (insufficient) → features but no auto', () {
+    test(
+        '28. imported single FRD (insufficient) → narrowPeak stays correctable, trends blocked',
+        () {
       final r = _run(_input(grid, _bump(grid, fc: 1000, amp: 6, sigmaOct: 0.08),
           conf: _conf(status: ConfidenceStatus.insufficientEvidence)));
       expect(r.observedFeatures, isNotEmpty);
+      // narrowPeak is a safe cut candidate even under single-sweep evidence.
       expect(
-          r.observedFeatures.every((f) =>
-              f.actionability != AcousticActionability.safePeqCutCandidate),
+          r.observedFeatures.any((f) =>
+              f.type == AcousticFeatureType.narrowPeak &&
+              f.actionability == AcousticActionability.safePeqCutCandidate),
           isTrue);
+      // Trend-type correctable features are still blocked.
+      expect(
+          r.observedFeatures
+              .where((f) =>
+                  f.type == AcousticFeatureType.risingTrend ||
+                  f.type == AcousticFeatureType.fallingTrend)
+              .every((f) =>
+                  f.actionability == AcousticActionability.noAutomaticCorrection),
+          isTrue);
+    });
+    test(
+        '28b. insufficientEvidence + broadPeak → cautiousBroadCorrection (provisional)',
+        () {
+      final r = _run(_input(grid, _bump(grid, fc: 1000, amp: 6, sigmaOct: 0.6),
+          conf: _conf(status: ConfidenceStatus.insufficientEvidence)));
+      final feat = r.observedFeatures
+          .firstWhere((f) => f.type == AcousticFeatureType.broadPeak);
+      expect(feat.actionability, AcousticActionability.cautiousBroadCorrection);
     });
   });
 

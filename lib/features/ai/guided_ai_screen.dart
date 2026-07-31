@@ -144,21 +144,22 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
         .where((p) => p.id == widget.projectId)
         .firstOrNull;
 
-    // Channel selection handoff from Import tab.
+    // Expert single-channel handoff from Import tab (kept for Expert path only).
     final targetChannelId = ref.watch(guidedAiTargetChannelProvider);
     final frdChannels =
         project?.acousticState.driverChannels.where((d) => d.hasParsedFrd).toList() ??
             [];
-    // Resolve the target driver channel for display and analysis.
-    // If a channelId was explicitly handed off, use it. If exactly one FRD
-    // channel exists, use that. Otherwise null (requires explicit selection).
+    // Resolve the target driver channel for Expert-mode display only.
     final DriverChannel? targetChannel = targetChannelId != null
         ? frdChannels.where((d) => d.id == targetChannelId).firstOrNull
-        : (frdChannels.length == 1 ? frdChannels.first : null);
+        : null;
     final bool channelIdInvalid =
         targetChannelId != null && targetChannel == null;
-    final bool needsChannelSelection =
-        targetChannelId == null && frdChannels.length > 1;
+    // 4-channel default mode: no single-channel selection required.
+    // Required channels for full-system analysis.
+    const _requiredChannelIds = [
+      'ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r',
+    ];
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
@@ -248,30 +249,12 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                if (needsChannelSelection) ...[
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1A1200),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.amber.withAlpha(80)),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.touch_app_outlined,
-                            color: Colors.amber, size: 15),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            '채널을 선택하세요 — Import 탭의 채널 카드에서 \'이 채널 분석\'을 누르세요.',
-                            style: TextStyle(
-                                color: Colors.amber,
-                                fontSize: 12,
-                                height: 1.4),
-                          ),
-                        ),
-                      ],
-                    ),
+                // 4-channel FRD status — always shown when project has channels.
+                if (project != null &&
+                    project.acousticState.driverChannels.isNotEmpty) ...[
+                  _FourChannelStatusPanel(
+                    driverChannels: project.acousticState.driverChannels,
+                    requiredChannelIds: _requiredChannelIds,
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -300,24 +283,20 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   child: FilledButton(
                     onPressed: (project == null ||
                             project.acousticState.parsedFrdCount == 0 ||
-                            channelIdInvalid ||
-                            needsChannelSelection)
+                            channelIdInvalid)
                         ? null
                         : () {
-                            // Consume the target channel — clear provider after
-                            // the analysis starts so it doesn't linger.
-                            final channelId = targetChannelId;
+                            // 4-channel default: do not pass targetChannelId.
+                            // Expert single-channel: targetChannelId is from
+                            // Import tab handoff (guidedAiTargetChannelProvider).
+                            // Clear provider after start so it doesn't linger.
                             ref
                                 .read(guidedAiTargetChannelProvider.notifier)
                                 .state = null;
                             ref.read(guidedAiProvider.notifier).start(
                                   project: project,
                                   userGoal: _goalCtrl.text,
-                                  targetChannelId: channelId,
                                   onApply: (pid, applyResult) async {
-                                    // Read the latest project at apply time —
-                                    // not the stale closure captured at
-                                    // button-press time.
                                     final latestProject = ref
                                         .read(proProjectStoreProvider)
                                         .projects
@@ -338,6 +317,33 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                                             pid,
                                             op.updatedProject!.tuningState);
                                   },
+                                  onExportPackage: (pid, package) async {
+                                    final current = ref
+                                        .read(proProjectStoreProvider)
+                                        .projects
+                                        .where((p) => p.id == pid)
+                                        .firstOrNull;
+                                    if (current == null) return;
+                                    final updated =
+                                        current.exportState.copyWith(
+                                      packages: [
+                                        ...current.exportState.packages
+                                            .where(
+                                                (p) => p.id != package.id),
+                                        package,
+                                      ],
+                                      activePackageId: package.id,
+                                    );
+                                    await ref
+                                        .read(proProjectStoreProvider.notifier)
+                                        .updateExportState(pid, updated);
+                                  },
+                                  onHardwareWritePlan: (pid, plan) async {
+                                    // 4채널 통합 플랜 완료 → Deploy 탭으로 이동
+                                    ref
+                                        .read(workbenchTabProvider.notifier)
+                                        .go(kTabDeploy);
+                                  },
                                 );
                           },
                     style: FilledButton.styleFrom(
@@ -346,11 +352,9 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
-                    child: Text(
-                        needsChannelSelection
-                            ? '분석 불가 — 채널을 선택하세요'
-                            : 'AI 분석 시작',
-                        style: const TextStyle(
+                    child: const Text(
+                        'AI 분석 시작',
+                        style: TextStyle(
                             color: Colors.white,
                             letterSpacing: 2,
                             fontSize: 13)),
@@ -1521,4 +1525,100 @@ class _Chip extends StatelessWidget {
               style: const TextStyle(color: Colors.white30, fontSize: 11)),
         ],
       );
+}
+
+// 4채널 FRD 준비 상태 패널 — Idle 화면에 표시.
+class _FourChannelStatusPanel extends StatelessWidget {
+  final List<DriverChannel> driverChannels;
+  final List<String> requiredChannelIds;
+
+  const _FourChannelStatusPanel({
+    required this.driverChannels,
+    required this.requiredChannelIds,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final channelById = {for (final ch in driverChannels) ch.id: ch};
+    final frdReadyCount = requiredChannelIds
+        .where((id) => channelById[id]?.hasParsedFrd == true)
+        .length;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141414),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                '4채널 시스템 튜닝',
+                style: TextStyle(
+                    color: Colors.white54, fontSize: 11, letterSpacing: 1),
+              ),
+              const Spacer(),
+              Text(
+                '$frdReadyCount / 4 FRD 준비',
+                style: TextStyle(
+                  color: frdReadyCount == 4
+                      ? const Color(0xFF4CAF50)
+                      : Colors.amber,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final id in requiredChannelIds)
+            _ChannelStatusRow(channelId: id, channel: channelById[id]),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChannelStatusRow extends StatelessWidget {
+  final String channelId;
+  final DriverChannel? channel;
+
+  const _ChannelStatusRow({required this.channelId, this.channel});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasFrd = channel?.hasParsedFrd == true;
+    final label = channel?.shortLabel ?? channelId;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(
+            hasFrd ? Icons.check_circle_outline : Icons.radio_button_unchecked,
+            size: 13,
+            color: hasFrd ? const Color(0xFF4CAF50) : Colors.white24,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(
+              color: hasFrd ? Colors.white60 : Colors.white24,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            hasFrd ? 'FRD 준비' : 'FRD 없음',
+            style: TextStyle(
+              color: hasFrd ? const Color(0xFF4CAF50) : Colors.white24,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -80,6 +80,9 @@ class CandidateScoringPolicyV2 {
   /// for `proProvisional` — the candidate generator already produces cuts only).
   final double maxBoostDb;
 
+  /// Lower gain bound for device-specific envelopes.
+  final double minGainDb;
+
   /// Item 5 — Q at or below this value receives no Q penalty (full 15 pts).
   final double excessiveQThreshold;
 
@@ -111,6 +114,7 @@ class CandidateScoringPolicyV2 {
     required this.weightedRmsWorstDb,
     required this.maxDeviationWorstDb,
     required this.maxBoostDb,
+    this.minGainDb = double.negativeInfinity,
     required this.excessiveQThreshold,
     required this.excessiveQCeilingQ,
     required this.complexityRefBands,
@@ -139,6 +143,9 @@ class CandidateScoringPolicyV2 {
     if (!maxBoostDb.isFinite || maxBoostDb < 0) {
       throw ScoringV2PolicyException('maxBoostDb must be finite and >= 0.');
     }
+    if (minGainDb.isNaN || minGainDb > maxBoostDb) {
+      throw ScoringV2PolicyException('minGainDb must be <= maxBoostDb.');
+    }
     if (!excessiveQThreshold.isFinite || excessiveQThreshold <= 0) {
       throw ScoringV2PolicyException(
           'excessiveQThreshold must be finite and > 0.');
@@ -154,8 +161,7 @@ class CandidateScoringPolicyV2 {
     if (!headroomPenaltyRatio.isFinite ||
         headroomPenaltyRatio <= 0 ||
         headroomPenaltyRatio > 1) {
-      throw ScoringV2PolicyException(
-          'headroomPenaltyRatio must be in (0, 1].');
+      throw ScoringV2PolicyException('headroomPenaltyRatio must be in (0, 1].');
     }
     if (!protectionMinMarginDb.isFinite || protectionMinMarginDb <= 0) {
       throw ScoringV2PolicyException(
@@ -191,6 +197,25 @@ class CandidateScoringPolicyV2 {
         weightedRmsWorstDb: 10.0,
         maxDeviationWorstDb: 15.0,
         maxBoostDb: 0.0,
+        excessiveQThreshold: 8.0,
+        excessiveQCeilingQ: 14.0,
+        complexityRefBands: 3,
+        headroomPenaltyRatio: 0.7,
+        protectionMinMarginDb: 3.0,
+        rejectionThreshold: 20.0,
+        goodThreshold: 50.0,
+        excellentThreshold: 75.0,
+      );
+
+  factory CandidateScoringPolicyV2.adau1701Icp5() =>
+      const CandidateScoringPolicyV2(
+        id: 'adau1701_icp5_v2',
+        version: 2,
+        targetImprovementRefDb: 6.0,
+        weightedRmsWorstDb: 10.0,
+        maxDeviationWorstDb: 15.0,
+        maxBoostDb: 3.0,
+        minGainDb: -6.0,
         excessiveQThreshold: 8.0,
         excessiveQCeilingQ: 14.0,
         complexityRefBands: 3,
@@ -438,6 +463,11 @@ class ScoredCandidateSetV2 {
   /// All scored candidates in rank order (rank 1 first).
   final List<ScoredCandidateV2> scoredCandidates;
 
+  /// True when scoring ran under [MeasurementConfidenceInterpretation.analysisOnly]
+  /// (single-sweep / insufficient evidence). Candidates are scored and ranked
+  /// normally but the UI Expert approval gate must be satisfied before Apply.
+  final bool requiresExpertApproval;
+
   final List<String> reasons;
   final String policyId;
   final int policyVersion;
@@ -446,6 +476,7 @@ class ScoredCandidateSetV2 {
   const ScoredCandidateSetV2({
     required this.status,
     required this.scoredCandidates,
+    this.requiresExpertApproval = false,
     required this.reasons,
     required this.policyId,
     required this.policyVersion,
@@ -479,6 +510,7 @@ class ScoredCandidateSetV2 {
   Map<String, dynamic> toJson() => {
         'status': status.name,
         'scoredCandidates': [for (final c in scoredCandidates) c.toJson()],
+        if (requiresExpertApproval) 'requiresExpertApproval': true,
         'reasons': reasons,
         'policyId': policyId,
         'policyVersion': policyVersion,
@@ -489,6 +521,7 @@ class ScoredCandidateSetV2 {
   /// Does NOT contain gainDb, q, frequencyHz, or hardware/DSP values.
   Map<String, dynamic> toAiJson() => {
         'status': status.name,
+        if (requiresExpertApproval) 'requiresExpertApproval': true,
         'scoredCandidates': [for (final c in scoredCandidates) c.toAiJson()],
         'reasons': reasons,
       };
@@ -548,23 +581,26 @@ abstract final class CandidateScorerV2 {
       );
     }
 
-    // Item 10 / set-level gate: block automatic promotion when confidence is
-    // insufficient. "analysisOnly" and "remeasure" mean no correction is safe.
+    // Item 10 / set-level gate: block only when evidence is structurally
+    // invalid (remeasure). Under analysisOnly (single-sweep insufficientEvidence)
+    // scoring runs but requiresExpertApproval is set — the UI Expert approval
+    // gate blocks Apply until the user explicitly approves.
     final confidenceInterp = classResult.confidenceInterpretation;
-    if (confidenceInterp == MeasurementConfidenceInterpretation.analysisOnly ||
-        confidenceInterp == MeasurementConfidenceInterpretation.remeasure) {
+    if (confidenceInterp == MeasurementConfidenceInterpretation.remeasure) {
       return ScoredCandidateSetV2(
         status: ScoredCandidateSetV2Status.insufficientEvidence,
         scoredCandidates: const [],
         reasons: [
           'confidenceInterpretation=${confidenceInterp.name} — '
-              'automatic promotion blocked; measurement evidence insufficient.',
+              'remeasure required; scoring blocked.',
         ],
         policyId: policy.id,
         policyVersion: policy.version,
         evidenceRefs: evidenceRefs,
       );
     }
+    final requiresExpertApproval =
+        confidenceInterp == MeasurementConfidenceInterpretation.analysisOnly;
 
     // Build lookup maps (O(1) per candidate).
     final featureMap = <String, AcousticObservedFeature>{
@@ -643,8 +679,10 @@ abstract final class CandidateScorerV2 {
           ? ScoredCandidateSetV2Status.allRejected
           : ScoredCandidateSetV2Status.ok,
       scoredCandidates: scoredCandidates,
+      requiresExpertApproval: requiresExpertApproval,
       reasons: [
-        '${scoredCandidates.length} candidate(s) scored; $acceptedCount accepted.',
+        '${scoredCandidates.length} candidate(s) scored; $acceptedCount accepted.'
+            '${requiresExpertApproval ? ' Expert approval required (single-sweep).' : ''}',
       ],
       policyId: policy.id,
       policyVersion: policy.version,
@@ -671,12 +709,13 @@ abstract final class CandidateScorerV2 {
     // ── Item 4: boost check ─────────────────────────────────────────────────
     // gainDb > maxBoostDb → hard reject (any boost when maxBoostDb = 0).
     // 0 < gainDb ≤ maxBoostDb → compute normally, then apply boost penalty.
-    if (candidate.gainDb > policy.maxBoostDb) {
+    if (candidate.gainDb < policy.minGainDb ||
+        candidate.gainDb > policy.maxBoostDb) {
       return _hardReject(
         candidate,
         prominenceDb,
         'Item 4 — boost exceeds maxBoostDb (${policy.maxBoostDb.toStringAsFixed(1)} dB): '
-            'gainDb ${candidate.gainDb.toStringAsFixed(2)} dB.',
+        'gainDb ${candidate.gainDb.toStringAsFixed(2)} dB.',
         refs,
       );
     }
@@ -726,7 +765,7 @@ abstract final class CandidateScorerV2 {
           math.min(candidate.gainDb.abs(), feature.deviationDb.abs());
       targetImprovementScore =
           (effectiveCorrection / policy.targetImprovementRefDb)
-              .clamp(0.0, 1.0) *
+                  .clamp(0.0, 1.0) *
               25.0;
     } else {
       targetImprovementScore = 0.0;
@@ -737,8 +776,8 @@ abstract final class CandidateScorerV2 {
     final qScore = _excessiveQScore(candidate.q, policy);
 
     // ── Item 7: headroom score ──────────────────────────────────────────────
-    final headroomScore = _headroomScore(
-        candidate.gainDb.abs(), ctx.availableHeadroomDb, policy);
+    final headroomScore =
+        _headroomScore(candidate.gainDb.abs(), ctx.availableHeadroomDb, policy);
 
     // ── Item 8: protection score ────────────────────────────────────────────
     final protectionScore = _protectionScore(ctx.protectionMarginDb, policy);
@@ -807,11 +846,11 @@ abstract final class CandidateScorerV2 {
 
   /// Item 2 — weighted RMS score from a specific [ResponseErrorResult].
   static double _weightedRmsScoreFromError(
-      ResponseErrorResult error, CandidateScoringPolicyV2 policy) =>
+          ResponseErrorResult error, CandidateScoringPolicyV2 policy) =>
       _weightedRmsScoreFromValue(error.weightedRmsDb, policy);
 
   static double _weightedRmsScoreFromValue(
-      double rms, CandidateScoringPolicyV2 policy) =>
+          double rms, CandidateScoringPolicyV2 policy) =>
       (1.0 - (rms / policy.weightedRmsWorstDb).clamp(0.0, 1.0)) * 20.0;
 
   /// Item 3 — max deviation score ∈ [0, 15] from context (set-level fallback).
@@ -826,16 +865,15 @@ abstract final class CandidateScorerV2 {
 
   /// Item 3 — max deviation score from a specific [ResponseErrorResult].
   static double _maxDeviationScoreFromError(
-      ResponseErrorResult error, CandidateScoringPolicyV2 policy) =>
+          ResponseErrorResult error, CandidateScoringPolicyV2 policy) =>
       _maxDeviationScoreFromValue(error.maxDeviationDb, policy);
 
   static double _maxDeviationScoreFromValue(
-      double maxDev, CandidateScoringPolicyV2 policy) =>
+          double maxDev, CandidateScoringPolicyV2 policy) =>
       (1.0 - (maxDev / policy.maxDeviationWorstDb).clamp(0.0, 1.0)) * 15.0;
 
   /// Item 5 — excessive Q score ∈ [0, 15] (15 = no penalty, 0 = excessive).
-  static double _excessiveQScore(
-      double q, CandidateScoringPolicyV2 policy) {
+  static double _excessiveQScore(double q, CandidateScoringPolicyV2 policy) {
     if (q <= policy.excessiveQThreshold) return 15.0;
     final excess = (q - policy.excessiveQThreshold) /
         (policy.excessiveQCeilingQ - policy.excessiveQThreshold);
@@ -876,7 +914,8 @@ abstract final class CandidateScorerV2 {
       switch (interp) {
         MeasurementConfidenceInterpretation.correctableAllowed => 5.0,
         MeasurementConfidenceInterpretation.conservative => 2.5,
-        // analysisOnly / remeasure never reach here (blocked at set level).
+        // analysisOnly: scores run provisionally; confidence item = 0.
+        // remeasure: blocked at set level, never reaches here.
         _ => 0.0,
       };
 
@@ -884,7 +923,8 @@ abstract final class CandidateScorerV2 {
 
   static CandidateScoreGrade _grade(
       double score, CandidateScoringPolicyV2 policy) {
-    if (score >= policy.excellentThreshold) return CandidateScoreGrade.excellent;
+    if (score >= policy.excellentThreshold)
+      return CandidateScoreGrade.excellent;
     if (score >= policy.goodThreshold) return CandidateScoreGrade.good;
     if (score >= policy.rejectionThreshold) return CandidateScoreGrade.marginal;
     return CandidateScoreGrade.rejected;

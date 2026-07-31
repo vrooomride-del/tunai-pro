@@ -548,58 +548,41 @@ class _ImportTabState extends ConsumerState<ImportTab> {
                         : null,
                   )),
 
-              // "Analyze with AI" shortcut — only when FRD data is present.
+              // "Analyze with AI" — 4-channel full-system mode.
+              // Enabled whenever ≥1 FRD is present; no single-channel selection needed.
               if (acoustic.parsedFrdCount > 0) ...[
                 const SizedBox(height: 16),
-                Builder(builder: (context) {
-                  final frdChannels = acoustic.driverChannels
-                      .where((ch) => ch.hasParsedFrd)
-                      .toList();
-                  final repeatChannels = frdChannels
-                      .where((ch) => ch.additionalFrdSweeps.isNotEmpty)
-                      .toList();
-                  // Deterministic selection: exactly one FRD channel, OR
-                  // exactly one channel has repeat evidence.
-                  DriverChannel? autoChannel;
-                  if (frdChannels.length == 1) {
-                    autoChannel = frdChannels.first;
-                  } else if (repeatChannels.length == 1) {
-                    autoChannel = repeatChannels.first;
-                  }
-                  final multipleEligible = frdChannels.length > 1 &&
-                      repeatChannels.length != 1;
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: autoChannel != null
-                              ? () => _analyzeChannel(autoChannel!)
-                              : null,
-                          icon: const Icon(Icons.psychology_outlined, size: 15),
-                          label: const Text('AI로 분석하기'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white60,
-                            side: const BorderSide(color: Colors.white12),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8)),
-                          ),
-                        ),
-                      ),
-                      if (multipleEligible) ...[
-                        const SizedBox(height: 6),
-                        const Text(
-                          '채널이 여러 개입니다 — 아래 카드에서 \'이 채널 분석\'을 선택하세요.',
-                          style: TextStyle(
-                              color: Colors.white38, fontSize: 10),
-                        ),
-                      ],
-                    ],
-                  );
-                }),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      // Full 4-channel path: clear any Expert channel hint and
+                      // navigate to Guided AI without a targetChannelId.
+                      ref
+                          .read(guidedAiTargetChannelProvider.notifier)
+                          .state = null;
+                      ref.read(workbenchTabProvider.notifier).go(kTabGuidedAi);
+                    },
+                    icon: const Icon(Icons.psychology_outlined, size: 15),
+                    label: const Text('AI로 분석하기'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white60,
+                      side: const BorderSide(color: Colors.white12),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                ),
+                if (acoustic.driverChannels
+                    .where((ch) => ch.hasParsedFrd)
+                    .length > 1) ...[
+                  const SizedBox(height: 6),
+                  const Text(
+                    '전체 시스템 분석은 AI로 분석하기를 선택하세요.',
+                    style: TextStyle(color: Colors.white38, fontSize: 10),
+                  ),
+                ],
               ],
 
               // Empty state
@@ -1642,7 +1625,7 @@ class _DriverDataCard extends StatelessWidget {
                     const Icon(Icons.psychology_outlined,
                         color: kProAccent, size: 11),
                     const SizedBox(width: 5),
-                    Text('이 채널 분석',
+                    Text('Expert 단일 채널 분석',
                         style: TextStyle(
                             color: kProAccent.withValues(alpha: 0.85),
                             fontSize: 10)),

@@ -9,6 +9,7 @@ import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/closed_loop_evaluator.dart';
 import '../pro_correction_cycle.dart';
 import '../pro_tuning_report_data.dart' show GuidedTuningSessionSummary;
+import '../deploy/pro_hardware_write_plan.dart';
 import 'pro_explanation.dart';
 import 'pro_local_orchestrator_session.dart';
 import 'pro_orchestrator_plan.dart';
@@ -98,6 +99,13 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
   /// Used to show slot availability vs required count.
   final int? availablePeqSlots;
 
+  /// True only when the local project and completed plan prove that all
+  /// required 2-way stereo channels are ready for a single full-system apply.
+  final bool fullSystemReady;
+
+  /// Channels still missing from the full-system apply proof. Display-only.
+  final List<String> missingChannelIds;
+
   /// Before/After simulation error summary for the confirmation card.
   /// Format: "Before X.X dB → After Y.Y dB (가중 RMS, phase-aware)"
   /// Null when per-candidate simulation was not available.
@@ -117,6 +125,8 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
     this.applyBlockedReason,
     this.targetChannelId,
     this.availablePeqSlots,
+    this.fullSystemReady = false,
+    this.missingChannelIds = const [],
     this.beforeAfterSummary,
     this.insufficientEvidence = false,
   });
@@ -170,6 +180,10 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
   /// [ProClosedLoopPhase.cycleComplete]. Contains the decision and metrics.
   final CorrectionCycle? completedCycle;
 
+  /// One integrated Hardware Write Plan built from all applied channel results.
+  /// Null until the user confirms and all four channels pass readiness.
+  final HardwareWritePlan? hardwareWritePlan;
+
   /// Present when apply succeeded; summarises the full guided-AI session for
   /// handoff to the tuning report. Includes measurement basis, Best/Alternatives,
   /// Before/After simulation, safety status, and apply result.
@@ -184,6 +198,7 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
     this.beforeMeasurementRef,
     this.loopPhase,
     this.completedCycle,
+    this.hardwareWritePlan,
     this.guidedTuningSession,
   });
 }

@@ -467,15 +467,22 @@ void main() {
           closeTo(2.5, 0.01));
     });
 
-    test('analysisOnly confidence blocks entire set (insufficientEvidence)', () {
+    test(
+        'analysisOnly confidence scores candidates with requiresExpertApproval=true',
+        () {
       final result = CandidateScorerV2.score(
         _ctx(
             classificationResult:
                 _classResult(confidence: MeasurementConfidenceInterpretation.analysisOnly)),
         _policy,
       );
-      expect(result.status, ScoredCandidateSetV2Status.insufficientEvidence);
-      expect(result.scoredCandidates, isEmpty);
+      // Scoring now proceeds under analysisOnly; Expert approval UI gate blocks Apply.
+      expect(result.status, ScoredCandidateSetV2Status.ok);
+      expect(result.scoredCandidates, isNotEmpty);
+      expect(result.requiresExpertApproval, isTrue);
+      // Confidence item (item 10) earns 0 pts for analysisOnly.
+      expect(result.scoredCandidates.first.breakdown.confidenceScore,
+          closeTo(0.0, 0.01));
     });
 
     test('remeasure confidence blocks entire set (insufficientEvidence)', () {
@@ -487,6 +494,26 @@ void main() {
       );
       expect(result.status, ScoredCandidateSetV2Status.insufficientEvidence);
       expect(result.scoredCandidates, isEmpty);
+      expect(result.requiresExpertApproval, isFalse);
+    });
+    test('correctableAllowed confidence: requiresExpertApproval is false', () {
+      final result = CandidateScorerV2.score(
+        _ctx(
+            classificationResult: _classResult(
+                confidence: MeasurementConfidenceInterpretation.correctableAllowed)),
+        _policy,
+      );
+      expect(result.status, ScoredCandidateSetV2Status.ok);
+      expect(result.requiresExpertApproval, isFalse);
+    });
+    test('analysisOnly: toJson includes requiresExpertApproval=true', () {
+      final result = CandidateScorerV2.score(
+        _ctx(
+            classificationResult:
+                _classResult(confidence: MeasurementConfidenceInterpretation.analysisOnly)),
+        _policy,
+      );
+      expect(result.toJson()['requiresExpertApproval'], isTrue);
     });
   });
 

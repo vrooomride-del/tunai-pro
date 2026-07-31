@@ -372,8 +372,15 @@ abstract final class AcousticProblemClassifier {
         }
         break;
       case MeasurementConfidenceInterpretation.analysisOnly:
-        if (action == AcousticActionability.safePeqCutCandidate ||
-            action == AcousticActionability.cautiousBroadCorrection) {
+        // narrowPeak and broadPeak are peak-cut types that remain provisional
+        // candidates under single-sweep evidence. The insufficientEvidence UI
+        // gate requires Expert approval before Apply.
+        // Trend and all other correctable types are blocked.
+        final isPeakCut = f.type == AcousticFeatureType.narrowPeak ||
+            f.type == AcousticFeatureType.broadPeak;
+        if (!isPeakCut &&
+            (action == AcousticActionability.safePeqCutCandidate ||
+                action == AcousticActionability.cautiousBroadCorrection)) {
           action = AcousticActionability.noAutomaticCorrection;
         }
         break;

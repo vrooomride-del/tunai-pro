@@ -1,11 +1,11 @@
 // Import → Guided AI channel handoff tests.
 //
 // Cases:
-//   A  One eligible channel       — bottom AI button resolves Woofer L deterministically
-//   B  Multiple eligible channels — bottom button disabled, selection-required message
-//   C  Per-channel "이 채널 분석" — exact channelId stored, GuidedAi shows matching FRD
-//   D  Invalid / missing channelId — GuidedAi shows blocked state, no analysis
-//   E  Existing single-FRD navigation still works
+//   A  One eligible channel            — bottom AI button always enabled (4-channel mode)
+//   B  Multiple eligible channels      — bottom button enabled, new hint text shown
+//   C  Per-channel "Expert 단일 채널 분석" — exact channelId stored, GuidedAi shows matching FRD
+//   D  Invalid / missing channelId     — GuidedAi shows blocked state or 4-channel panel
+//   E  Existing single-FRD navigation still works (global button → null targetChannelId)
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -134,8 +134,8 @@ void main() {
   // ── A: One eligible channel ───────────────────────────────────────────────
 
   group('A. One eligible channel', () {
-    // Woofer L has FRD + repeat sweep; Tweeter L has FRD but no repeat sweep.
-    // Only one channel has repeat evidence → bottom button resolves Woofer L.
+    // Global "AI로 분석하기" is now always the full 4-channel path.
+    // It navigates to Guided AI without setting a targetChannelId.
 
     testWidgets('bottom AI button is enabled', (tester) async {
       _seed([_chWfL, _chTwL]);
@@ -150,8 +150,9 @@ void main() {
       expect(tester.widget<OutlinedButton>(btn).onPressed, isNotNull);
     });
 
-    testWidgets('tapping AI button sets guidedAiTargetChannelProvider to ch_wf_l',
+    testWidgets('tapping AI button clears guidedAiTargetChannelProvider (full-system mode)',
         (tester) async {
+      // Full 4-channel path: global button does NOT set a single channelId.
       _seed([_chWfL, _chTwL]);
       final container = ProviderContainer();
       addTearDown(container.dispose);
@@ -164,7 +165,7 @@ void main() {
       await tester.tap(btn);
       await tester.pump();
 
-      expect(container.read(guidedAiTargetChannelProvider), equals('ch_wf_l'));
+      expect(container.read(guidedAiTargetChannelProvider), isNull);
     });
 
     testWidgets('tapping AI button navigates to kTabGuidedAi', (tester) async {
@@ -183,7 +184,7 @@ void main() {
       expect(container.read(workbenchTabProvider), equals(kTabGuidedAi));
     });
 
-    testWidgets('no channel-selection-required message shown', (tester) async {
+    testWidgets('no old selection-required message shown', (tester) async {
       _seed([_chWfL, _chTwL]);
       final container = ProviderContainer();
       addTearDown(container.dispose);
@@ -199,8 +200,9 @@ void main() {
 
   group('B. Multiple eligible channels', () {
     // Both Woofer L and Woofer R have FRD + repeat sweeps.
+    // With 4-channel mode, the global button is always enabled.
 
-    testWidgets('bottom AI button is disabled when multiple eligible channels',
+    testWidgets('bottom AI button is enabled when multiple eligible channels',
         (tester) async {
       _seed([_chWfL, _chWfR]);
       final container = ProviderContainer();
@@ -211,10 +213,10 @@ void main() {
 
       final btn = _outlinedBtnWith('AI로 분석하기');
       expect(btn, findsOneWidget);
-      expect(tester.widget<OutlinedButton>(btn).onPressed, isNull);
+      expect(tester.widget<OutlinedButton>(btn).onPressed, isNotNull);
     });
 
-    testWidgets('channel-selection-required message shown', (tester) async {
+    testWidgets('full-system hint text shown when multiple channels', (tester) async {
       _seed([_chWfL, _chWfR]);
       final container = ProviderContainer();
       addTearDown(container.dispose);
@@ -222,10 +224,10 @@ void main() {
       await tester.pumpWidget(_importScreen(container));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('채널이 여러 개'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('전체 시스템 분석'), findsAtLeastNWidgets(1));
     });
 
-    testWidgets('tapping disabled button does not navigate or set channelId',
+    testWidgets('tapping button navigates to Guided AI with null channelId',
         (tester) async {
       _seed([_chWfL, _chWfR]);
       final container = ProviderContainer();
@@ -234,13 +236,13 @@ void main() {
       await tester.pumpWidget(_importScreen(container));
       await tester.pumpAndSettle();
 
-      // Button is disabled; tap with warnIfMissed:false in case it's off-screen.
       final btn = _outlinedBtnWith('AI로 분석하기');
       await tester.ensureVisible(btn);
-      await tester.tap(btn, warnIfMissed: false);
+      await tester.tap(btn);
       await tester.pump();
 
-      expect(container.read(workbenchTabProvider), isNot(equals(kTabGuidedAi)));
+      expect(container.read(workbenchTabProvider), equals(kTabGuidedAi));
+      // Full 4-channel path: no single channelId set.
       expect(container.read(guidedAiTargetChannelProvider), isNull);
     });
   });
@@ -257,7 +259,7 @@ void main() {
       await tester.pumpWidget(_importScreen(container));
       await tester.pumpAndSettle();
 
-      expect(find.text('이 채널 분석'), findsNWidgets(2)); // both have FRD
+      expect(find.text('Expert 단일 채널 분석'), findsNWidgets(2)); // both have FRD
     });
 
     testWidgets('tapping Woofer L card button sets channelId to ch_wf_l',
@@ -270,7 +272,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Woofer L appears first in the list.
-      final cardBtn = find.text('이 채널 분석').first;
+      final cardBtn = find.text('Expert 단일 채널 분석').first;
       await tester.ensureVisible(cardBtn);
       await tester.tap(cardBtn);
       await tester.pump();
@@ -287,7 +289,7 @@ void main() {
       await tester.pumpWidget(_importScreen(container));
       await tester.pumpAndSettle();
 
-      final cardBtn = find.text('이 채널 분석').first;
+      final cardBtn = find.text('Expert 단일 채널 분석').first;
       await tester.ensureVisible(cardBtn);
       await tester.tap(cardBtn);
       await tester.pump();
@@ -387,8 +389,10 @@ void main() {
     });
 
     testWidgets(
-        'multiple FRD channels with no channelId shows selection-required message',
+        'multiple FRD channels with no channelId shows 4-channel status panel',
         (tester) async {
+      // 4-channel default mode: no single-channel selection required.
+      // The UI shows the 4-channel FRD status panel instead of a selection prompt.
       _seed([_chWfL, _chTwL]);
       final container = ProviderContainer(overrides: [
         guidedAiProvider.overrideWith(
@@ -400,12 +404,13 @@ void main() {
       await tester.pumpWidget(_aiScreen(container));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('채널을 선택하세요'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('4채널 시스템 튜닝'), findsAtLeastNWidgets(1));
     });
 
     testWidgets(
-        'multiple FRD channels with no channelId disables analysis button',
+        'multiple FRD channels with no channelId enables analysis button',
         (tester) async {
+      // 4-channel default mode: multiple FRD channels no longer block the button.
       _seed([_chWfL, _chTwL]);
       final container = ProviderContainer(overrides: [
         guidedAiProvider.overrideWith(
@@ -416,12 +421,11 @@ void main() {
       await tester.pumpWidget(_aiScreen(container));
       await tester.pumpAndSettle();
 
-      // Button should either not exist or be disabled.
+      // Button must be enabled — 4-channel mode allows start with ≥1 FRD.
       final btns = find.byType(FilledButton);
-      if (btns.evaluate().isNotEmpty) {
-        final widget = tester.widget<FilledButton>(btns.first);
-        expect(widget.onPressed, isNull);
-      }
+      expect(btns, findsAtLeastNWidgets(1));
+      final widget = tester.widget<FilledButton>(btns.first);
+      expect(widget.onPressed, isNotNull);
     });
   });
 
@@ -441,8 +445,9 @@ void main() {
       expect(tester.widget<OutlinedButton>(btn).onPressed, isNotNull);
     });
 
-    testWidgets('single FRD channel: navigation sets correct channelId',
+    testWidgets('single FRD channel: navigation goes to Guided AI (null targetChannelId)',
         (tester) async {
+      // Global button is 4-channel path; single-channel Expert is via card button.
       _seed([_chWfL]);
       final container = ProviderContainer();
       addTearDown(container.dispose);
@@ -455,7 +460,7 @@ void main() {
       await tester.tap(btn);
       await tester.pump();
 
-      expect(container.read(guidedAiTargetChannelProvider), equals('ch_wf_l'));
+      expect(container.read(guidedAiTargetChannelProvider), isNull);
       expect(container.read(workbenchTabProvider), equals(kTabGuidedAi));
     });
 
