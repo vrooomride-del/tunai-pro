@@ -1,6 +1,7 @@
 import '../../adau1701_peq_response.dart' show PeqResponseBand;
 import '../../pro_acoustic_data.dart'
     show AcousticFileType, DriverChannel, FrdSweepEntry, MeasurementProjectState;
+import '../../pro_project.dart' show ProProject;
 import 'pro_tool_execution.dart';
 
 /// A local, typed measurement source for `measurementAnalyze`. The fileName and
@@ -49,6 +50,11 @@ abstract interface class ProToolReferenceResolver {
   MeasurementProjectState resolveMeasurementProjectState(
       String projectId, String ref);
   ProSimulationInput resolveSimulationInput(String projectId, String ref);
+
+  /// Returns the full project snapshot when the resolver is backed by a live
+  /// project (e.g. [ProProjectResolver]). Returns null for in-memory/test
+  /// resolvers that are not connected to a project.
+  ProProject? resolveProjectSnapshot(String projectId);
 }
 
 /// A session-scoped, in-memory resolver. NOT wired to ProjectStore/Riverpod —
@@ -90,4 +96,7 @@ class InMemoryProToolReferenceResolver implements ProToolReferenceResolver {
   @override
   ProSimulationInput resolveSimulationInput(String projectId, String ref) =>
       _resolve<ProSimulationInput>(projectId, ref);
+
+  @override
+  ProProject? resolveProjectSnapshot(String projectId) => null;
 }

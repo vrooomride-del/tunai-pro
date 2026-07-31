@@ -13,6 +13,7 @@ import '../../acoustic/measurement_evidence.dart'
     show ImportedMeasurementEvidence;
 import '../../pro_acoustic_data.dart' show MeasurementParseResult;
 import '../../pro_impedance_analysis.dart' show ImpedanceAnalysisResult;
+import '../../pro_response_error.dart' show ResponseErrorResult;
 import 'pro_tool_execution.dart';
 
 /// Whether confidence was actually computed for a measurement, and if not, why.
@@ -70,6 +71,33 @@ class SimulationArtifact extends ProToolArtifact {
   final List<double> curve;
   SimulationArtifact(List<double> curve)
       : curve = List<double>.unmodifiable(curve);
+}
+
+/// Before-state + per-candidate after-state simulation error metrics.
+///
+/// Produced as a side-channel artifact by [CandidateScoringAdapter] when a
+/// channel ref is supplied as the 3rd inputRef. Stored at
+/// `'${scoringOutputRef}:sim_err'`; never serialised to Cloud JSON.
+class SimulationErrorArtifact extends ProToolArtifact {
+  /// Weighted-RMS and max-deviation of the before-state simulated response.
+  final ResponseErrorResult beforeError;
+
+  /// Per-candidate keyed by [PeqCandidate.candidateId]. Each value is the
+  /// weighted-RMS error of the simulated response after applying that
+  /// candidate's PEQ correction on top of the current bands.
+  final Map<String, ResponseErrorResult> perCandidateErrors;
+
+  /// Simulation path used for scoring.
+  /// `'phase-aware'` when the driver's FRD contains phase data (the same
+  /// condition that enables [_buildPhaseAwareSummedCurve] in the simulation
+  /// engine); `'magnitude-only'` otherwise.
+  final String simulationMode;
+
+  const SimulationErrorArtifact(
+    this.beforeError,
+    this.perCandidateErrors, {
+    this.simulationMode = 'magnitude-only',
+  });
 }
 
 /// Result of [AcousticProblemClassifier.classify]. Carries only observation

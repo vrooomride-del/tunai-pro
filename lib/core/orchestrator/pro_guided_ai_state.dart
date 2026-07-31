@@ -8,6 +8,7 @@
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/closed_loop_evaluator.dart';
 import '../pro_correction_cycle.dart';
+import '../pro_tuning_report_data.dart' show GuidedTuningSessionSummary;
 import 'pro_explanation.dart';
 import 'pro_local_orchestrator_session.dart';
 import 'pro_orchestrator_plan.dart';
@@ -97,6 +98,16 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
   /// Used to show slot availability vs required count.
   final int? availablePeqSlots;
 
+  /// Before/After simulation error summary for the confirmation card.
+  /// Format: "Before X.X dB → After Y.Y dB (가중 RMS, phase-aware)"
+  /// Null when per-candidate simulation was not available.
+  final String? beforeAfterSummary;
+
+  /// True when the source measurement has [ConfidenceStatus.insufficientEvidence].
+  /// The UI must show a warning and require explicit Expert approval before the
+  /// Apply button is enabled.
+  final bool insufficientEvidence;
+
   const ProGuidedAiConfirmPending({
     required this.request,
     required this.plan,
@@ -106,6 +117,8 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
     this.applyBlockedReason,
     this.targetChannelId,
     this.availablePeqSlots,
+    this.beforeAfterSummary,
+    this.insufficientEvidence = false,
   });
 }
 
@@ -157,6 +170,11 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
   /// [ProClosedLoopPhase.cycleComplete]. Contains the decision and metrics.
   final CorrectionCycle? completedCycle;
 
+  /// Present when apply succeeded; summarises the full guided-AI session for
+  /// handoff to the tuning report. Includes measurement basis, Best/Alternatives,
+  /// Before/After simulation, safety status, and apply result.
+  final GuidedTuningSessionSummary? guidedTuningSession;
+
   const ProGuidedAiCompleted({
     required this.outcome,
     required this.explanation,
@@ -166,6 +184,7 @@ class ProGuidedAiCompleted extends ProGuidedAiState {
     this.beforeMeasurementRef,
     this.loopPhase,
     this.completedCycle,
+    this.guidedTuningSession,
   });
 }
 

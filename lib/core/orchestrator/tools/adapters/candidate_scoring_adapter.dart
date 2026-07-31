@@ -1,16 +1,28 @@
 import '../../../acoustic/candidate_scoring.dart';
 import '../../../acoustic/candidate_scoring_v2.dart';
+import '../../../adau1701_peq_response.dart' show PeqResponseBand;
+import '../../../pro_response_error.dart' show ProResponseError, ResponseErrorResult;
+import '../../../pro_simulation_optimizer.dart' show ProSimulationOptimizer;
 import '../../pro_orchestrator_plan.dart';
 import '../../pro_orchestrator_result.dart';
 import '../../pro_orchestrator_types.dart';
 import '../pro_tool_artifact_store.dart';
+import '../pro_tool_execution.dart';
 import '../pro_tool_registry.dart';
 
 /// `acousticScoreCandidates` → [CandidateScorerV2.score] (v2 engine).
 ///
-/// Resolves a [CandidateSetArtifact] (first inputRef) and a
-/// [ClassificationArtifact] (second inputRef) — both produced by prior steps —
+/// Resolves a [CandidateSetArtifact] (inputRefs[0]) and a
+/// [ClassificationArtifact] (inputRefs[1]) — both produced by prior steps —
 /// and calls the v2 deterministic scorer with the proProvisional v2 policy.
+///
+/// Optional inputRefs[2]: a channel ref. When present, per-candidate
+/// phase-aware simulation runs via [ProSimulationOptimizer.simulatedResponse]
+/// and the results are:
+///   1. stored as a [SimulationErrorArtifact] at '${outputRef}:sim_err' for
+///      the controller's Before/After confirmation display, and
+///   2. passed as [CandidateScoringContextV2.perCandidateSimulatedError] so
+///      the v2 scorer can weight simulation quality into each score.
 ///
 /// The v2 result is bridged to the v1 [ScoredCandidateSet] type so that the
 /// existing [CandidateOptimizerAdapter] and downstream consumers continue to
@@ -29,12 +41,94 @@ class CandidateScoringAdapter implements ProToolAdapter {
   @override
   ProOrchestratorResult run(
       ProToolExecutionContext ctx, ProOrchestratorStep step) {
-    final (candsRef, classRef) = pairedInputRefs(step);
+    if (step.inputRefs.length < 2) {
+      throw ProToolException(
+        ProToolFailureCode.missingReference,
+        'acousticScoreCandidates requires at least 2 inputRefs '
+        '(candidatesRef, classificationRef); got ${step.inputRefs.length}.',
+      );
+    }
+    final candsRef = step.inputRefs[0];
+    final classRef = step.inputRefs[1];
+    final channelRef = step.inputRefs.length >= 3 ? step.inputRefs[2] : null;
 
     final candsArtifact =
         ctx.store.getTyped<CandidateSetArtifact>(ctx.projectId, candsRef);
     final classArtifact =
         ctx.store.getTyped<ClassificationArtifact>(ctx.projectId, classRef);
+
+    // Optional per-candidate phase-aware simulation when channelRef is present.
+    ResponseErrorResult? beforeError;
+    Map<String, ResponseErrorResult>? perCandidateErrors;
+
+    if (channelRef != null) {
+      try {
+        final input = ctx.resolver.resolveSimulationInput(ctx.projectId, channelRef);
+        final freqs = input.freqs;
+        if (freqs.isNotEmpty) {
+          final flatTarget = List<double>.filled(freqs.length, 0.0);
+          final weights = ProResponseError.defaultWeights(freqs);
+
+          // Determine simulation mode: phase-aware when FRD phase data is
+          // present (same condition as _buildPhaseAwareSummedCurve in
+          // pro_simulation_engine.dart). The magnitude scoring algorithm is
+          // the same for both modes; the mode label surfaces in the UI.
+          final simulationMode = (input.driver.frdData?.hasPhase == true)
+              ? 'phase-aware'
+              : 'magnitude-only';
+
+          final beforeCurve = ProSimulationOptimizer.simulatedResponse(
+            driver: input.driver,
+            bands: input.bands,
+            freqs: freqs,
+          );
+          beforeError = ProResponseError.analyze(
+            freqs: freqs,
+            responseDb: beforeCurve,
+            targetDb: flatTarget,
+            weights: weights,
+          );
+
+          perCandidateErrors = {};
+          for (final cand in candsArtifact.value.candidates) {
+            final afterBands = [
+              ...input.bands,
+              PeqResponseBand(
+                frequencyHz: cand.frequencyHz,
+                gainDb: cand.gainDb,
+                q: cand.q,
+              ),
+            ];
+            final afterCurve = ProSimulationOptimizer.simulatedResponse(
+              driver: input.driver,
+              bands: afterBands,
+              freqs: freqs,
+            );
+            perCandidateErrors[cand.candidateId] = ProResponseError.analyze(
+              freqs: freqs,
+              responseDb: afterCurve,
+              targetDb: flatTarget,
+              weights: weights,
+            );
+          }
+
+          // Store simulation error artifact as side-channel for Before/After UI.
+          ctx.store.put(
+            ctx.projectId,
+            '${step.outputRef}:sim_err',
+            SimulationErrorArtifact(
+              beforeError,
+              Map.unmodifiable(perCandidateErrors),
+              simulationMode: simulationMode,
+            ),
+          );
+        }
+      } catch (_) {
+        // Simulation is best-effort — scoring continues without it.
+        beforeError = null;
+        perCandidateErrors = null;
+      }
+    }
 
     // Score with v2 engine. correctionPlan is null — the candidate generator
     // already filters non-correctable directives; the disposition guard is a
@@ -42,6 +136,7 @@ class CandidateScoringAdapter implements ProToolAdapter {
     final v2ctx = CandidateScoringContextV2(
       candidateSet: candsArtifact.value,
       classificationResult: classArtifact.value,
+      perCandidateSimulatedError: perCandidateErrors,
     );
     final v2result = CandidateScorerV2.score(
         v2ctx, CandidateScoringPolicyV2.proProvisional());

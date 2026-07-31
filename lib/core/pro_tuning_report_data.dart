@@ -448,6 +448,47 @@ class TuningReportRevisions {
       );
 }
 
+// ── Guided tuning session summary ────────────────────────────────────────────
+
+/// Compact, frozen record of a completed guided-AI tuning session for handoff
+/// to the tuning report. All fields are display-only strings; no DSP value.
+/// Transient — not serialised to JSON (session-scoped, not persisted).
+class GuidedTuningSessionSummary {
+  /// Human-readable measurement basis, e.g. "FRD (유효)" or
+  /// "단일 FRD (신뢰도 부족)".
+  final String? measurementBasis;
+
+  final int selectedCandidateCount;
+
+  /// Label of the best (rank-1) selected candidate, e.g. "A+ 200 Hz -3.0 dB Q:2.0".
+  final String? bestCandidateLabel;
+
+  /// Labels for all other selected candidates.
+  final List<String> alternativeLabels;
+
+  /// Before/After RMS summary string from [SimulationErrorArtifact].
+  final String? beforeAfterSummary;
+
+  /// 'phase-aware' or 'magnitude-only' (from [SimulationErrorArtifact.simulationMode]).
+  final String? simulationMode;
+
+  final String safetyStatusLabel;
+  final String applyStatusLabel;
+  final DateTime generatedAt;
+
+  const GuidedTuningSessionSummary({
+    this.measurementBasis,
+    required this.selectedCandidateCount,
+    this.bestCandidateLabel,
+    this.alternativeLabels = const [],
+    this.beforeAfterSummary,
+    this.simulationMode,
+    required this.safetyStatusLabel,
+    required this.applyStatusLabel,
+    required this.generatedAt,
+  });
+}
+
 // ── Top-level report snapshot ─────────────────────────────────────────────────
 
 class TuningReportData {
@@ -468,6 +509,12 @@ class TuningReportData {
   /// Summarizes the most-recently-created profile.
   final TuningReportFactoryProfileSummary? factoryProfile;
 
+  /// Present when this report was built immediately after a completed guided-AI
+  /// tuning session. Carries session-specific data (candidates, Before/After,
+  /// safety, apply result) that [buildTuningReport] cannot derive from project
+  /// state alone. Transient — omitted from [toJson].
+  final GuidedTuningSessionSummary? guidedTuningSession;
+
   const TuningReportData({
     this.schemaVersion = kTuningReportSchemaVersion,
     required this.generatedAt,
@@ -482,6 +529,7 @@ class TuningReportData {
     required this.warnings,
     required this.revisions,
     this.factoryProfile,
+    this.guidedTuningSession,
   });
 
   Map<String, dynamic> toJson() => {
@@ -538,6 +586,7 @@ TuningReportData buildTuningReport(
   ProProject project,
   ProMeasurementStore measurementStore, {
   DateTime? generatedAt,
+  GuidedTuningSessionSummary? guidedTuningSession,
 }) {
   final acoustic = project.acousticState;
   final tuning = project.tuningState;
@@ -691,6 +740,7 @@ TuningReportData buildTuningReport(
       optimizer: project.optimizerState.revision,
     ),
     factoryProfile: factoryProfileSummary,
+    guidedTuningSession: guidedTuningSession,
   );
 }
 

@@ -1,5 +1,6 @@
 import '../../../acoustic/acoustic_classification_policy.dart';
 import '../../../acoustic/acoustic_problem_classifier.dart';
+import '../../../acoustic/measurement_confidence.dart' show ConfidenceStatus;
 import '../../../acoustic/measurement_evidence.dart' show MeasurementDomain;
 import '../../pro_orchestrator_plan.dart';
 import '../../pro_orchestrator_result.dart';
@@ -50,6 +51,18 @@ class AcousticClassifyAdapter implements ProToolAdapter {
         'MeasurementArtifact has no confidence result '
         '(evaluation: ${artifact.evaluation.name}) — '
         'acousticClassify requires a FRD measurement with evaluated confidence.',
+      );
+    }
+
+    // Gate 3: block invalid measurements (corrupt / unusable data) but allow
+    // insufficientEvidence (normal for single-sweep FRD imports that lack
+    // repeatability / SNR evidence). Only truly invalid measurements must not
+    // produce candidates.
+    if (confidence.status == ConfidenceStatus.invalid) {
+      throw ProToolException(
+        ProToolFailureCode.confidenceCalculationFailure,
+        'measurement confidence ${confidence.status.name}: ${confidence.grade.name}. '
+        'candidate generation blocked — measurement data is invalid.',
       );
     }
 

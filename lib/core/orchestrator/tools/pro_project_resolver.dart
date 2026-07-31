@@ -95,6 +95,12 @@ class ProProjectResolver implements ProToolReferenceResolver {
         driver: driver, bands: bands, freqs: List<double>.unmodifiable(freqs));
   }
 
+  @override
+  ProProject? resolveProjectSnapshot(String projectId) {
+    _guard(projectId);
+    return _project;
+  }
+
   /// Not supported — raw measurement file content is not stored in
   /// [ProProject]. Use a content-aware resolver for `measurementAnalyze`.
   @override

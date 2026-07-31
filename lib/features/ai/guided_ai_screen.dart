@@ -405,6 +405,8 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   applyBlockedReason: aiState.applyBlockedReason,
                   targetChannelId: aiState.targetChannelId,
                   availablePeqSlots: aiState.availablePeqSlots,
+                  beforeAfterSummary: aiState.beforeAfterSummary,
+                  insufficientEvidence: aiState.insufficientEvidence,
                   onConfirm: () => ref
                       .read(guidedAiProvider.notifier)
                       .confirm(aiState.request.stepId),
@@ -714,12 +716,18 @@ class _StepRow extends StatelessWidget {
   }
 }
 
-class _ConfirmationCard extends StatelessWidget {
+class _ConfirmationCard extends StatefulWidget {
   final ProUserConfirmationRequest request;
   final List<CandidatePreviewEntry>? candidatePreview;
   final String? applyBlockedReason;
   final String? targetChannelId;
   final int? availablePeqSlots;
+  final String? beforeAfterSummary;
+
+  /// True when the measurement has insufficientEvidence confidence. Requires
+  /// an explicit Expert approval checkbox before the Apply button is enabled.
+  final bool insufficientEvidence;
+
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
 
@@ -729,12 +737,27 @@ class _ConfirmationCard extends StatelessWidget {
     this.applyBlockedReason,
     this.targetChannelId,
     this.availablePeqSlots,
+    this.beforeAfterSummary,
+    this.insufficientEvidence = false,
     required this.onConfirm,
     required this.onCancel,
   });
 
   @override
-  Widget build(BuildContext context) => Container(
+  State<_ConfirmationCard> createState() => _ConfirmationCardState();
+}
+
+class _ConfirmationCardState extends State<_ConfirmationCard> {
+  bool _expertApprovalGranted = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final isBlocked = widget.applyBlockedReason != null ||
+        (widget.insufficientEvidence && !_expertApprovalGranted);
+    return _buildCard(isBlocked);
+  }
+
+  Widget _buildCard(bool isBlocked) => Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: const Color(0xFF1A1A1A),
@@ -751,25 +774,27 @@ class _ConfirmationCard extends StatelessWidget {
                     letterSpacing: 2,
                     fontSize: 12)),
             const SizedBox(height: 8),
-            Text(request.explanation.summary,
+            Text(widget.request.explanation.summary,
                 style: const TextStyle(
                     color: Colors.white70, fontSize: 13, height: 1.5)),
-            if (candidatePreview != null && candidatePreview!.isNotEmpty) ...[
+            if (widget.candidatePreview != null &&
+                widget.candidatePreview!.isNotEmpty) ...[
               const SizedBox(height: 14),
               Row(
                 children: [
                   Text(
-                    '후보 ${candidatePreview!.length}개',
+                    '후보 ${widget.candidatePreview!.length}개',
                     style: const TextStyle(
                         color: Colors.white38, fontSize: 11, letterSpacing: 1.5),
                   ),
-                  if (availablePeqSlots != null) ...[
+                  if (widget.availablePeqSlots != null) ...[
                     const Text('  /  ',
                         style: TextStyle(color: Colors.white24, fontSize: 11)),
                     Text(
-                      '슬롯 $availablePeqSlots개 가용',
+                      '슬롯 ${widget.availablePeqSlots}개 가용',
                       style: TextStyle(
-                        color: candidatePreview!.length > availablePeqSlots!
+                        color: widget.candidatePreview!.length >
+                                widget.availablePeqSlots!
                             ? Colors.redAccent
                             : Colors.white38,
                         fontSize: 11,
@@ -804,7 +829,7 @@ class _ConfirmationCard extends StatelessWidget {
                       _th('Safety'),
                     ],
                   ),
-                  for (final c in candidatePreview!)
+                  for (final c in widget.candidatePreview!)
                     TableRow(
                       children: [
                         _td('${c.applicationOrder}'),
@@ -820,7 +845,92 @@ class _ConfirmationCard extends StatelessWidget {
                 ],
               ),
             ],
-            if (applyBlockedReason != null) ...[
+            if (widget.beforeAfterSummary != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(8),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.show_chart,
+                        color: Colors.white38, size: 13),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.beforeAfterSummary!,
+                        style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 11,
+                            height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (widget.insufficientEvidence) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withAlpha(30),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.amber.withAlpha(60)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded,
+                        color: Colors.amber, size: 13),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '단일 FRD — 반복 측정 없음. 신뢰도가 낮습니다. Expert 승인 후에만 적용 가능합니다.',
+                        style: TextStyle(
+                            color: Colors.amber,
+                            fontSize: 11,
+                            height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () =>
+                    setState(() => _expertApprovalGranted = !_expertApprovalGranted),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _expertApprovalGranted
+                            ? Icons.check_box
+                            : Icons.check_box_outline_blank,
+                        size: 16,
+                        color: _expertApprovalGranted
+                            ? Colors.white70
+                            : Colors.white24,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Expert로서 낮은 신뢰도를 인지하고 적용을 승인합니다',
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (widget.applyBlockedReason != null) ...[
               const SizedBox(height: 10),
               Container(
                 padding:
@@ -836,7 +946,7 @@ class _ConfirmationCard extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '적용 차단: $applyBlockedReason',
+                        '적용 차단: ${widget.applyBlockedReason}',
                         style: const TextStyle(
                             color: Colors.redAccent,
                             fontSize: 11,
@@ -852,7 +962,7 @@ class _ConfirmationCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: onCancel,
+                    onPressed: widget.onCancel,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.white38,
                       side: const BorderSide(color: Colors.white12),
@@ -865,7 +975,7 @@ class _ConfirmationCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
-                    onPressed: applyBlockedReason != null ? null : onConfirm,
+                    onPressed: isBlocked ? null : widget.onConfirm,
                     style: FilledButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: Colors.black,
