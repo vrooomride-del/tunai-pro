@@ -8,6 +8,7 @@ import '../pro_simulation_optimizer.dart';
 import '../pro_tuning_data.dart';
 import 'candidate_optimizer.dart';
 import 'candidate_safety.dart';
+import 'listening_position_frd.dart';
 
 enum FullSystemSummationMode { phaseAware, magnitudeOnly }
 
@@ -18,6 +19,9 @@ class FullSystemCandidateEvaluation {
   final double afterWeightedRmsDb;
   final Map<String, List<SelectedCandidate>> selectedByChannel;
   final int combinationsEvaluated;
+  final Map<String, ({double before, double after, double improvement})>
+      positionMetrics;
+  final List<String> rejectedReasons;
 
   const FullSystemCandidateEvaluation({
     required this.accepted,
@@ -26,7 +30,23 @@ class FullSystemCandidateEvaluation {
     required this.afterWeightedRmsDb,
     required this.selectedByChannel,
     required this.combinationsEvaluated,
+    this.positionMetrics = const {},
+    this.rejectedReasons = const [],
   });
+
+  double? get averagePositionImprovement {
+    if (positionMetrics.isEmpty) return null;
+    return positionMetrics.values
+            .map((metric) => metric.improvement)
+            .reduce((a, b) => a + b) /
+        positionMetrics.length;
+  }
+
+  double? get worstPositionImprovement => positionMetrics.isEmpty
+      ? null
+      : positionMetrics.values
+          .map((metric) => metric.improvement)
+          .reduce(math.min);
 }
 
 class FullSystemResponseMeasurement {
@@ -99,6 +119,7 @@ abstract final class FullSystemCandidateEvaluator {
   static FullSystemCandidateEvaluation evaluate({
     required ProProject project,
     required Map<String, CandidateSafetyResult> safetyByChannel,
+    List<ListeningPositionFrdSet> listeningPositions = const [],
   }) {
     final drivers = <String, DriverChannel>{
       for (final driver in project.acousticState.driverChannels)
@@ -159,7 +180,14 @@ abstract final class FullSystemCandidateEvaluator {
     };
     Map<String, List<SelectedCandidate>> best = const {};
     var bestRms = double.infinity;
+    var bestRobustScore = double.infinity;
     var evaluated = 0;
+    Map<String, ({double before, double after, double improvement})>
+        bestPositions = const {};
+    var bestObservedPositionScore = double.infinity;
+    Map<String, ({double before, double after, double improvement})>
+        bestObservedPositions = const {};
+    final rejectedReasons = <String>[];
 
     void search(int index, Map<String, List<SelectedCandidate>> current) {
       if (index == requiredChannelIds.length) {
@@ -178,8 +206,57 @@ abstract final class FullSystemCandidateEvaluator {
           targetDb: target,
           weights: weights,
         );
-        if (error.weightedRmsDb < bestRms) {
+        final positionResults =
+            <String, ({double before, double after, double improvement})>{};
+        var robust = true;
+        for (final position in listeningPositions) {
+          if (!requiredChannelIds.every(position.channels.containsKey)) {
+            robust = false;
+            rejectedReasons.add('${position.label}: missing channel FRD');
+            break;
+          }
+          final positionProject = _projectAtPosition(project, position);
+          final positionBefore = _measureForSelection(positionProject, const {},
+              applyTuning: true);
+          final positionAfter =
+              _measureForSelection(positionProject, current, applyTuning: true);
+          if (positionBefore == null || positionAfter == null) {
+            robust = false;
+            rejectedReasons.add('${position.label}: insufficient FRD coverage');
+            break;
+          }
+          final improvement =
+              positionBefore.weightedRmsDb - positionAfter.weightedRmsDb;
+          positionResults[position.positionId] = (
+            before: positionBefore.weightedRmsDb,
+            after: positionAfter.weightedRmsDb,
+            improvement: improvement,
+          );
+          if (improvement <= 0) {
+            robust = false;
+            rejectedReasons.add(
+                '${position.label}: primary/worst position did not improve');
+            break;
+          }
+        }
+        final robustScore = positionResults.isEmpty
+            ? error.weightedRmsDb
+            : positionResults.values
+                .map((m) => m.after)
+                .reduce((a, b) => a + b) /
+                positionResults.length;
+        if (positionResults.isNotEmpty &&
+            robustScore < bestObservedPositionScore) {
+          bestObservedPositionScore = robustScore;
+          bestObservedPositions = Map.unmodifiable(positionResults);
+        }
+        if (robust &&
+            (listeningPositions.isEmpty
+                ? error.weightedRmsDb < bestRms
+                : robustScore < bestRobustScore)) {
           bestRms = error.weightedRmsDb;
+          bestRobustScore = robustScore;
+          bestPositions = positionResults;
           best = {
             for (final entry in current.entries)
               entry.key: List<SelectedCandidate>.unmodifiable(entry.value),
@@ -197,6 +274,9 @@ abstract final class FullSystemCandidateEvaluator {
     search(0, {});
     const minimumImprovementDb = 0.01;
     final accepted = bestRms <= before.weightedRmsDb - minimumImprovementDb;
+    if (!accepted && best.isNotEmpty) {
+      rejectedReasons.add('primary: weighted RMS did not improve');
+    }
     return FullSystemCandidateEvaluation(
       accepted: accepted,
       mode: mode,
@@ -204,7 +284,54 @@ abstract final class FullSystemCandidateEvaluator {
       afterWeightedRmsDb: bestRms,
       selectedByChannel: accepted ? best : const {},
       combinationsEvaluated: evaluated,
+        positionMetrics: bestPositions.isNotEmpty
+            ? bestPositions
+            : bestObservedPositions,
+      rejectedReasons: List.unmodifiable(rejectedReasons),
     );
+  }
+
+  static ProProject _projectAtPosition(
+      ProProject project, ListeningPositionFrdSet position) {
+    final channels = project.acousticState.driverChannels.map((channel) {
+      final frd = position.channels[channel.id];
+      return frd == null ? channel : channel.copyWith(frdData: frd);
+    }).toList(growable: false);
+    return project.copyWith(
+        acousticState:
+            project.acousticState.copyWith(driverChannels: channels));
+  }
+
+  static FullSystemResponseMeasurement? _measureForSelection(
+      ProProject project, Map<String, List<SelectedCandidate>> selected,
+      {required bool applyTuning}) {
+    final drivers = <String, DriverChannel>{
+      for (final driver in project.acousticState.driverChannels)
+        if (requiredChannelIds.contains(driver.id) && driver.hasParsedFrd)
+          driver.id: driver,
+    };
+    if (!requiredChannelIds.every(drivers.containsKey)) return null;
+    final mode =
+        requiredChannelIds.every((id) => drivers[id]!.frdData!.hasPhase)
+            ? FullSystemSummationMode.phaseAware
+            : FullSystemSummationMode.magnitudeOnly;
+    final freqs = _commonFrequencyGrid(drivers.values);
+    if (freqs.length < 2) return null;
+    final curve = _summedResponse(
+      project: project,
+      drivers: drivers,
+      freqs: freqs,
+      mode: mode,
+      selectedByChannel: selected,
+      rawMeasuredFrd: !applyTuning,
+    );
+    final error = ProResponseError.analyze(
+        freqs: freqs,
+        responseDb: curve,
+        targetDb: List.filled(freqs.length, 0),
+        weights: ProResponseError.defaultWeights(freqs));
+    return FullSystemResponseMeasurement(
+        mode: mode, weightedRmsDb: error.weightedRmsDb);
   }
 
   static List<double> _commonFrequencyGrid(Iterable<DriverChannel> drivers) {

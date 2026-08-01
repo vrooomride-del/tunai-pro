@@ -6,6 +6,7 @@ import 'package:tunai_pro/core/acoustic/candidate_scoring.dart';
 import 'package:tunai_pro/core/acoustic/candidate_set.dart';
 import 'package:tunai_pro/core/acoustic/correction_plan.dart';
 import 'package:tunai_pro/core/acoustic/full_system_candidate_evaluator.dart';
+import 'package:tunai_pro/core/acoustic/listening_position_frd.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
@@ -106,6 +107,56 @@ Map<String, CandidateSafetyResult> _safety() => {
     };
 
 void main() {
+  ListeningPositionFrdSet position(String id, ProProject source) =>
+      ListeningPositionFrdSet(
+        positionId: id,
+        label: id,
+        channels: {
+          for (final channel in source.acousticState.driverChannels)
+            channel.id: channel.frdData!,
+        },
+      );
+
+  test('primary improvement plus other-position worsening is rejected', () {
+    final primary =
+        _project(magnitudeDb: 12, withPhase: false, channelGainDb: -6.0206);
+    final other =
+        _project(magnitudeDb: 0, withPhase: false, channelGainDb: -6.0206);
+    final result = FullSystemCandidateEvaluator.evaluate(
+      project: primary,
+      safetyByChannel: _safety(),
+      listeningPositions: [position('right-seat', other)],
+    );
+    expect(result.accepted, isFalse);
+    expect(result.rejectedReasons, isNotEmpty);
+    expect(result.positionMetrics['right-seat'], isNotNull);
+  });
+
+  test(
+      'all supplied positions improve: lowest average weighted RMS is accepted',
+      () {
+    final primary = _project(magnitudeDb: 0, withPhase: false);
+    final result = FullSystemCandidateEvaluator.evaluate(
+      project: primary,
+      safetyByChannel: _safety(),
+      listeningPositions: [position('left-seat', primary)],
+    );
+    expect(result.accepted, isTrue);
+    expect(result.positionMetrics['left-seat']!.improvement, greaterThan(0));
+  });
+
+  test('no listening positions preserves the primary result exactly', () {
+    final project = _project(magnitudeDb: 0, withPhase: false);
+    final baseline = FullSystemCandidateEvaluator.evaluate(
+        project: project, safetyByChannel: _safety());
+    final noPositions = FullSystemCandidateEvaluator.evaluate(
+        project: project,
+        safetyByChannel: _safety(),
+        listeningPositions: const []);
+    expect(noPositions.accepted, baseline.accepted);
+    expect(noPositions.afterWeightedRmsDb, baseline.afterWeightedRmsDb);
+  });
+
   test('individual cuts that worsen the full sum are rejected', () {
     final result = FullSystemCandidateEvaluator.evaluate(
       project: _project(
