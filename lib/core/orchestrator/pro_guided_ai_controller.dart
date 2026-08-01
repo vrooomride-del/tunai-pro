@@ -1468,7 +1468,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           stepId: '$p-s4-generate',
           toolId: ProOrchestratorToolId.acousticGenerateCandidates,
           objective: '보정 후보 생성 ($channelRef)',
-          inputRefs: ['$p-plan', '$p-classify', channelRef],
+          inputRefs: ['$p-plan', '$p-classify'],
           outputRef: '$p-candidates',
           requiresUserConfirmation: false,
         ),
@@ -1476,8 +1476,8 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           stepId: '$p-s5-score',
           toolId: ProOrchestratorToolId.acousticScoreCandidates,
           objective: '후보 점수화 ($channelRef)',
-          // inputRefs[2] = channelRef lets the scorer run phase-aware simulation
-          // and enables _resolveChannelForSafetyRef to trace back to this channel.
+          // inputRefs[2] is the aligned full-system/channel context. It belongs
+          // to scoring (joint simulation), never candidate generation.
           inputRefs: ['$p-candidates', '$p-classify', channelRef],
           outputRef: '$p-scored',
           requiresUserConfirmation: false,

@@ -1937,8 +1937,7 @@ void main() {
 
     test(
         'Cloud success with single-channel plan → local 4-channel plan runs '
-        '(cloud plan is ignored when FRD data is available)',
-        () async {
+        '(cloud plan is ignored when FRD data is available)', () async {
       // Cloud proposes only ch_tw_l. With FRD data present, the controller
       // ignores the cloud plan and runs the local 4-channel deterministic
       // pipeline instead → fullSystemReady=true, all 4 channels applied.
@@ -2101,15 +2100,13 @@ void main() {
 
     test(
         'Cloud success + 4FRD → local 4-channel plan runs '
-        '(cloud plan is ignored, explanation forwarded)',
-        () async {
+        '(cloud plan is ignored, explanation forwarded)', () async {
       // Cloud returns a single-channel plan. With 4 FRDs present the controller
       // ignores the cloud plan and runs the local deterministic 4-channel
       // pipeline instead → fullSystemReady=true.
       final ctrl = ProGuidedAiController(
         service: ProOrchestrateService(
-          dio: _dio(
-              _envelope(_cloudResponse(_cloudPlanViaMeasure('ch_wf_r')))),
+          dio: _dio(_envelope(_cloudResponse(_cloudPlanViaMeasure('ch_wf_r')))),
         ),
         adapterOverrides: _cloudAdapters(),
       );
@@ -2249,8 +2246,7 @@ void main() {
       HardwareWritePlan? writePlan;
       final ctrl = ProGuidedAiController(
         service: ProOrchestrateService(
-          dio: _dio(_envelope(
-              _cloudResponse(_cloudPlanViaMeasure('ch_tw_l')))),
+          dio: _dio(_envelope(_cloudResponse(_cloudPlanViaMeasure('ch_tw_l')))),
         ),
         adapterOverrides: _cloudAdapters(),
       );
@@ -2275,7 +2271,8 @@ void main() {
       expect(applyCallCount, 4,
           reason: 'all 4 channels must be applied after approval');
       expect(writePlan, isNotNull,
-          reason: 'hardware write plan must be non-null after full-system approval');
+          reason:
+              'hardware write plan must be non-null after full-system approval');
     });
 
     test('confirmed 4-channel: all required channels in combined apply result',
@@ -2386,7 +2383,8 @@ void main() {
       return applyCallCount;
     }
 
-    test('legacy safety-only path: 1-channel FRD → onApply=0 (fullSystemReady=false)',
+    test(
+        'legacy safety-only path: 1-channel FRD → onApply=0 (fullSystemReady=false)',
         () async {
       // _projectWith1Frd has only ch_tw_l FRD → 3 channels missing → !fullSystemReady.
       // Even though safety passes and anyPermitted=true, the legacy path is now
@@ -2396,7 +2394,8 @@ void main() {
         _projectWith1Frd(),
       );
       expect(count, 0,
-          reason: 'legacy path must not call onApply when fullSystemReady=false');
+          reason:
+              'legacy path must not call onApply when fullSystemReady=false');
     });
 
     test('analyzedChannelId=null in safety-only plan → onApply=0', () async {
@@ -2408,10 +2407,12 @@ void main() {
         _projectWith4Frd(), // 4-FRD project so fullSystemReady is not the blocker
       );
       expect(count, 0,
-          reason: 'null analyzedChannelId must prevent onApply regardless of FRD state');
+          reason:
+              'null analyzedChannelId must prevent onApply regardless of FRD state');
     });
 
-    test('cloud safety-only plan: 1-channel cloud via measurementAnalyze → onApply=0',
+    test(
+        'cloud safety-only plan: 1-channel cloud via measurementAnalyze → onApply=0',
         () async {
       // Cloud plan: measurementAnalyze(inputRefs:['ch_wf_r']) → safety, no optimize.
       // BFS resolves ch_wf_r but only 1 channel has safety — fullSystemReady=false.
@@ -2481,7 +2482,8 @@ void main() {
           reason: '4 FRD channels → 28-step local plan');
     });
 
-    test('start() without targetChannelId uses all FRD-ready required channels', () async {
+    test('start() without targetChannelId uses all FRD-ready required channels',
+        () async {
       // Cloud failure → local fallback → frdReadyChannelIds drives localMeasRefs.
       // _projectWith4Frd has 4 FRD-ready channels → 28 step records.
       final ctrl = ProGuidedAiController(
@@ -2489,7 +2491,9 @@ void main() {
         adapterOverrides: stubs(),
       );
       ProGuidedAiCompleted? done;
-      ctrl.addListener((s) { if (s is ProGuidedAiCompleted) done = s; });
+      ctrl.addListener((s) {
+        if (s is ProGuidedAiCompleted) done = s;
+      });
       await ctrl.start(
         project: _projectWith4Frd(),
         userGoal: 'test',
@@ -2500,11 +2504,11 @@ void main() {
           reason: 'default path uses all 4 FRD-ready channels');
     });
 
-    test('candidate generation receives classify artifact and exact channelId', () async {
+    test('all candidate generation steps receive exactly plan + classify',
+        () async {
       // Regression guard: _buildLocalFallbackPlan had inputRefs: ['$p-plan', '$p-measure']
       // which caused typeMismatch → ProToolFailure → all 4 channels got 0 candidates.
-      // Correct wiring: inputRefs[1] points to '$p-classify' and inputRefs[2]
-      // preserves the channel whose Driver/FRD/XO range must be applied.
+      // Correct wiring: generateCandidates has the strict two-ref contract.
       final capturedInputRefs = <String, List<String>>{};
       final recordingAdapter = _RecordingAdapter(
         ProOrchestratorToolId.acousticGenerateCandidates,
@@ -2513,8 +2517,8 @@ void main() {
       final ctrl = ProGuidedAiController(
         service: ProOrchestrateService(dio: _failingDio()),
         adapterOverrides: [
-          ...stubs().where(
-              (a) => a.toolId != ProOrchestratorToolId.acousticGenerateCandidates),
+          ...stubs().where((a) =>
+              a.toolId != ProOrchestratorToolId.acousticGenerateCandidates),
           recordingAdapter,
         ],
       );
@@ -2526,15 +2530,41 @@ void main() {
           reason: 'generate step must have run');
       for (final entry in capturedInputRefs.entries) {
         final refs = entry.value;
-        expect(refs.length, 3,
-            reason: 'generate step needs plan, classify, and channelId refs');
+        expect(refs.length, 2,
+            reason: 'generate step accepts exactly plan + classify refs');
         expect(refs[1], endsWith('-classify'),
             reason: 'inputRefs[1] must be classify artifact, not measure');
         expect(refs[1], isNot(endsWith('-measure')),
             reason: 'inputRefs[1] must NOT be the raw measurement ref');
-        expect(refs[2], isIn(['ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r']),
-            reason: 'inputRefs[2] must preserve the exact source channel');
       }
+    });
+
+    test('alignment context is consumed by system scoring for all 4 channels',
+        () async {
+      final capturedInputRefs = <String, List<String>>{};
+      final ctrl = ProGuidedAiController(
+        service: ProOrchestrateService(dio: _failingDio()),
+        adapterOverrides: [
+          ...stubs().where(
+              (a) => a.toolId != ProOrchestratorToolId.acousticScoreCandidates),
+          _RecordingAdapter(
+            ProOrchestratorToolId.acousticScoreCandidates,
+            capturedInputRefs,
+          ),
+        ],
+      );
+
+      final states = await _collectWith(ctrl, _projectWith4Frd());
+      expect(states.last, isA<ProGuidedAiCompleted>());
+      expect(capturedInputRefs.length, 4);
+      final alignmentRefs = <String>{};
+      for (final refs in capturedInputRefs.values) {
+        expect(refs.length, 3);
+        expect(refs[0], endsWith('-candidates'));
+        expect(refs[1], endsWith('-classify'));
+        alignmentRefs.add(refs[2]);
+      }
+      expect(alignmentRefs, const {'ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r'});
     });
   });
 
@@ -2579,12 +2609,14 @@ void main() {
       ctrl.confirm(pending.request.stepId);
       await future;
       expect(writePlan, isNotNull,
-          reason: 'HardwareWritePlan must be produced for no-peqChannels project');
+          reason:
+              'HardwareWritePlan must be produced for no-peqChannels project');
       expect(writePlan!.operations, isNotEmpty,
           reason: 'plan must contain actual PEQ write operations');
     });
 
-    test('no peqChannels → 1 candidate per channel → bandIndex 0 for all channels',
+    test(
+        'no peqChannels → 1 candidate per channel → bandIndex 0 for all channels',
         () async {
       HardwareWritePlan? writePlan;
       final ctrl = _ctrl(_peqStubs());
@@ -2604,15 +2636,16 @@ void main() {
               op.parameterKind.name == 'peqFrequency')
           .toList();
       expect(freqOps.map((op) => op.bandIndex).toSet(), {0},
-          reason: '1 candidate per channel → all land at band 0 (first free slot)');
-      expect(freqOps.map((op) => op.channelId).toSet(), requiredChannels.toSet(),
+          reason:
+              '1 candidate per channel → all land at band 0 (first free slot)');
+      expect(
+          freqOps.map((op) => op.channelId).toSet(), requiredChannels.toSet(),
           reason: 'all 4 required channels must have a write op');
     });
 
     test(
         'no peqChannels, 3 candidates per channel → bands 0/1/2 used '
-        '(no slot duplicates per channel)',
-        () async {
+        '(no slot duplicates per channel)', () async {
       HardwareWritePlan? writePlan;
       final ctrl = _ctrl(_peqStubs(candidateCount: 3));
       final future = ctrl.start(
@@ -2627,19 +2660,18 @@ void main() {
       // Per channel, bandIndices must be exactly {0, 1, 2} — no duplicates.
       for (final ch in requiredChannels) {
         final chOps = writePlan!.operations
-            .where((op) =>
-                op.channelId == ch && op.bandIndex != null)
+            .where((op) => op.channelId == ch && op.bandIndex != null)
             .toList();
         final indices = chOps.map((op) => op.bandIndex!).toSet();
         expect(indices, {0, 1, 2},
-            reason: '$ch: 3 candidates must occupy bands 0, 1, 2 (no duplicates)');
+            reason:
+                '$ch: 3 candidates must occupy bands 0, 1, 2 (no duplicates)');
       }
     });
 
     test(
         'existing 2 slots on ch_tw_l → new candidate fills band 2 '
-        '(existing bands at 0 and 1 are preserved)',
-        () async {
+        '(existing bands at 0 and 1 are preserved)', () async {
       HardwareWritePlan? writePlan;
       final ctrl = _ctrl(_peqStubs());
       final future = ctrl.start(
@@ -2664,7 +2696,8 @@ void main() {
               'ch_tw_l: 2 existing bands (0,1) preserved + new candidate at band 2');
       // Band 2 carries the new stub candidate frequency (100 Hz).
       expect(twlFreqOps[2].targetValue, 100.0,
-          reason: 'band 2 must carry the new candidate (100 Hz), not an existing band');
+          reason:
+              'band 2 must carry the new candidate (100 Hz), not an existing band');
       // Band 0 and 1 carry the pre-existing 1000/2000 Hz bands.
       expect(twlFreqOps[0].targetValue, 1000.0,
           reason: 'band 0 preserves existing 1000 Hz slot');
@@ -2715,13 +2748,13 @@ void main() {
       expect(writePlan, isNotNull);
       expect(writePlan!.operations.map((op) => op.channelId).toSet(),
           requiredChannels.toSet(),
-          reason: 'every required channel must appear in HardwareWritePlan ops');
+          reason:
+              'every required channel must appear in HardwareWritePlan ops');
     });
 
     test(
         'approve 전 hardwareWritePlan null '
-        '(no writes before user confirmation)',
-        () async {
+        '(no writes before user confirmation)', () async {
       HardwareWritePlan? writePlan;
       final ctrl = _ctrl(_peqStubs());
       final future = ctrl.start(
@@ -2740,8 +2773,7 @@ void main() {
 
     test(
         'approve 후 writableOps > 0 '
-        '(pending writes non-empty for ADAU1701)',
-        () async {
+        '(pending writes non-empty for ADAU1701)', () async {
       HardwareWritePlan? writePlan;
       final ctrl = _ctrl(_peqStubs(candidateCount: 3));
       final future = ctrl.start(
@@ -2754,13 +2786,13 @@ void main() {
       await future;
       expect(writePlan, isNotNull);
       expect(writePlan!.summary.writableOps, greaterThan(0),
-          reason: 'at least one writable (capture-proven) PEQ op must be present');
+          reason:
+              'at least one writable (capture-proven) PEQ op must be present');
     });
 
     test(
         'PEQ freq/gain/Q regression: candidate values match write ops '
-        '(100 Hz / −3 dB / Q 2.0 stub candidate)',
-        () async {
+        '(100 Hz / −3 dB / Q 2.0 stub candidate)', () async {
       // Candidates are generated at 100 Hz, −3 dB, Q 2.0 (stubScoredCandidateAt).
       HardwareWritePlan? writePlan;
       final ctrl = _ctrl(_peqStubs());
@@ -2773,20 +2805,18 @@ void main() {
       ctrl.confirm((ctrl.state as ProGuidedAiConfirmPending).request.stepId);
       await future;
       expect(writePlan, isNotNull);
-      final freqOps = writePlan!.operations.where(
-          (op) => op.parameterKind.name == 'peqFrequency' &&
-              op.channelId == 'ch_tw_l');
+      final freqOps = writePlan!.operations.where((op) =>
+          op.parameterKind.name == 'peqFrequency' && op.channelId == 'ch_tw_l');
       expect(freqOps, isNotEmpty);
       expect(freqOps.first.targetValue, 100.0,
-          reason: 'frequency write op must carry stub candidate frequencyHz=100');
-      final gainOps = writePlan!.operations.where(
-          (op) => op.parameterKind.name == 'peqGain' &&
-              op.channelId == 'ch_tw_l');
+          reason:
+              'frequency write op must carry stub candidate frequencyHz=100');
+      final gainOps = writePlan!.operations.where((op) =>
+          op.parameterKind.name == 'peqGain' && op.channelId == 'ch_tw_l');
       expect(gainOps.first.targetValue, -3.0,
           reason: 'gain write op must carry stub candidate gainDb=−3.0');
       final qOps = writePlan!.operations.where(
-          (op) => op.parameterKind.name == 'peqQ' &&
-              op.channelId == 'ch_tw_l');
+          (op) => op.parameterKind.name == 'peqQ' && op.channelId == 'ch_tw_l');
       expect(qOps.first.targetValue, 2.0,
           reason: 'Q write op must carry stub candidate q=2.0');
     });
@@ -2827,7 +2857,8 @@ void main() {
           reason: 'onExportPackage must fire before onHardwareWritePlan');
       // The export package must have the same source ID as the write plan.
       expect(capturedPlan!.sourceExportPackageId, capturedPackage!.id,
-          reason: 'plan sourceExportPackageId must match the export package id');
+          reason:
+              'plan sourceExportPackageId must match the export package id');
       // The export package must have 4 parameter blocks (one per channel).
       expect(capturedPackage!.parameterBlocks.map((b) => b.channelId).toSet(),
           const {'ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r'},
