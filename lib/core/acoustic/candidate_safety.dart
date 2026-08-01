@@ -61,6 +61,17 @@ class CandidateSafetyPolicy {
     required this.availableSlots,
   });
 
+  CandidateSafetyPolicy copyWith({double? maxCutDb}) => CandidateSafetyPolicy(
+        id: id,
+        version: version,
+        maxCutDb: maxCutDb ?? this.maxCutDb,
+        minGainDb: minGainDb,
+        maxGainDb: maxGainDb,
+        minFrequencyHz: minFrequencyHz,
+        maxFrequencyHz: maxFrequencyHz,
+        availableSlots: availableSlots,
+      );
+
   void validate() {
     if (id.isEmpty) {
       throw CandidateSafetyPolicyException('id must not be empty.');

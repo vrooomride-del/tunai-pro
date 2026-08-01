@@ -1,4 +1,6 @@
 import '../../../acoustic/candidate_safety.dart';
+import 'dart:math' as math;
+import '../../../pro_protection_data.dart';
 import '../../pro_orchestrator_plan.dart';
 import '../../pro_orchestrator_result.dart';
 import '../../pro_orchestrator_types.dart';
@@ -35,11 +37,24 @@ class CandidateSafetyAdapter implements ProToolAdapter {
             ?.dspTarget
             .toUpperCase() ==
         'ADAU1701';
+    final project = ctx.resolver.resolveProjectSnapshot(ctx.projectId);
+    var policy = isAdau1701
+        ? CandidateSafetyPolicy.adau1701Icp5()
+        : CandidateSafetyPolicy.proProvisional();
+    final maxCutRule = project?.protectionState.rules
+        .where((rule) =>
+            rule.enabled &&
+            rule.type == ProtectionRuleType.maxCut &&
+            rule.threshold.isFinite &&
+            rule.threshold < 0)
+        .firstOrNull;
+    if (maxCutRule != null) {
+      policy = policy.copyWith(
+          maxCutDb: math.min(policy.maxCutDb, maxCutRule.threshold.abs()));
+    }
     final safetyResult = AcousticSelectionValidator.validate(
       optimArtifact.value,
-      isAdau1701
-          ? CandidateSafetyPolicy.adau1701Icp5()
-          : CandidateSafetyPolicy.proProvisional(),
+      policy,
     );
 
     ctx.store.put(

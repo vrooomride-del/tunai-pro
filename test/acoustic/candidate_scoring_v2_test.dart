@@ -6,6 +6,8 @@ import 'package:tunai_pro/core/acoustic/candidate_scoring_v2.dart';
 import 'package:tunai_pro/core/acoustic/candidate_set.dart';
 import 'package:tunai_pro/core/acoustic/correction_plan.dart';
 import 'package:tunai_pro/core/pro_response_error.dart';
+import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/pro_protection_data.dart';
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -834,6 +836,30 @@ void main() {
   });
 
   group('Items 7 & 8 — headroom and protection', () {
+    test('Project protection rules provide real headroom and margin evidence', () {
+      final now = DateTime(2026, 8, 1);
+      final evidence = CandidateScoringResourceEvidence.fromProject(ProProject(
+        id: 'p',
+        name: 'p',
+        createdAt: now,
+        updatedAt: now,
+        protectionState: ProtectionProjectState(
+          verificationStatus: VerificationStatus.passed,
+          rules: ProtectionProjectState.createDefault().rules,
+        ),
+      ));
+      expect(evidence.availableHeadroomDb, closeTo(6.0, 0.01));
+      expect(evidence.protectionMarginDb, closeTo(12.0, 0.01));
+    });
+
+    test('unverified protection keeps resource evidence unknown', () {
+      final now = DateTime(2026, 8, 1);
+      final evidence = CandidateScoringResourceEvidence.fromProject(ProProject(
+        id: 'p', name: 'p', createdAt: now, updatedAt: now));
+      expect(evidence.availableHeadroomDb, isNull);
+      expect(evidence.protectionMarginDb, isNull);
+    });
+
     test('null headroom earns neutral half-score (2.5)', () {
       final result =
           CandidateScorerV2.score(_ctx(availableHeadroomDb: null), _policy);

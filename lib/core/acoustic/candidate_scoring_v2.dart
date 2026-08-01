@@ -5,6 +5,8 @@ import 'candidate_scoring.dart' show CandidateScoreGrade;
 import 'candidate_set.dart';
 import 'correction_plan.dart';
 import '../pro_response_error.dart';
+import '../pro_project.dart';
+import '../pro_protection_data.dart';
 
 /// Candidate Scoring v2 — deterministic 10-item scoring/ranking engine.
 ///
@@ -276,6 +278,57 @@ class CandidateScoringContextV2 {
     this.availableHeadroomDb,
     this.protectionMarginDb,
   });
+}
+
+/// Values derived from persisted Project/Protection evidence. Null means the
+/// project has no enabled, numeric rule from which a safe value can be proven.
+class CandidateScoringResourceEvidence {
+  final double? availableHeadroomDb;
+  final double? protectionMarginDb;
+
+  const CandidateScoringResourceEvidence({
+    this.availableHeadroomDb,
+    this.protectionMarginDb,
+  });
+
+  factory CandidateScoringResourceEvidence.fromProject(ProProject project) {
+    if (!project.protectionState.passed) {
+      return const CandidateScoringResourceEvidence();
+    }
+    final rules = project.protectionState.rules.where((r) => r.enabled);
+    final headroomRule = rules
+        .where((r) => r.type == ProtectionRuleType.headroomReserve)
+        .firstOrNull;
+    final maxCutRule = rules
+        .where((r) => r.type == ProtectionRuleType.maxCut)
+        .firstOrNull;
+    final maxExistingBoost = project.tuningState.peqChannels
+        .expand((channel) => channel.bands)
+        .where((band) => band.enabled && band.type.hasGain && band.gainDb > 0)
+        .map((band) => band.gainDb)
+        .fold<double>(0, (max, value) => value > max ? value : max);
+    final combinedGain = maxExistingBoost + project.tuningState.gainMaxDb;
+    final headroom = headroomRule != null &&
+            headroomRule.threshold.isFinite &&
+            headroomRule.threshold > 0
+        ? (headroomRule.threshold - combinedGain).clamp(0.0, double.infinity)
+        : null;
+    final existingCut = project.tuningState.peqChannels
+        .expand((channel) => channel.bands)
+        .where((band) => band.enabled && band.type.hasGain && band.gainDb < 0)
+        .map((band) => band.gainDb.abs())
+        .fold<double>(0, (max, value) => value > max ? value : max);
+    final protectionMargin = maxCutRule != null &&
+            maxCutRule.threshold.isFinite &&
+            maxCutRule.threshold < 0
+        ? (maxCutRule.threshold.abs() - existingCut)
+            .clamp(0.0, double.infinity)
+        : null;
+    return CandidateScoringResourceEvidence(
+      availableHeadroomDb: headroom,
+      protectionMarginDb: protectionMargin,
+    );
+  }
 }
 
 // ── Breakdown ─────────────────────────────────────────────────────────────────
@@ -936,8 +989,9 @@ abstract final class CandidateScorerV2 {
 
   static CandidateScoreGrade _grade(
       double score, CandidateScoringPolicyV2 policy) {
-    if (score >= policy.excellentThreshold)
+    if (score >= policy.excellentThreshold) {
       return CandidateScoreGrade.excellent;
+    }
     if (score >= policy.goodThreshold) return CandidateScoreGrade.good;
     if (score >= policy.rejectionThreshold) return CandidateScoreGrade.marginal;
     return CandidateScoreGrade.rejected;

@@ -135,11 +135,17 @@ class CandidateScoringAdapter implements ProToolAdapter {
     // Score with v2 engine. correctionPlan is null — the candidate generator
     // already filters non-correctable directives; the disposition guard is a
     // double-check that is available when a plan artifact is present.
+    final project = ctx.resolver.resolveProjectSnapshot(ctx.projectId);
+    final resourceEvidence = project == null
+        ? const CandidateScoringResourceEvidence()
+        : CandidateScoringResourceEvidence.fromProject(project);
     final v2ctx = CandidateScoringContextV2(
       candidateSet: candsArtifact.value,
       classificationResult: classArtifact.value,
       currentError: beforeError,
       perCandidateSimulatedError: perCandidateErrors,
+      availableHeadroomDb: resourceEvidence.availableHeadroomDb,
+      protectionMarginDb: resourceEvidence.protectionMarginDb,
     );
     final isAdau1701 = ctx.resolver
             .resolveProjectSnapshot(ctx.projectId)
