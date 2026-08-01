@@ -5,6 +5,10 @@ import 'package:tunai_pro/core/acoustic/acoustic_problem_classifier.dart';
 import 'package:tunai_pro/core/acoustic/candidate_set.dart';
 import 'package:tunai_pro/core/acoustic/correction_plan.dart';
 import 'package:tunai_pro/core/acoustic/correction_policy.dart';
+import 'package:tunai_pro/core/orchestrator/tools/adapters/candidate_generation_adapter.dart';
+import 'package:tunai_pro/core/pro_acoustic_data.dart';
+import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/pro_tuning_data.dart';
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -76,15 +80,114 @@ CandidateSet _generate(
   MeasurementConfidenceInterpretation interp =
       MeasurementConfidenceInterpretation.correctableAllowed,
   CandidatePolicy policy = _candidatePolicy,
+  CandidateCorrectionRange? correctionRange,
 }) {
   final result = _result(features, status: classStatus, interp: interp);
   final plan = CorrectionPlanner.plan(result, _correctionPolicy);
-  return CandidateGenerator.generate(plan, result, policy);
+  return CandidateGenerator.generate(
+    plan,
+    result,
+    policy,
+    correctionRange: correctionRange,
+  );
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 void main() {
+  group('Driver/XO-aware correction range', () {
+    CandidateCorrectionRange range(String channelId, DriverRole role,
+        {double? hpf, double? lpf}) {
+      final now = DateTime(2026, 8, 1);
+      final driver = DriverChannel(
+        id: channelId,
+        name: channelId,
+        role: role,
+        side: DriverSide.left,
+        frdData: ParsedMeasurementData(
+          id: 'frd-$channelId',
+          sourceFileName: '$channelId.frd',
+          fileType: AcousticFileType.frd,
+          importedAt: now,
+          points: const [
+            MeasurementDataPoint(frequencyHz: 30, magnitudeDb: 0),
+            MeasurementDataPoint(frequencyHz: 18000, magnitudeDb: 0),
+          ],
+        ),
+      );
+      final project = ProProject(
+        id: 'p',
+        name: 'p',
+        createdAt: now,
+        updatedAt: now,
+        acousticState: MeasurementProjectState(driverChannels: [driver]),
+        tuningState: TuningProjectState(crossoverChannels: [
+          CrossoverChannelState(
+            channelId: channelId,
+            highPass: hpf == null
+                ? null
+                : CrossoverFilter(
+                    side: FilterSide.highPass, frequencyHz: hpf),
+            lowPass: lpf == null
+                ? null
+                : CrossoverFilter(
+                    side: FilterSide.lowPass, frequencyHz: lpf),
+          ),
+        ]),
+      );
+      return candidateCorrectionRangeFor(project, channelId);
+    }
+
+    test('tweeter 50 Hz and woofer 10 kHz candidates are absent', () {
+      final tweeterRange = range('tw', DriverRole.tweeter, hpf: 800);
+      final wooferRange = range('wf', DriverRole.woofer, lpf: 3000);
+
+      expect(
+        _generate([_feat(id: 'tw-50', centerHz: 50)],
+                correctionRange: tweeterRange)
+            .candidates,
+        isEmpty,
+      );
+      expect(
+        _generate([_feat(id: 'wf-10k', centerHz: 10000)],
+                correctionRange: wooferRange)
+            .candidates,
+        isEmpty,
+      );
+    });
+
+    test('XO passband peak-cut remains and carries its channelId', () {
+      final set = _generate(
+        [_feat(id: 'tw-pass', centerHz: 2000)],
+        correctionRange: range('tw', DriverRole.tweeter, hpf: 800),
+      );
+      expect(set.candidates.single.frequencyHz, 2000);
+      expect(set.candidates.single.channelId, 'tw');
+      expect(set.candidates.single.gainDb, isNegative);
+    });
+
+    test('four channels keep independent channelId and correction ranges', () {
+      final ranges = [
+        range('tw_l', DriverRole.coaxTweeter, hpf: 900),
+        range('wf_l', DriverRole.coaxWoofer, lpf: 2800),
+        range('tw_r', DriverRole.coaxTweeter, hpf: 1100),
+        range('wf_r', DriverRole.coaxWoofer, lpf: 3200),
+      ];
+      final candidates = [
+        for (final r in ranges)
+          ..._generate(
+            [_feat(id: 'peak-${r.channelId}', centerHz: 2000)],
+            correctionRange: r,
+          ).candidates,
+      ];
+
+      expect(candidates.map((candidate) => candidate.channelId).toSet(),
+          {'tw_l', 'wf_l', 'tw_r', 'wf_r'});
+      expect(ranges.map((r) => (r.minFrequencyHz, r.maxFrequencyHz)).toSet(),
+          hasLength(4));
+    });
+  });
+
   test('ADAU1701 candidate generation limits -9 dB input to -6 dB', () {
     final set = _generate(
       [_feat(id: 'adau1701-cut', deviationDb: 9.0)],

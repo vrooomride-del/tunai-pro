@@ -2500,10 +2500,11 @@ void main() {
           reason: 'default path uses all 4 FRD-ready channels');
     });
 
-    test('acousticGenerateCandidates inputRefs[1] is classify, not measure', () async {
+    test('candidate generation receives classify artifact and exact channelId', () async {
       // Regression guard: _buildLocalFallbackPlan had inputRefs: ['$p-plan', '$p-measure']
       // which caused typeMismatch → ProToolFailure → all 4 channels got 0 candidates.
-      // Correct wiring: inputRefs[1] must point to '$p-classify'.
+      // Correct wiring: inputRefs[1] points to '$p-classify' and inputRefs[2]
+      // preserves the channel whose Driver/FRD/XO range must be applied.
       final capturedInputRefs = <String, List<String>>{};
       final recordingAdapter = _RecordingAdapter(
         ProOrchestratorToolId.acousticGenerateCandidates,
@@ -2525,11 +2526,14 @@ void main() {
           reason: 'generate step must have run');
       for (final entry in capturedInputRefs.entries) {
         final refs = entry.value;
-        expect(refs.length, 2, reason: 'generate step needs exactly 2 inputRefs');
+        expect(refs.length, 3,
+            reason: 'generate step needs plan, classify, and channelId refs');
         expect(refs[1], endsWith('-classify'),
             reason: 'inputRefs[1] must be classify artifact, not measure');
         expect(refs[1], isNot(endsWith('-measure')),
             reason: 'inputRefs[1] must NOT be the raw measurement ref');
+        expect(refs[2], isIn(['ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r']),
+            reason: 'inputRefs[2] must preserve the exact source channel');
       }
     });
   });

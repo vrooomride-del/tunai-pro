@@ -624,6 +624,19 @@ abstract final class CandidateScorerV2 {
       // Per-candidate simulation error overrides shared metrics for items 2 & 3.
       final perCandError =
           ctx.perCandidateSimulatedError?[candidate.candidateId];
+      if (perCandError != null &&
+          ctx.currentError != null &&
+          perCandError.weightedRmsDb >= ctx.currentError!.weightedRmsDb) {
+        entries.add(_hardReject(
+          candidate,
+          featureMap[candidate.featureId]?.prominenceDb ?? 0.0,
+          'Simulation reject — after weighted RMS '
+              '${perCandError.weightedRmsDb.toStringAsFixed(3)} dB does not improve '
+              'before ${ctx.currentError!.weightedRmsDb.toStringAsFixed(3)} dB.',
+          candidateSet.evidenceRefs,
+        ));
+        continue;
+      }
       final weightedRmsScore = perCandError != null
           ? _weightedRmsScoreFromError(perCandError, policy)
           : sharedWeightedRmsScore;

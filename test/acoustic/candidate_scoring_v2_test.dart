@@ -1075,6 +1075,34 @@ void main() {
   });
 
   group('perCandidateSimulatedError — items 2 and 3', () {
+    test('after weighted RMS >= before is hard-rejected', () {
+      const before = ResponseErrorResult(
+          rmsDb: 3,
+          maxDeviationDb: 6,
+          maxDeviationHz: 1000,
+          weightedRmsDb: 3,
+          score: 70);
+      const after = ResponseErrorResult(
+          rmsDb: 3.2,
+          maxDeviationDb: 6,
+          maxDeviationHz: 1000,
+          weightedRmsDb: 3,
+          score: 65);
+
+      final result = CandidateScorerV2.score(
+        _ctx(
+          currentError: before,
+          perCandidateSimulatedError: const {'candidate:f1': after},
+        ),
+        _policy,
+      );
+
+      expect(result.scoredCandidates.single.grade,
+          CandidateScoreGrade.rejected);
+      expect(result.scoredCandidates.single.rejectionReason,
+          contains('does not improve'));
+    });
+
     test('per-candidate error overrides shared simulatedError for items 2 & 3', () {
       // f1 has terrible per-candidate error, f2 uses the shared error.
       final candidates = [

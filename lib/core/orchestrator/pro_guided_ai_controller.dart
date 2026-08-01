@@ -1272,7 +1272,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           stepId: '$p-s4-generate',
           toolId: ProOrchestratorToolId.acousticGenerateCandidates,
           objective: '보정 후보 생성 ($channelRef)',
-          inputRefs: ['$p-plan', '$p-classify'],
+          inputRefs: ['$p-plan', '$p-classify', channelRef],
           outputRef: '$p-candidates',
           requiresUserConfirmation: false,
         ),

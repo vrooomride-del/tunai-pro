@@ -131,6 +131,21 @@ class CandidatePolicy {
 
 // ── Output models ─────────────────────────────────────────────────────────────
 
+class CandidateCorrectionRange {
+  final String channelId;
+  final double minFrequencyHz;
+  final double maxFrequencyHz;
+
+  const CandidateCorrectionRange({
+    required this.channelId,
+    required this.minFrequencyHz,
+    required this.maxFrequencyHz,
+  });
+
+  bool contains(double frequencyHz) =>
+      frequencyHz >= minFrequencyHz && frequencyHz <= maxFrequencyHz;
+}
+
 /// A single PEQ correction proposal — NOT safety-validated.
 ///
 /// [gainDb] is always ≤ 0 (cut). [frequencyHz] is the observed feature centre
@@ -141,6 +156,7 @@ class PeqCandidate {
   final String candidateId;
   final String featureId;
   final AcousticFeatureType featureType;
+  final String? channelId;
 
   /// Observed feature centre frequency (Hz). NOT a DSP frequency command.
   final double frequencyHz;
@@ -160,6 +176,7 @@ class PeqCandidate {
     required this.candidateId,
     required this.featureId,
     required this.featureType,
+    this.channelId,
     required this.frequencyHz,
     required this.gainDb,
     required this.q,
@@ -171,6 +188,7 @@ class PeqCandidate {
         'candidateId': candidateId,
         'featureId': featureId,
         'featureType': featureType.name,
+        if (channelId != null) 'channelId': channelId,
         'frequencyHz': frequencyHz,
         'gainDb': gainDb,
         'q': q,
@@ -244,8 +262,9 @@ abstract final class CandidateGenerator {
   static CandidateSet generate(
     CorrectionPlan plan,
     AcousticClassificationResult result,
-    CandidatePolicy policy,
-  ) {
+    CandidatePolicy policy, {
+    CandidateCorrectionRange? correctionRange,
+  }) {
     policy.validate();
 
     // Non-ok plan → propagate without candidates.
@@ -323,7 +342,26 @@ abstract final class CandidateGenerator {
         continue;
       }
 
-      final candidate = _buildCandidate(directive, feature, policy);
+      if (correctionRange != null &&
+          !correctionRange.contains(feature.centerHz)) {
+        skipped.add(SkippedDirective(
+          featureId: directive.featureId,
+          featureType: directive.featureType,
+          disposition: directive.disposition,
+          reason: 'frequency ${feature.centerHz.toStringAsFixed(1)} Hz outside '
+              '${correctionRange.channelId} correction range '
+              '${correctionRange.minFrequencyHz.toStringAsFixed(1)}–'
+              '${correctionRange.maxFrequencyHz.toStringAsFixed(1)} Hz.',
+        ));
+        continue;
+      }
+
+      final candidate = _buildCandidate(
+        directive,
+        feature,
+        policy,
+        channelId: correctionRange?.channelId,
+      );
       if (candidate == null) {
         // Gain after scaling fell below minimumGainDb.
         skipped.add(SkippedDirective(
@@ -360,8 +398,9 @@ abstract final class CandidateGenerator {
   static PeqCandidate? _buildCandidate(
     CorrectionDirective directive,
     AcousticObservedFeature feature,
-    CandidatePolicy policy,
-  ) {
+    CandidatePolicy policy, {
+    String? channelId,
+  }) {
     final rawMagnitude = feature.deviationDb.abs() * policy.gainScale;
     if (rawMagnitude < policy.minimumGainDb) return null;
 
@@ -377,6 +416,7 @@ abstract final class CandidateGenerator {
       candidateId: 'candidate:${directive.featureId}',
       featureId: directive.featureId,
       featureType: directive.featureType,
+      channelId: channelId,
       frequencyHz: feature.centerHz,
       gainDb: gainDb,
       q: q,

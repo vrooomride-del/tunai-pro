@@ -138,6 +138,7 @@ class CandidateScoringAdapter implements ProToolAdapter {
     final v2ctx = CandidateScoringContextV2(
       candidateSet: candsArtifact.value,
       classificationResult: classArtifact.value,
+      currentError: beforeError,
       perCandidateSimulatedError: perCandidateErrors,
     );
     final isAdau1701 = ctx.resolver
