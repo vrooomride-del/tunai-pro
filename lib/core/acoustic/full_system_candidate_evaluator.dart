@@ -8,7 +8,6 @@ import '../pro_simulation_optimizer.dart';
 import '../pro_tuning_data.dart';
 import 'candidate_optimizer.dart';
 import 'candidate_safety.dart';
-import 'listening_position_frd.dart';
 
 enum FullSystemSummationMode { phaseAware, magnitudeOnly }
 
@@ -22,6 +21,8 @@ class FullSystemCandidateEvaluation {
   final Map<String, ({double before, double after, double improvement})>
       positionMetrics;
   final List<String> rejectedReasons;
+  final String targetName;
+  final String targetPolicy;
 
   const FullSystemCandidateEvaluation({
     required this.accepted,
@@ -32,6 +33,8 @@ class FullSystemCandidateEvaluation {
     required this.combinationsEvaluated,
     this.positionMetrics = const {},
     this.rejectedReasons = const [],
+    this.targetName = 'Flat',
+    this.targetPolicy = 'default',
   });
 
   double? get averagePositionImprovement {
@@ -107,8 +110,8 @@ abstract final class FullSystemCandidateEvaluator {
     final error = ProResponseError.analyze(
       freqs: freqs,
       responseDb: curve,
-      targetDb: List<double>.filled(freqs.length, 0),
-      weights: ProResponseError.defaultWeights(freqs),
+      targetDb: _targetDb(project, freqs),
+      weights: _targetWeights(project, drivers, freqs),
     );
     return FullSystemResponseMeasurement(
       mode: mode,
@@ -160,8 +163,8 @@ abstract final class FullSystemCandidateEvaluator {
       mode: mode,
       selectedByChannel: const {},
     );
-    final target = List<double>.filled(freqs.length, 0);
-    final weights = ProResponseError.defaultWeights(freqs);
+    final target = _targetDb(project, freqs);
+    final weights = _targetWeights(project, drivers, freqs);
     final before = ProResponseError.analyze(
       freqs: freqs,
       responseDb: beforeCurve,
@@ -242,8 +245,8 @@ abstract final class FullSystemCandidateEvaluator {
         final robustScore = positionResults.isEmpty
             ? error.weightedRmsDb
             : positionResults.values
-                .map((m) => m.after)
-                .reduce((a, b) => a + b) /
+                    .map((m) => m.after)
+                    .reduce((a, b) => a + b) /
                 positionResults.length;
         if (positionResults.isNotEmpty &&
             robustScore < bestObservedPositionScore) {
@@ -284,10 +287,11 @@ abstract final class FullSystemCandidateEvaluator {
       afterWeightedRmsDb: bestRms,
       selectedByChannel: accepted ? best : const {},
       combinationsEvaluated: evaluated,
-        positionMetrics: bestPositions.isNotEmpty
-            ? bestPositions
-            : bestObservedPositions,
+      positionMetrics:
+          bestPositions.isNotEmpty ? bestPositions : bestObservedPositions,
       rejectedReasons: List.unmodifiable(rejectedReasons),
+      targetName: project.acousticState.targetCurve.selectedPreset.label,
+      targetPolicy: project.acousticState.targetCurve.selectedPreset.description,
     );
   }
 
@@ -328,10 +332,53 @@ abstract final class FullSystemCandidateEvaluator {
     final error = ProResponseError.analyze(
         freqs: freqs,
         responseDb: curve,
-        targetDb: List.filled(freqs.length, 0),
-        weights: ProResponseError.defaultWeights(freqs));
+        targetDb: _targetDb(project, freqs),
+        weights: _targetWeights(project, drivers, freqs));
     return FullSystemResponseMeasurement(
         mode: mode, weightedRmsDb: error.weightedRmsDb);
+  }
+
+  static List<double> _targetDb(ProProject project, List<double> freqs) => [
+        for (final frequency in freqs)
+          project.acousticState.targetCurve.targetDbAt(frequency),
+      ];
+
+  static List<double> _targetWeights(
+      ProProject project, Map<String, DriverChannel> drivers, List<double> freqs) => [
+        for (final frequency in freqs)
+          drivers.values.any((driver) => _inTargetBand(project, driver, frequency))
+              ? ProResponseError.defaultWeights([frequency]).single
+              : 0.0,
+      ];
+
+  static bool _inTargetBand(
+      ProProject project, DriverChannel driver, double frequencyHz) {
+    final frd = driver.frdData;
+    if (frd == null || frequencyHz < frd.minFrequencyHz || frequencyHz > frd.maxFrequencyHz) {
+      return false;
+    }
+    var minHz = switch (driver.role) {
+      DriverRole.tweeter || DriverRole.coaxTweeter => 500.0,
+      DriverRole.woofer || DriverRole.coaxWoofer => 20.0,
+      DriverRole.subwoofer || DriverRole.passiveRadiator => 20.0,
+      DriverRole.midrange => 100.0,
+      _ => 20.0,
+    };
+    var maxHz = switch (driver.role) {
+      DriverRole.tweeter || DriverRole.coaxTweeter => 20000.0,
+      DriverRole.woofer || DriverRole.coaxWoofer => 5000.0,
+      DriverRole.subwoofer || DriverRole.passiveRadiator => 500.0,
+      DriverRole.midrange => 10000.0,
+      _ => 20000.0,
+    };
+    final xo = project.tuningState.crossoverChannels
+        .where((channel) => channel.channelId == driver.id)
+        .firstOrNull;
+    if (xo != null && !xo.bypassed) {
+      if (xo.hasHighPass) minHz = math.max(minHz, xo.highPass!.frequencyHz);
+      if (xo.hasLowPass) maxHz = math.min(maxHz, xo.lowPass!.frequencyHz);
+    }
+    return frequencyHz >= minHz && frequencyHz <= maxHz;
   }
 
   static List<double> _commonFrequencyGrid(Iterable<DriverChannel> drivers) {

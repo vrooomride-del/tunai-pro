@@ -3,6 +3,7 @@
 // parsed measurement data, acoustic offset. No DSP writes. No hardware access.
 
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
 
@@ -84,6 +85,44 @@ enum MeasurementStatus {
   String toJson() => name;
   static MeasurementStatus fromJson(String s) =>
       MeasurementStatus.values.firstWhere((e) => e.name == s, orElse: () => MeasurementStatus.empty);
+}
+
+class ListeningPositionFrdSet {
+  final String positionId;
+  final String label;
+  final Map<String, ParsedMeasurementData> channels;
+  const ListeningPositionFrdSet({required this.positionId, required this.label, required this.channels});
+  bool get isComplete => const ['ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r'].every(channels.containsKey);
+  Map<String, dynamic> toJson() => {
+    'positionId': positionId,
+    'label': label,
+    'channels': {for (final e in channels.entries) e.key: e.value.toJson()},
+  };
+  factory ListeningPositionFrdSet.fromJson(Map<String, dynamic> j) => ListeningPositionFrdSet(
+    positionId: j['positionId'] as String? ?? '',
+    label: j['label'] as String? ?? j['positionId'] as String? ?? '',
+    channels: {for (final e in Map<String, dynamic>.from(j['channels'] as Map? ?? {}).entries)
+      e.key: ParsedMeasurementData.fromJson(Map<String, dynamic>.from(e.value as Map))},
+  );
+}
+
+class ListeningPositionFrdInput {
+  final String positionId;
+  final String label;
+  final Map<String, ParsedMeasurementData> _channels = {};
+  ListeningPositionFrdInput({required this.positionId, required this.label});
+  Map<String, ParsedMeasurementData> get channels => Map.unmodifiable(_channels);
+  void add({required String channelId, required ParsedMeasurementData frd}) {
+    if (!const ['ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r'].contains(channelId)) throw ArgumentError.value(channelId, 'channelId');
+    if (_channels.containsKey(channelId)) throw StateError('Position FRD already loaded for $channelId.');
+    if (!frd.hasMagnitude) throw StateError('Position FRD has no magnitude data.');
+    _channels[channelId] = frd;
+  }
+  ListeningPositionFrdSet build() {
+    final result = ListeningPositionFrdSet(positionId: positionId, label: label, channels: channels);
+    if (!result.isComplete) throw StateError('All four position FRDs are required.');
+    return result;
+  }
 }
 
 enum AcousticFileType {
@@ -636,6 +675,15 @@ class TargetCurveState {
     customName: j['customName'] as String?,
     notes: j['notes'] as String?,
   );
+
+  double targetDbAt(double frequencyHz) => switch (selectedPreset) {
+        TargetCurvePreset.flat || TargetCurvePreset.custom => 0.0,
+        TargetCurvePreset.warm => frequencyHz <= 200 ? 2.0 : 0.0,
+        TargetCurvePreset.studio => frequencyHz <= 10000
+            ? 0.0
+            : -2.0 * (math.log(frequencyHz / 10000) / math.ln2).clamp(0.0, 1.0),
+        TargetCurvePreset.nearfield => frequencyHz < 1000 ? 1.0 : 0.0,
+      };
 }
 
 // Default 2-way stereo driver layout — flexible, not hardcoded to 2-way only.
@@ -650,11 +698,13 @@ class MeasurementProjectState {
   final List<DriverChannel> driverChannels;
   final List<AcousticFileRef> importedFiles;
   final TargetCurveState targetCurve;
+  final List<ListeningPositionFrdSet> listeningPositions;
 
   const MeasurementProjectState({
     this.driverChannels = const [],
     this.importedFiles = const [],
     this.targetCurve = const TargetCurveState(),
+    this.listeningPositions = const [],
   });
 
   // ── Computed readiness ────────────────────────────────────────────────────
@@ -688,16 +738,19 @@ class MeasurementProjectState {
     List<DriverChannel>? driverChannels,
     List<AcousticFileRef>? importedFiles,
     TargetCurveState? targetCurve,
+    List<ListeningPositionFrdSet>? listeningPositions,
   }) => MeasurementProjectState(
     driverChannels: driverChannels ?? this.driverChannels,
     importedFiles: importedFiles ?? this.importedFiles,
     targetCurve: targetCurve ?? this.targetCurve,
+    listeningPositions: listeningPositions ?? this.listeningPositions,
   );
 
   Map<String, dynamic> toJson() => {
     'driverChannels': driverChannels.map((d) => d.toJson()).toList(),
     'importedFiles': importedFiles.map((f) => f.toJson()).toList(),
     'targetCurve': targetCurve.toJson(),
+    if (listeningPositions.isNotEmpty) 'listeningPositions': [for (final p in listeningPositions) p.toJson()],
   };
 
   factory MeasurementProjectState.fromJson(Map<String, dynamic> j) => MeasurementProjectState(
@@ -710,6 +763,9 @@ class MeasurementProjectState {
     targetCurve: j['targetCurve'] != null
         ? TargetCurveState.fromJson(Map<String, dynamic>.from(j['targetCurve'] as Map))
         : const TargetCurveState(),
+    listeningPositions: (j['listeningPositions'] as List? ?? [])
+        .map((e) => ListeningPositionFrdSet.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList(),
   );
 
   static MeasurementProjectState createDefault() => MeasurementProjectState(

@@ -111,6 +111,15 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
   /// Null when per-candidate simulation was not available.
   final String? beforeAfterSummary;
 
+  /// Optional multi-position robustness evidence for the approval gate.
+  final Map<String, ({double before, double after, double improvement})>
+      positionMetrics;
+  final List<String> positionRejectReasons;
+  final double? robustPrimaryBeforeRmsDb;
+  final double? robustPrimaryAfterRmsDb;
+  final String? targetName;
+  final String? targetPolicy;
+
   /// True when the source measurement has [ConfidenceStatus.insufficientEvidence].
   /// The UI must show a warning and require explicit Expert approval before the
   /// Apply button is enabled.
@@ -128,6 +137,12 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
     this.fullSystemReady = false,
     this.missingChannelIds = const [],
     this.beforeAfterSummary,
+    this.positionMetrics = const {},
+    this.positionRejectReasons = const [],
+    this.robustPrimaryBeforeRmsDb,
+    this.robustPrimaryAfterRmsDb,
+    this.targetName,
+    this.targetPolicy,
     this.insufficientEvidence = false,
   });
 }

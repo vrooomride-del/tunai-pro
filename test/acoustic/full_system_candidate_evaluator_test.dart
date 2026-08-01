@@ -6,7 +6,6 @@ import 'package:tunai_pro/core/acoustic/candidate_scoring.dart';
 import 'package:tunai_pro/core/acoustic/candidate_set.dart';
 import 'package:tunai_pro/core/acoustic/correction_plan.dart';
 import 'package:tunai_pro/core/acoustic/full_system_candidate_evaluator.dart';
-import 'package:tunai_pro/core/acoustic/listening_position_frd.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
@@ -157,6 +156,22 @@ void main() {
     expect(noPositions.afterWeightedRmsDb, baseline.afterWeightedRmsDb);
   });
 
+  test('position input maps four channels without mixing repeat sweeps', () {
+    final project = _project(magnitudeDb: 0, withPhase: false);
+    final input = ListeningPositionFrdInput(
+        positionId: 'secondary', label: 'Secondary seat');
+    for (final channel in project.acousticState.driverChannels) {
+      input.add(channelId: channel.id, frd: channel.frdData!);
+    }
+    final set = input.build();
+    expect(set.isComplete, isTrue);
+    expect(set.channels.keys.toSet(), _ids.toSet());
+    expect(
+        project.acousticState.driverChannels
+            .every((channel) => channel.additionalFrdSweeps.isEmpty),
+        isTrue);
+  });
+
   test('individual cuts that worsen the full sum are rejected', () {
     final result = FullSystemCandidateEvaluator.evaluate(
       project: _project(
@@ -207,5 +222,22 @@ void main() {
 
     expect(phaseAware.mode, FullSystemSummationMode.phaseAware);
     expect(magnitudeOnly.mode, FullSystemSummationMode.magnitudeOnly);
+  });
+
+  test('selected target changes weighted RMS and is reported', () {
+    final base = _project(magnitudeDb: 0, withPhase: false);
+    final warm = base.copyWith(
+      acousticState: base.acousticState.copyWith(
+        targetCurve: base.acousticState.targetCurve
+            .copyWith(selectedPreset: TargetCurvePreset.warm),
+      ),
+    );
+    final flat = FullSystemCandidateEvaluator.evaluate(
+        project: base, safetyByChannel: _safety());
+    final warmResult = FullSystemCandidateEvaluator.evaluate(
+        project: warm, safetyByChannel: _safety());
+    expect(warmResult.targetName, 'Warm');
+    expect(warmResult.beforeWeightedRmsDb,
+        isNot(equals(flat.beforeWeightedRmsDb)));
   });
 }

@@ -19,8 +19,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../acoustic/acoustic_apply_engine.dart';
-import '../acoustic/full_system_candidate_evaluator.dart'
-    show FullSystemSummationMode;
+import '../acoustic/full_system_candidate_evaluator.dart';
+import '../acoustic/listening_position_frd.dart';
 import '../acoustic/full_system_closed_loop_evaluator.dart';
 import '../acoustic/candidate_safety.dart';
 import '../acoustic/measurement_confidence.dart'
@@ -1225,8 +1225,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             MeasurementConfidencePolicy.proProvisional()
                 .repeatabilityThreshold) {
           insufficientEvidence = true;
-          repeatabilityBlocks.add(
-              '$channelId: Repeat FRD 불일치 (repeatability '
+          repeatabilityBlocks.add('$channelId: Repeat FRD 불일치 (repeatability '
               '${confidence!.repeatability.score!.toStringAsFixed(2)})');
         }
       } catch (_) {}
@@ -1234,7 +1233,49 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     if (repeatabilityBlocks.isNotEmpty && applyBlockedReason == null) {
       applyBlockedReason = repeatabilityBlocks.join('; ');
     } else if (repeatabilityBlocks.isNotEmpty) {
-      applyBlockedReason = '$applyBlockedReason; ${repeatabilityBlocks.join('; ')}';
+      applyBlockedReason =
+          '$applyBlockedReason; ${repeatabilityBlocks.join('; ')}';
+    }
+
+    // Position FRDs are an optional robustness gate and are deliberately
+    // separate from DriverChannel repeat sweeps used by confidence scoring.
+    Map<String, ({double before, double after, double improvement})>
+        positionMetrics = const {};
+    final positionRejectReasons = <String>[];
+    double? robustPrimaryBeforeRmsDb;
+    double? robustPrimaryAfterRmsDb;
+    String? robustTargetName;
+    String? robustTargetPolicy;
+    final positions = project.acousticState.listeningPositions;
+    if (positions.isNotEmpty) {
+      final safetyByChannel = <String, CandidateSafetyResult>{};
+      for (final record in completedSteps.where(
+          (r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)) {
+        if (!store.has(pid, record.outputRef)) continue;
+        final channel = _resolveChannelByGraphBfs(record.outputRef, plan);
+        if (channel == null) continue;
+        try {
+          safetyByChannel[channel] = store
+              .getTyped<CandidateSafetyArtifact>(pid, record.outputRef)
+              .value;
+        } catch (_) {}
+      }
+      final robust = FullSystemCandidateEvaluator.evaluate(
+        project: project,
+        safetyByChannel: safetyByChannel,
+        listeningPositions: <ListeningPositionFrdSet>[...positions],
+      );
+      positionMetrics = robust.positionMetrics;
+      robustPrimaryBeforeRmsDb = robust.beforeWeightedRmsDb;
+      robustPrimaryAfterRmsDb = robust.afterWeightedRmsDb;
+      robustTargetName = robust.targetName;
+      robustTargetPolicy = robust.targetPolicy;
+      positionRejectReasons.addAll(robust.rejectedReasons);
+      if (!robust.accepted && applyBlockedReason == null) {
+        applyBlockedReason = positionRejectReasons.isEmpty
+            ? 'Listening Position robustness check failed.'
+            : positionRejectReasons.join('; ');
+      }
     }
 
     // Before/After summary: aggregate best improvement across all channels.
@@ -1266,6 +1307,9 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       } catch (_) {}
     }
     beforeAfterSummary = bestSummary;
+    if (beforeAfterSummary != null && robustTargetName != null) {
+      beforeAfterSummary = '$beforeAfterSummary (Target: $robustTargetName)';
+    }
 
     return ProGuidedAiConfirmPending(
       request: ProUserConfirmationRequest(
@@ -1284,6 +1328,12 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       fullSystemReady: fullSystemReady,
       missingChannelIds: List.unmodifiable(missingChannelIds),
       insufficientEvidence: insufficientEvidence,
+      positionMetrics: positionMetrics,
+      positionRejectReasons: List.unmodifiable(positionRejectReasons),
+      robustPrimaryBeforeRmsDb: robustPrimaryBeforeRmsDb,
+      robustPrimaryAfterRmsDb: robustPrimaryAfterRmsDb,
+      targetName: robustTargetName,
+      targetPolicy: robustTargetPolicy,
     );
   }
 

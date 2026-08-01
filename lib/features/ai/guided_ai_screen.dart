@@ -450,6 +450,12 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   targetChannelId: aiState.targetChannelId,
                   availablePeqSlots: aiState.availablePeqSlots,
                   beforeAfterSummary: aiState.beforeAfterSummary,
+                  positionMetrics: aiState.positionMetrics,
+                  positionRejectReasons: aiState.positionRejectReasons,
+                  robustPrimaryBeforeRmsDb: aiState.robustPrimaryBeforeRmsDb,
+                  robustPrimaryAfterRmsDb: aiState.robustPrimaryAfterRmsDb,
+                  targetName: aiState.targetName,
+                  targetPolicy: aiState.targetPolicy,
                   insufficientEvidence: aiState.insufficientEvidence,
                   confirmInProgress: _confirmInProgress,
                   onConfirm: () async =>
@@ -776,6 +782,13 @@ class _ConfirmationCard extends StatefulWidget {
   final String? targetChannelId;
   final int? availablePeqSlots;
   final String? beforeAfterSummary;
+  final Map<String, ({double before, double after, double improvement})>
+      positionMetrics;
+  final List<String> positionRejectReasons;
+  final double? robustPrimaryBeforeRmsDb;
+  final double? robustPrimaryAfterRmsDb;
+  final String? targetName;
+  final String? targetPolicy;
 
   /// True when the measurement has insufficientEvidence confidence. Requires
   /// an explicit Expert approval checkbox before the Apply button is enabled.
@@ -792,6 +805,12 @@ class _ConfirmationCard extends StatefulWidget {
     this.targetChannelId,
     this.availablePeqSlots,
     this.beforeAfterSummary,
+    this.positionMetrics = const {},
+    this.positionRejectReasons = const [],
+    this.robustPrimaryBeforeRmsDb,
+    this.robustPrimaryAfterRmsDb,
+    this.targetName,
+    this.targetPolicy,
     this.insufficientEvidence = false,
     this.confirmInProgress = false,
     required this.onConfirm,
@@ -929,6 +948,42 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                   ],
                 ),
               ),
+            ],
+            if (widget.positionMetrics.isNotEmpty ||
+                widget.positionRejectReasons.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              const Text('Listening Position robustness',
+                  style: TextStyle(color: Colors.white54, fontSize: 10)),
+              const SizedBox(height: 5),
+              if (widget.robustPrimaryBeforeRmsDb != null &&
+                  widget.robustPrimaryAfterRmsDb != null)
+                Text(
+                  'Primary: ${widget.robustPrimaryBeforeRmsDb!.toStringAsFixed(1)} → '
+                  '${widget.robustPrimaryAfterRmsDb!.toStringAsFixed(1)} dB',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                ),
+              if (widget.positionMetrics.isNotEmpty)
+                Text(
+                  'Average: ${(widget.positionMetrics.values.map((m) => m.after).reduce((a, b) => a + b) / widget.positionMetrics.length).toStringAsFixed(1)} dB  '
+                  'Worst: ${widget.positionMetrics.values.map((m) => m.after).reduce((a, b) => a < b ? a : b).toStringAsFixed(1)} dB',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                ),
+              for (final entry in widget.positionMetrics.entries)
+                Text(
+                  '${entry.key}: ${entry.value.before.toStringAsFixed(1)} → '
+                  '${entry.value.after.toStringAsFixed(1)} dB '
+                  '(${entry.value.improvement >= 0 ? '+' : ''}'
+                  '${entry.value.improvement.toStringAsFixed(1)} dB)',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                ),
+              for (final reason in widget.positionRejectReasons)
+                Text('Reject: $reason',
+                    style: const TextStyle(color: Colors.amber, fontSize: 11)),
+            ],
+            if (widget.targetName != null) ...[
+              const SizedBox(height: 6),
+              Text('Target: ${widget.targetName}',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11)),
             ],
             if (widget.insufficientEvidence) ...[
               const SizedBox(height: 10),
