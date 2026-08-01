@@ -119,6 +119,7 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
   final double? robustPrimaryAfterRmsDb;
   final String? targetName;
   final String? targetPolicy;
+  final String? hybridXoSummary;
 
   /// True when the source measurement has [ConfidenceStatus.insufficientEvidence].
   /// The UI must show a warning and require explicit Expert approval before the
@@ -143,6 +144,7 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
     this.robustPrimaryAfterRmsDb,
     this.targetName,
     this.targetPolicy,
+    this.hybridXoSummary,
     this.insufficientEvidence = false,
   });
 }

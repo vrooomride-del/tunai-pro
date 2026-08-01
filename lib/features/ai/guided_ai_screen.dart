@@ -456,6 +456,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   robustPrimaryAfterRmsDb: aiState.robustPrimaryAfterRmsDb,
                   targetName: aiState.targetName,
                   targetPolicy: aiState.targetPolicy,
+                  hybridXoSummary: aiState.hybridXoSummary,
                   insufficientEvidence: aiState.insufficientEvidence,
                   confirmInProgress: _confirmInProgress,
                   onConfirm: () async =>
@@ -789,6 +790,7 @@ class _ConfirmationCard extends StatefulWidget {
   final double? robustPrimaryAfterRmsDb;
   final String? targetName;
   final String? targetPolicy;
+  final String? hybridXoSummary;
 
   /// True when the measurement has insufficientEvidence confidence. Requires
   /// an explicit Expert approval checkbox before the Apply button is enabled.
@@ -811,6 +813,7 @@ class _ConfirmationCard extends StatefulWidget {
     this.robustPrimaryAfterRmsDb,
     this.targetName,
     this.targetPolicy,
+    this.hybridXoSummary,
     this.insufficientEvidence = false,
     this.confirmInProgress = false,
     required this.onConfirm,
@@ -984,6 +987,11 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
               const SizedBox(height: 6),
               Text('Target: ${widget.targetName}',
                   style: const TextStyle(color: Colors.white54, fontSize: 11)),
+            ],
+            if (widget.hybridXoSummary != null) ...[
+              const SizedBox(height: 8),
+              Text(widget.hybridXoSummary!,
+                  style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.35)),
             ],
             if (widget.insufficientEvidence) ...[
               const SizedBox(height: 10),

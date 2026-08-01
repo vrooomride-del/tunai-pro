@@ -20,6 +20,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/full_system_candidate_evaluator.dart';
+import '../acoustic/hybrid_xo_feasibility.dart';
 import '../acoustic/listening_position_frd.dart';
 import '../acoustic/full_system_closed_loop_evaluator.dart';
 import '../acoustic/candidate_safety.dart';
@@ -1246,6 +1247,9 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     double? robustPrimaryAfterRmsDb;
     String? robustTargetName;
     String? robustTargetPolicy;
+    final hybridXoSummary = HybridXoFeasibilityEvaluator.evaluate(
+            project: project)
+        .displaySummary;
     final positions = project.acousticState.listeningPositions;
     if (positions.isNotEmpty) {
       final safetyByChannel = <String, CandidateSafetyResult>{};
@@ -1334,6 +1338,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       robustPrimaryAfterRmsDb: robustPrimaryAfterRmsDb,
       targetName: robustTargetName,
       targetPolicy: robustTargetPolicy,
+      hybridXoSummary: hybridXoSummary,
     );
   }
 

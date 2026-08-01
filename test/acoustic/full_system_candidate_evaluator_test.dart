@@ -6,6 +6,7 @@ import 'package:tunai_pro/core/acoustic/candidate_scoring.dart';
 import 'package:tunai_pro/core/acoustic/candidate_set.dart';
 import 'package:tunai_pro/core/acoustic/correction_plan.dart';
 import 'package:tunai_pro/core/acoustic/full_system_candidate_evaluator.dart';
+import 'package:tunai_pro/core/acoustic/hybrid_xo_feasibility.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
@@ -239,5 +240,40 @@ void main() {
     expect(warmResult.targetName, 'Warm');
     expect(warmResult.beforeWeightedRmsDb,
         isNot(equals(flat.beforeWeightedRmsDb)));
+  });
+
+  test('hybrid XO feasibility fails closed without phase/ZMA and preserves sides', () {
+    final result = HybridXoFeasibilityEvaluator.evaluate(
+        project: _project(magnitudeDb: 0, withPhase: false));
+    expect(result.verdict, HybridXoVerdict.insufficientEvidence);
+    expect(result.pairs.map((p) => p.side), ['L', 'R']);
+    expect(result.pairs.every((p) => p.missingEvidence.isNotEmpty), isTrue);
+  });
+
+  test('phase plus ZMA with overlap is DSP-only suitable', () {
+    final source = _project(magnitudeDb: 0, withPhase: true);
+    final now = DateTime(2026, 8, 1);
+    final ready = source.copyWith(
+      acousticState: source.acousticState.copyWith(
+        driverChannels: [
+          for (final channel in source.acousticState.driverChannels)
+            channel.copyWith(
+              zmaData: ParsedMeasurementData(
+                id: 'zma-${channel.id}',
+                sourceFileName: '${channel.id}.zma',
+                fileType: AcousticFileType.zma,
+                importedAt: now,
+                points: [
+                  for (final frequency in [100.0, 1000.0, 10000.0])
+                    MeasurementDataPoint(
+                        frequencyHz: frequency, impedanceOhm: 8),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    final result = HybridXoFeasibilityEvaluator.evaluate(project: ready);
+    expect(result.verdict, HybridXoVerdict.dspOnlySuitable);
   });
 }
