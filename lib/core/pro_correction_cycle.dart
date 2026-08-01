@@ -174,6 +174,16 @@ class CorrectionCycle {
 
   final List<String> reasons;
 
+  /// Four-channel evidence and rollback baseline for full-system cycles.
+  final Map<String, String> fullSystemBeforeRefs;
+  final Map<String, String> fullSystemAfterRefs;
+  final TuningProjectState? rollbackTuningState;
+  final bool? safetyPassed;
+  final bool? phaseAware;
+  final int? nextCycleNumber;
+  final bool requiresUserApproval;
+  final bool alignmentReevaluationAllowed;
+
   const CorrectionCycle({
     required this.projectId,
     required this.channelId,
@@ -188,6 +198,14 @@ class CorrectionCycle {
     this.completedAt,
     required this.createdAt,
     this.reasons = const [],
+    this.fullSystemBeforeRefs = const {},
+    this.fullSystemAfterRefs = const {},
+    this.rollbackTuningState,
+    this.safetyPassed,
+    this.phaseAware,
+    this.nextCycleNumber,
+    this.requiresUserApproval = false,
+    this.alignmentReevaluationAllowed = false,
   });
 
   bool get isComplete => decision != null;
@@ -215,6 +233,14 @@ class CorrectionCycle {
         completedAt: DateTime.now(),
         createdAt: createdAt,
         reasons: reasons,
+        fullSystemBeforeRefs: fullSystemBeforeRefs,
+        fullSystemAfterRefs: fullSystemAfterRefs,
+        rollbackTuningState: rollbackTuningState,
+        safetyPassed: safetyPassed,
+        phaseAware: phaseAware,
+        nextCycleNumber: nextCycleNumber,
+        requiresUserApproval: requiresUserApproval,
+        alignmentReevaluationAllowed: alignmentReevaluationAllowed,
       );
 
   Map<String, dynamic> toJson() => {
@@ -230,10 +256,20 @@ class CorrectionCycle {
           'afterMeasurementFileName': afterMeasurementFileName,
         if (metrics != null) 'metrics': metrics!.toJson(),
         if (decision != null) 'decision': decision!.toJson(),
-        if (completedAt != null)
-          'completedAt': completedAt!.toIso8601String(),
+        if (completedAt != null) 'completedAt': completedAt!.toIso8601String(),
         'createdAt': createdAt.toIso8601String(),
         'reasons': reasons,
+        if (fullSystemBeforeRefs.isNotEmpty)
+          'fullSystemBeforeRefs': fullSystemBeforeRefs,
+        if (fullSystemAfterRefs.isNotEmpty)
+          'fullSystemAfterRefs': fullSystemAfterRefs,
+        if (rollbackTuningState != null)
+          'rollbackTuningState': rollbackTuningState!.toJson(),
+        if (safetyPassed != null) 'safetyPassed': safetyPassed,
+        if (phaseAware != null) 'phaseAware': phaseAware,
+        if (nextCycleNumber != null) 'nextCycleNumber': nextCycleNumber,
+        'requiresUserApproval': requiresUserApproval,
+        'alignmentReevaluationAllowed': alignmentReevaluationAllowed,
       };
 
   factory CorrectionCycle.fromJson(Map<String, dynamic> j) {
@@ -256,11 +292,24 @@ class CorrectionCycle {
       decision: decisionS != null
           ? CorrectionCycleDecision.fromJson(decisionS)
           : null,
-      completedAt:
-          DateTime.tryParse(j['completedAt'] as String? ?? ''),
+      completedAt: DateTime.tryParse(j['completedAt'] as String? ?? ''),
       createdAt: DateTime.tryParse(j['createdAt'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       reasons: List<String>.from(j['reasons'] as List? ?? []),
+      fullSystemBeforeRefs: Map<String, String>.from(
+          j['fullSystemBeforeRefs'] as Map? ?? const {}),
+      fullSystemAfterRefs: Map<String, String>.from(
+          j['fullSystemAfterRefs'] as Map? ?? const {}),
+      rollbackTuningState: j['rollbackTuningState'] != null
+          ? TuningProjectState.fromJson(
+              Map<String, dynamic>.from(j['rollbackTuningState'] as Map))
+          : null,
+      safetyPassed: j['safetyPassed'] as bool?,
+      phaseAware: j['phaseAware'] as bool?,
+      nextCycleNumber: j['nextCycleNumber'] as int?,
+      requiresUserApproval: j['requiresUserApproval'] as bool? ?? false,
+      alignmentReevaluationAllowed:
+          j['alignmentReevaluationAllowed'] as bool? ?? false,
     );
   }
 }

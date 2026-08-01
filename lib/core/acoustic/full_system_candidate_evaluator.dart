@@ -51,6 +51,7 @@ abstract final class FullSystemCandidateEvaluator {
   static FullSystemResponseMeasurement? measure({
     required ProProject project,
     TuningProjectState? tuning,
+    bool applyTuning = true,
     double? minFrequencyHz,
     double? maxFrequencyHz,
   }) {
@@ -70,14 +71,18 @@ abstract final class FullSystemCandidateEvaluator {
             (maxFrequencyHz == null || frequency <= maxFrequencyHz))
         .toList();
     if (freqs.length < 2) return null;
-    final effectiveProject =
-        tuning == null ? project : project.copyWith(tuningState: tuning);
+    final effectiveProject = project.copyWith(
+      tuningState: applyTuning
+          ? (tuning ?? project.tuningState)
+          : TuningProjectState.createDefault(),
+    );
     final curve = _summedResponse(
       project: effectiveProject,
       drivers: drivers,
       freqs: freqs,
       mode: mode,
       selectedByChannel: const {},
+      rawMeasuredFrd: !applyTuning,
     );
     final error = ProResponseError.analyze(
       freqs: freqs,
@@ -223,6 +228,7 @@ abstract final class FullSystemCandidateEvaluator {
     required List<double> freqs,
     required FullSystemSummationMode mode,
     required Map<String, List<SelectedCandidate>> selectedByChannel,
+    bool rawMeasuredFrd = false,
   }) {
     final channelResponses = <String, List<double>>{};
     for (final channelId in requiredChannelIds) {
@@ -244,11 +250,17 @@ abstract final class FullSystemCandidateEvaluator {
             q: selected.scoredCandidate.candidate.q,
           ),
       ];
-      final response = ProSimulationOptimizer.simulatedResponse(
-        driver: drivers[channelId]!,
-        bands: bands,
-        freqs: freqs,
-      );
+      final response = rawMeasuredFrd
+          ? [
+              for (final frequency in freqs)
+                _interpolateMagnitude(
+                    drivers[channelId]!.frdData!.points, frequency),
+            ]
+          : ProSimulationOptimizer.simulatedResponse(
+              driver: drivers[channelId]!,
+              bands: bands,
+              freqs: freqs,
+            );
       final gainDb = _channelGainDb(project.tuningState, channelId);
       channelResponses[channelId] = [
         for (var i = 0; i < freqs.length; i++)
@@ -355,5 +367,23 @@ abstract final class FullSystemCandidateEvaluator {
       }
     }
     return valid.last.phaseDeg!;
+  }
+
+  static double _interpolateMagnitude(
+      List<MeasurementDataPoint> points, double frequencyHz) {
+    final valid = points.where((point) => point.magnitudeDb != null).toList();
+    if (valid.isEmpty) return 0;
+    if (frequencyHz <= valid.first.frequencyHz) return valid.first.magnitudeDb!;
+    if (frequencyHz >= valid.last.frequencyHz) return valid.last.magnitudeDb!;
+    for (var i = 0; i < valid.length - 1; i++) {
+      final a = valid[i];
+      final b = valid[i + 1];
+      if (frequencyHz <= b.frequencyHz) {
+        final t = (math.log(frequencyHz) - math.log(a.frequencyHz)) /
+            (math.log(b.frequencyHz) - math.log(a.frequencyHz));
+        return a.magnitudeDb! + (b.magnitudeDb! - a.magnitudeDb!) * t;
+      }
+    }
+    return valid.last.magnitudeDb!;
   }
 }

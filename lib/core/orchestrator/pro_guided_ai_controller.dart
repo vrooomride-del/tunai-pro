@@ -20,6 +20,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/full_system_candidate_evaluator.dart';
 import '../acoustic/full_system_alignment_evaluator.dart';
+import '../acoustic/full_system_closed_loop_evaluator.dart';
 import '../acoustic/candidate_safety.dart';
 import '../acoustic/measurement_confidence.dart' show ConfidenceStatus;
 import '../deploy/pro_hardware_capability.dart';
@@ -643,6 +644,94 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       loopPhase: ProClosedLoopPhase.cycleComplete,
       completedCycle: cycle,
       hardwareWritePlan: current.hardwareWritePlan,
+    );
+    return cycle;
+  }
+
+  /// Evaluates one post-Deploy four-channel FRD set. This method only creates
+  /// and records the deterministic decision; it never writes hardware. A next
+  /// cycle is returned as an approval-required draft by the evaluator.
+  CorrectionCycle? submitAfterFourChannelFrd({
+    required ProProject beforeProject,
+    required ProProject afterProject,
+    required TuningProjectState previousTuningState,
+    required TuningProjectState deployedTuningState,
+    required int cycleNumber,
+    required bool safetyPassed,
+    required Map<String, String> beforeEvidenceRefs,
+    required Map<String, String> afterEvidenceRefs,
+    String? deployAckRef,
+  }) {
+    final current = state;
+    if (current is! ProGuidedAiCompleted ||
+        current.loopPhase != ProClosedLoopPhase.awaitingAfterFrd ||
+        beforeProject.id != afterProject.id ||
+        cycleNumber > FullSystemClosedLoopEvaluator.maxCycles) {
+      return null;
+    }
+    final result = FullSystemClosedLoopEvaluator.evaluate(
+      beforeProject: beforeProject,
+      afterProject: afterProject,
+      previousTuningState: previousTuningState,
+      deployedTuningState: deployedTuningState,
+      cycleNumber: cycleNumber,
+      safetyPassed: safetyPassed,
+      beforeEvidenceRefs: beforeEvidenceRefs,
+      afterEvidenceRefs: afterEvidenceRefs,
+    );
+    final peqSnapshot = deployedTuningState.peqChannels
+            .where((channel) => channel.channelId == 'ch_tw_l')
+            .firstOrNull ??
+        PeqChannelState.empty('ch_tw_l');
+    final cycle = CorrectionCycle(
+      projectId: beforeProject.id,
+      channelId: 'full_system',
+      cycleNumber: cycleNumber,
+      beforeMeasurementRef: beforeEvidenceRefs.values.join('|'),
+      peqSnapshot: peqSnapshot,
+      deployAckRef: deployAckRef,
+      afterMeasurementRef: afterEvidenceRefs.values.join('|'),
+      afterMeasurementFileName: '4-channel FRD cycle $cycleNumber',
+      metrics: CorrectionCycleMetrics(
+        commonFreqMinHz: 0,
+        commonFreqMaxHz: 0,
+        commonPointCount: 4,
+        meanAbsResidualBefore: result.beforeWeightedRmsDb,
+        meanAbsResidualAfter: result.afterWeightedRmsDb,
+        improvementDelta: result.improvementDb,
+        peakErrorBefore: result.beforeWeightedRmsDb,
+        peakErrorBeforeHz: 0,
+        peakErrorAfter: result.afterWeightedRmsDb,
+        peakErrorAfterHz: 0,
+        worsenedBandCount: result.rollbackSuggested ? 1 : 0,
+        improvementCoverage: result.approved ? 1 : 0,
+      ),
+      decision: result.decision,
+      completedAt: DateTime.now(),
+      createdAt: DateTime.now(),
+      reasons: result.reasons,
+      fullSystemBeforeRefs: Map.unmodifiable(beforeEvidenceRefs),
+      fullSystemAfterRefs: Map.unmodifiable(afterEvidenceRefs),
+      rollbackTuningState:
+          result.rollbackSuggested ? previousTuningState : null,
+      safetyPassed: safetyPassed,
+      phaseAware: result.mode == FullSystemSummationMode.phaseAware,
+      nextCycleNumber: result.nextCycle?.cycleNumber,
+      requiresUserApproval: result.nextCycle?.requiresUserApproval ?? false,
+      alignmentReevaluationAllowed:
+          result.nextCycle?.alignmentReevaluationAllowed ?? false,
+    );
+    state = ProGuidedAiCompleted(
+      outcome: current.outcome,
+      explanation: current.explanation,
+      loopVerdict: current.loopVerdict,
+      applyResult: current.applyResult,
+      applyBlockedReason: current.applyBlockedReason,
+      beforeMeasurementRef: current.beforeMeasurementRef,
+      loopPhase: ProClosedLoopPhase.cycleComplete,
+      completedCycle: cycle,
+      hardwareWritePlan: current.hardwareWritePlan,
+      guidedTuningSession: current.guidedTuningSession,
     );
     return cycle;
   }

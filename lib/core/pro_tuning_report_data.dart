@@ -251,8 +251,8 @@ class TuningReportPhaseAlignmentSummary {
       TuningReportPhaseAlignmentSummary(
         electricalOnly: j['electricalOnly'] as bool? ?? true,
         pairs: (j['pairs'] as List? ?? [])
-            .map((e) =>
-                TuningReportPhasePair.fromJson(Map<String, dynamic>.from(e as Map)))
+            .map((e) => TuningReportPhasePair.fromJson(
+                Map<String, dynamic>.from(e as Map)))
             .toList(),
       );
 }
@@ -284,8 +284,9 @@ class TuningReportOptimizerSummary {
     this.simulatedProjection = true,
   });
 
-  double? get improvement =>
-      (beforeScore == null || afterScore == null) ? null : afterScore! - beforeScore!;
+  double? get improvement => (beforeScore == null || afterScore == null)
+      ? null
+      : afterScore! - beforeScore!;
 
   Map<String, dynamic> toJson() => {
         'runCount': runCount,
@@ -405,8 +406,7 @@ class TuningReportFactoryProfileSummary {
         'exportedAt': exportedAt.toIso8601String(),
       };
 
-  factory TuningReportFactoryProfileSummary.fromJson(
-          Map<String, dynamic> j) =>
+  factory TuningReportFactoryProfileSummary.fromJson(Map<String, dynamic> j) =>
       TuningReportFactoryProfileSummary(
         profileId: j['profileId'] as String? ?? '',
         profileName: j['profileName'] as String? ?? '',
@@ -420,9 +420,8 @@ class TuningReportFactoryProfileSummary {
         beforeAfterImprovement: j['beforeAfterImprovement'] as String?,
         validationStatus: j['validationStatus'] as String? ?? '',
         projectFingerprint: j['projectFingerprint'] as String? ?? '',
-        exportedAt:
-            DateTime.tryParse(j['exportedAt'] as String? ?? '') ??
-                DateTime.fromMillisecondsSinceEpoch(0),
+        exportedAt: DateTime.tryParse(j['exportedAt'] as String? ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
       );
 }
 
@@ -504,6 +503,7 @@ class TuningReportData {
   final TuningReportDeploymentSummary deployment;
   final List<String> warnings;
   final TuningReportRevisions revisions;
+  final List<Map<String, dynamic>> correctionCycles;
 
   /// Present when the project has at least one Factory Sound Profile.
   /// Summarizes the most-recently-created profile.
@@ -528,6 +528,7 @@ class TuningReportData {
     required this.deployment,
     required this.warnings,
     required this.revisions,
+    this.correctionCycles = const [],
     this.factoryProfile,
     this.guidedTuningSession,
   });
@@ -545,6 +546,7 @@ class TuningReportData {
         'deployment': deployment.toJson(),
         'warnings': warnings,
         'revisions': revisions.toJson(),
+        'correctionCycles': correctionCycles,
         if (factoryProfile != null) 'factoryProfile': factoryProfile!.toJson(),
       };
 
@@ -564,8 +566,12 @@ class TuningReportData {
           TuningReportPhaseAlignmentSummary.fromJson(sub('phaseAlignment')),
       optimizer: TuningReportOptimizerSummary.fromJson(sub('optimizer')),
       deployment: TuningReportDeploymentSummary.fromJson(sub('deployment')),
-      warnings: (j['warnings'] as List? ?? []).map((e) => e.toString()).toList(),
+      warnings:
+          (j['warnings'] as List? ?? []).map((e) => e.toString()).toList(),
       revisions: TuningReportRevisions.fromJson(sub('revisions')),
+      correctionCycles: (j['correctionCycles'] as List? ?? const [])
+          .map((cycle) => Map<String, dynamic>.from(cycle as Map))
+          .toList(),
       factoryProfile: j['factoryProfile'] != null
           ? TuningReportFactoryProfileSummary.fromJson(sub('factoryProfile'))
           : null,
@@ -679,7 +685,8 @@ TuningReportData buildTuningReport(
     activePackageStatus: activePkg?.status.label,
   );
   if (deploy.blockedPackageCount > 0) {
-    warnings.add('${deploy.blockedPackageCount} deployment package(s) blocked.');
+    warnings
+        .add('${deploy.blockedPackageCount} deployment package(s) blocked.');
   }
   if (phaseAlignment.misalignCount > 0) {
     warnings.add(
@@ -739,6 +746,9 @@ TuningReportData buildTuningReport(
       protection: project.protectionState.revision,
       optimizer: project.optimizerState.revision,
     ),
+    correctionCycles: [
+      for (final cycle in project.correctionCycles) cycle.toJson(),
+    ],
     factoryProfile: factoryProfileSummary,
     guidedTuningSession: guidedTuningSession,
   );
