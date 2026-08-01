@@ -1,0 +1,160 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:tunai_pro/core/acoustic/acoustic_problem_classifier.dart';
+import 'package:tunai_pro/core/acoustic/candidate_optimizer.dart';
+import 'package:tunai_pro/core/acoustic/candidate_safety.dart';
+import 'package:tunai_pro/core/acoustic/candidate_scoring.dart';
+import 'package:tunai_pro/core/acoustic/candidate_set.dart';
+import 'package:tunai_pro/core/acoustic/correction_plan.dart';
+import 'package:tunai_pro/core/acoustic/full_system_candidate_evaluator.dart';
+import 'package:tunai_pro/core/pro_acoustic_data.dart';
+import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/pro_tuning_data.dart';
+
+const _ids = ['ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r'];
+
+ProProject _project({
+  required double magnitudeDb,
+  required bool withPhase,
+  bool cancellingPhase = false,
+  bool oneInvertedPhase = false,
+  double channelGainDb = 0,
+}) {
+  final now = DateTime(2026, 8, 1);
+  return ProProject(
+    id: 'p',
+    name: 'p',
+    createdAt: now,
+    updatedAt: now,
+    acousticState: MeasurementProjectState(
+      driverChannels: [
+        for (var i = 0; i < _ids.length; i++)
+          DriverChannel(
+            id: _ids[i],
+            name: _ids[i],
+            role: i.isEven ? DriverRole.coaxTweeter : DriverRole.coaxWoofer,
+            side: i < 2 ? DriverSide.left : DriverSide.right,
+            frdData: ParsedMeasurementData(
+              id: 'frd-${_ids[i]}',
+              sourceFileName: '${_ids[i]}.frd',
+              fileType: AcousticFileType.frd,
+              importedAt: now,
+              points: [
+                for (final frequency in [100.0, 1000.0, 10000.0])
+                  MeasurementDataPoint(
+                    frequencyHz: frequency,
+                    magnitudeDb: magnitudeDb,
+                    phaseDeg: withPhase
+                        ? ((cancellingPhase && i >= 2) ||
+                                (oneInvertedPhase && i == 3)
+                            ? 180
+                            : 0)
+                        : null,
+                  ),
+              ],
+            ),
+          ),
+      ],
+    ),
+    tuningState: TuningProjectState(
+      channelControls: [
+        for (final id in _ids)
+          ChannelControlState(channelId: id, gainDb: channelGainDb),
+      ],
+    ),
+  );
+}
+
+SelectedCandidate _selected(String channelId, {double gainDb = -6}) {
+  final candidate = PeqCandidate(
+    candidateId: 'candidate:$channelId',
+    featureId: 'peak:$channelId',
+    featureType: AcousticFeatureType.narrowPeak,
+    channelId: channelId,
+    frequencyHz: 1000,
+    gainDb: gainDb,
+    q: 1,
+    intent: CorrectionIntent.cut,
+    reason: 'test',
+  );
+  return SelectedCandidate(
+    scoredCandidate: ScoredCandidate(
+      candidate: candidate,
+      prominenceDb: 6,
+      prominenceScore: 40,
+      magnitudeConsistencyScore: 30,
+      qualityFactor: 1,
+      compositeScore: 90,
+      rank: 1,
+      grade: CandidateScoreGrade.excellent,
+      reasons: const [],
+    ),
+    applicationOrder: 1,
+    selectionReason: 'test',
+  );
+}
+
+Map<String, CandidateSafetyResult> _safety() => {
+      for (final id in _ids)
+        id: CandidateSafetyResult(
+          applyPermitted: true,
+          issues: const [],
+          verifiedCandidates: [_selected(id)],
+          policyId: 'safe',
+          policyVersion: 1,
+          evidenceRefs: const [],
+        ),
+    };
+
+void main() {
+  test('individual cuts that worsen the full sum are rejected', () {
+    final result = FullSystemCandidateEvaluator.evaluate(
+      project: _project(
+        magnitudeDb: 0,
+        withPhase: true,
+        oneInvertedPhase: true,
+        channelGainDb: -6.0206,
+      ),
+      safetyByChannel: {'ch_tw_l': _safety()['ch_tw_l']!},
+    );
+
+    expect(result.mode, FullSystemSummationMode.phaseAware);
+    expect(result.accepted, isFalse,
+        reason: 'before=${result.beforeWeightedRmsDb}, '
+            'after=${result.afterWeightedRmsDb}');
+    expect(result.afterWeightedRmsDb,
+        greaterThanOrEqualTo(result.beforeWeightedRmsDb));
+    expect(result.selectedByChannel, isEmpty);
+  });
+
+  test('lowest-RMS improving full-system combination is selected', () {
+    final result = FullSystemCandidateEvaluator.evaluate(
+      project: _project(magnitudeDb: 0, withPhase: false),
+      safetyByChannel: _safety(),
+    );
+
+    expect(result.accepted, isTrue);
+    expect(result.afterWeightedRmsDb, lessThan(result.beforeWeightedRmsDb));
+    expect(result.combinationsEvaluated, 15);
+    expect(result.selectedByChannel.keys.toSet(), _ids.toSet());
+    for (final id in _ids) {
+      expect(
+          result.selectedByChannel[id]!.single.scoredCandidate.candidate
+              .channelId,
+          id);
+    }
+  });
+
+  test('phase-aware is used only when all four FRDs carry phase', () {
+    final phaseAware = FullSystemCandidateEvaluator.evaluate(
+      project: _project(magnitudeDb: 0, withPhase: true),
+      safetyByChannel: _safety(),
+    );
+    final magnitudeOnly = FullSystemCandidateEvaluator.evaluate(
+      project: _project(magnitudeDb: 0, withPhase: false),
+      safetyByChannel: _safety(),
+    );
+
+    expect(phaseAware.mode, FullSystemSummationMode.phaseAware);
+    expect(magnitudeOnly.mode, FullSystemSummationMode.magnitudeOnly);
+  });
+}

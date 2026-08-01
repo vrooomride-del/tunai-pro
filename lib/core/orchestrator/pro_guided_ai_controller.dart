@@ -18,6 +18,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../acoustic/acoustic_apply_engine.dart';
+import '../acoustic/full_system_candidate_evaluator.dart';
 import '../acoustic/candidate_safety.dart';
 import '../acoustic/measurement_confidence.dart' show ConfidenceStatus;
 import '../deploy/pro_hardware_capability.dart';
@@ -785,7 +786,8 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
 
   // Returns (exportPackage, writePlan) so callers can store the package in
   // project export state for the Deploy tab's HardwareApplyFlow.
-  static (DspExportPackage, HardwareWritePlan)? _buildFullSystemHardwareWritePlan(
+  static (DspExportPackage, HardwareWritePlan)?
+      _buildFullSystemHardwareWritePlan(
     String projectId,
     List<TuningApplyResult> results,
   ) {
@@ -827,7 +829,10 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       parameterBlocks: blocks,
       notes: 'Generated from confirmed 4-channel Guided Tuning results.',
     );
-    return (package, buildHardwareWritePlan(package, HardwareDeviceProfiles.adau1701Icp5));
+    return (
+      package,
+      buildHardwareWritePlan(package, HardwareDeviceProfiles.adau1701Icp5)
+    );
   }
 
   /// Applies all completed safety artifacts to their respective PEQ channels
@@ -839,14 +844,52 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     ProOrchestratorPlan plan,
     ProProject project,
   ) {
-    final results = <TuningApplyResult>[];
-    for (final safetyRecord in completedSteps.where(
+    final safetyByChannel = <String, CandidateSafetyResult>{};
+    final safetyRefByChannel = <String, String>{};
+    for (final record in completedSteps.where(
         (r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)) {
-      final channelId =
-          _resolveChannelForSafetyRef(safetyRecord.outputRef, plan);
+      final channelId = _resolveChannelForSafetyRef(record.outputRef, plan);
+      if (channelId == null || !store.has(projectId, record.outputRef))
+        continue;
+      try {
+        final safety = store
+            .getTyped<CandidateSafetyArtifact>(projectId, record.outputRef)
+            .value;
+        if (safety.applyPermitted) {
+          safetyByChannel[channelId] = safety;
+          safetyRefByChannel[channelId] = record.outputRef;
+        }
+      } catch (_) {}
+    }
+    final joint = FullSystemCandidateEvaluator.evaluate(
+      project: project,
+      safetyByChannel: safetyByChannel,
+    );
+    if (!joint.accepted) return const [];
+
+    final results = <TuningApplyResult>[];
+    for (final channelId in requiredFullSystemChannelIds) {
+      final safety = safetyByChannel[channelId];
+      final safetyRef = safetyRefByChannel[channelId];
+      if (safety == null || safetyRef == null) continue;
+      final selected = joint.selectedByChannel[channelId] ?? const [];
+      if (selected.isEmpty) continue;
+      final filteredSafety = CandidateSafetyResult(
+        applyPermitted: true,
+        issues: safety.issues,
+        verifiedCandidates: selected,
+        policyId: safety.policyId,
+        policyVersion: safety.policyVersion,
+        evidenceRefs: safety.evidenceRefs,
+      );
       final result = _runApply(
-          projectId, store, safetyRecord.outputRef, project,
-          analyzedChannelId: channelId);
+        projectId,
+        store,
+        safetyRef,
+        project,
+        analyzedChannelId: channelId,
+        safetyOverride: filteredSafety,
+      );
       if (result != null) results.add(result);
     }
     return results;
@@ -1092,11 +1135,12 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     String safetyRef,
     ProProject project, {
     String? analyzedChannelId,
+    CandidateSafetyResult? safetyOverride,
   }) {
     if (!store.has(projectId, safetyRef)) return null;
     CandidateSafetyResult safety;
     try {
-      safety =
+      safety = safetyOverride ??
           store.getTyped<CandidateSafetyArtifact>(projectId, safetyRef).value;
     } catch (_) {
       return null;
