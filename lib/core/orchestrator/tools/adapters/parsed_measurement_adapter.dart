@@ -195,18 +195,15 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
 
   /// Parses and aligns [additionalSweeps] with the primary sweep.
   ///
-  /// Uses the same numeric fingerprint deduplication as
-  /// [MeasurementAnalyzeAdapter]: sweeps are considered identical when their
-  /// (freq, mag) pairs round to the same integer Hz / 0.001 dB values.
-  ///
-  /// Returns null when fewer than 2 distinct valid sweeps survive alignment.
+  /// Every imported repeat is retained, including an identical repeat: two
+  /// identical sweeps are valid evidence of perfect repeatability.
+  /// Returns null when fewer than 2 valid sweeps survive alignment.
   static ({List<double> frequencies, List<List<double>> spectraDb})?
       _buildAlignedSpectra(
     List<double> primaryFreqs,
     List<double> primaryMags,
     List<FrdSweepEntry> additionalSweeps,
   ) {
-    final seenNumeric = <String>{_numericFingerprint(primaryFreqs, primaryMags)};
     final sweepList = <({List<double> freqs, List<double> mags})>[
       (freqs: primaryFreqs, mags: primaryMags),
     ];
@@ -222,9 +219,6 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
       final aMags = [for (final p in pts) p.magnitudeDb ?? double.nan];
       if (aFreqs.isEmpty) continue;
 
-      final fp = _numericFingerprint(aFreqs, aMags);
-      if (seenNumeric.contains(fp)) continue;
-      seenNumeric.add(fp);
       sweepList.add((freqs: aFreqs, mags: aMags));
     }
 
@@ -232,15 +226,4 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
     return FrdGridAligner.align(sweepList);
   }
 
-  /// Canonical numeric fingerprint: sorted (freq_int:mag_int) SHA-256.
-  /// Tolerance: ±0.5 Hz, ±0.0005 dB.
-  static String _numericFingerprint(List<double> freqs, List<double> mags) {
-    final n = freqs.length < mags.length ? freqs.length : mags.length;
-    final idx = List.generate(n, (i) => i)
-      ..sort((a, b) => freqs[a].compareTo(freqs[b]));
-    final parts = [
-      for (final i in idx) '${freqs[i].round()}:${(mags[i] * 1000).round()}',
-    ];
-    return sha256.convert(utf8.encode(parts.join('|'))).toString();
-  }
 }

@@ -23,7 +23,8 @@ import '../acoustic/full_system_candidate_evaluator.dart'
     show FullSystemSummationMode;
 import '../acoustic/full_system_closed_loop_evaluator.dart';
 import '../acoustic/candidate_safety.dart';
-import '../acoustic/measurement_confidence.dart' show ConfidenceStatus;
+import '../acoustic/measurement_confidence.dart'
+    show ConfidenceStatus, MetricStatus, MeasurementConfidencePolicy;
 import '../deploy/pro_hardware_capability.dart';
 import '../deploy/pro_hardware_write_plan.dart';
 import '../frd_parser.dart';
@@ -990,8 +991,9 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     for (final record in completedSteps.where(
         (r) => r.toolId == ProOrchestratorToolId.acousticValidateSafety)) {
       final channelId = _resolveChannelForSafetyRef(record.outputRef, plan);
-      if (channelId == null || !store.has(projectId, record.outputRef))
+      if (channelId == null || !store.has(projectId, record.outputRef)) {
         continue;
+      }
       try {
         final safety = store
             .getTyped<CandidateSafetyArtifact>(projectId, record.outputRef)
@@ -1198,19 +1200,41 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     }
     if (previewEntries.isNotEmpty) preview = previewEntries;
 
-    // insufficientEvidence: any channel with single-sweep measurement.
+    // Confidence gate: repeatability is only available when the Import Repeat
+    // Sweep data aligned onto the same frequency grid. A low repeatability is
+    // a measured channel-specific block, not an Expert-approval bypass.
     bool insufficientEvidence = false;
+    final repeatabilityBlocks = <String>[];
     for (final mRecord in completedSteps
         .where((r) => r.toolId == ProOrchestratorToolId.measurementAnalyze)) {
       if (!store.has(pid, mRecord.outputRef)) continue;
       try {
         final mArt =
             store.getTyped<MeasurementArtifact>(pid, mRecord.outputRef);
-        if (mArt.confidence?.status == ConfidenceStatus.insufficientEvidence) {
+        final measurementStep = plan.steps
+            .where((step) => step.outputRef == mRecord.outputRef)
+            .firstOrNull;
+        final channelId = measurementStep?.inputRefs.firstOrNull ?? 'unknown';
+        final confidence = mArt.confidence;
+        if (confidence?.status == ConfidenceStatus.insufficientEvidence ||
+            confidence?.repeatability.status != MetricStatus.available) {
+          // No Repeat FRD preserves the existing insufficientEvidence path:
+          // Expert approval may still authorize Apply. It is not a hard block.
           insufficientEvidence = true;
-          break;
+        } else if ((confidence?.repeatability.score ?? 0.0) <
+            MeasurementConfidencePolicy.proProvisional()
+                .repeatabilityThreshold) {
+          insufficientEvidence = true;
+          repeatabilityBlocks.add(
+              '$channelId: Repeat FRD 불일치 (repeatability '
+              '${confidence!.repeatability.score!.toStringAsFixed(2)})');
         }
       } catch (_) {}
+    }
+    if (repeatabilityBlocks.isNotEmpty && applyBlockedReason == null) {
+      applyBlockedReason = repeatabilityBlocks.join('; ');
+    } else if (repeatabilityBlocks.isNotEmpty) {
+      applyBlockedReason = '$applyBlockedReason; ${repeatabilityBlocks.join('; ')}';
     }
 
     // Before/After summary: aggregate best improvement across all channels.

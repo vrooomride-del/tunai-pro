@@ -334,15 +334,15 @@ void main() {
           greaterThan(single.confidence!.overallScore ?? 0.0));
     });
 
-    test('numerically duplicate sweep is excluded — stays single-sweep', () {
-      // Same numeric data formatted differently — should deduplicate to 1 sweep.
+    test('identical repeat sweep is retained as repeatability evidence', () {
+      // Same numeric data is still a second physical repeat and must count.
       final sweeps = [_entry('woofer_dup.frd', _frdContentSameNumeric)];
       final (:ctx, :store) = _setup(additionalSweeps: sweeps);
       adapter.run(ctx, _step());
       final a = _artifact(store);
-      // After dedup, only 1 distinct sweep → single-sweep path.
-      expect(a.confidence!.status,
-          equals(ConfidenceStatus.insufficientEvidence));
+      expect(a.confidence!.repeatability.status, MetricStatus.available);
+      expect(a.confidence!.repeatability.score, 1.0);
+      expect(a.confidence!.status, equals(ConfidenceStatus.valid));
     });
   });
 
