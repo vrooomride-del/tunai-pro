@@ -14,7 +14,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/acoustic/acoustic_apply_engine.dart';
 import '../../core/acoustic/closed_loop_evaluator.dart';
-import '../../core/frd_parser.dart';
+import '../../core/pro_measurement_parser.dart';
+import '../../core/orchestrator/full_system_after_frd_input.dart';
 import '../../core/orchestrator/guided_ai_project_apply.dart';
 import '../../core/orchestrator/pro_guided_ai_controller.dart';
 import '../../core/orchestrator/pro_guided_ai_state.dart';
@@ -24,6 +25,7 @@ import '../../core/orchestrator/pro_orchestrator_types.dart';
 import '../../core/pro_acoustic_data.dart' show DriverChannel;
 import '../../core/pro_correction_cycle.dart';
 import '../../core/pro_project_store.dart';
+import '../../core/pro_project.dart';
 import '../../core/spectrum_snapshot.dart';
 import '../../core/workbench_tab_provider.dart';
 import '../mic/mic_measurement_controller.dart';
@@ -38,6 +40,105 @@ class GuidedAiScreen extends ConsumerStatefulWidget {
 
 class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
   final _goalCtrl = TextEditingController();
+  Future<void>? _activeGuidedRun;
+  bool _confirmInProgress = false;
+  bool _deployNavigationDone = false;
+  int _onApplyCount = 0;
+  FullSystemAfterFrdInput? _afterFrdInput;
+  String? _afterFrdError;
+
+  Future<void> _startGuidedRun(ProProject project) async {
+    if (_activeGuidedRun != null) return;
+    _deployNavigationDone = false;
+    _onApplyCount = 0;
+    try {
+      final run = ref.read(guidedAiProvider.notifier).start(
+            project: project,
+            userGoal: _goalCtrl.text,
+            onApply: (pid, applyResult) async {
+              _onApplyCount++;
+              debugPrint(
+                  'ON_APPLY channelId=${applyResult.channelId} count=$_onApplyCount');
+              if (!mounted) return;
+              final latestProject = ref
+                  .read(proProjectStoreProvider)
+                  .projects
+                  .where((p) => p.id == pid)
+                  .firstOrNull;
+              final op = GuidedAiProjectApply.apply(
+                projectId: pid,
+                applyResult: applyResult,
+                latestProject: latestProject,
+              );
+              if (!op.wrote || op.updatedProject == null || !mounted) return;
+              await ref
+                  .read(proProjectStoreProvider.notifier)
+                  .updateTuningState(
+                    pid,
+                    op.updatedProject!.tuningState,
+                  );
+            },
+            onExportPackage: (pid, package) async {
+              if (!mounted) return;
+              final current = ref
+                  .read(proProjectStoreProvider)
+                  .projects
+                  .where((p) => p.id == pid)
+                  .firstOrNull;
+              if (current == null) return;
+              final updated = current.exportState.copyWith(
+                packages: [
+                  ...current.exportState.packages
+                      .where((p) => p.id != package.id),
+                  package,
+                ],
+                activePackageId: package.id,
+              );
+              if (!mounted) return;
+              await ref
+                  .read(proProjectStoreProvider.notifier)
+                  .updateExportState(pid, updated);
+            },
+            onHardwareWritePlan: (pid, plan) async {
+              debugPrint('WRITE_PLAN ops=${plan.operations.length}');
+              if (!mounted || _deployNavigationDone) return;
+              _deployNavigationDone = true;
+              debugPrint('DEPLOY_HANDOFF');
+              ref.read(workbenchTabProvider.notifier).go(kTabDeploy);
+            },
+          );
+      _activeGuidedRun = run;
+      await run;
+    } catch (error) {
+      if (mounted) ref.read(guidedAiProvider.notifier).reportFailure(error);
+    } finally {
+      _activeGuidedRun = null;
+      if (mounted && _confirmInProgress) {
+        setState(() => _confirmInProgress = false);
+      }
+    }
+  }
+
+  Future<void> _confirmApply(String stepId) async {
+    debugPrint('CONTINUE_TAP');
+    if (_confirmInProgress) return;
+    setState(() => _confirmInProgress = true);
+    try {
+      debugPrint('CONFIRM_START');
+      ref.read(guidedAiProvider.notifier).confirm(stepId);
+      final run = _activeGuidedRun;
+      if (run != null) await run;
+      debugPrint('CONFIRM_END');
+    } catch (error, stackTrace) {
+      debugPrint('CONTINUE_ERROR $error');
+      debugPrint('$stackTrace');
+      if (mounted) ref.read(guidedAiProvider.notifier).reportFailure(error);
+    } finally {
+      if (mounted && _confirmInProgress) {
+        setState(() => _confirmInProgress = false);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -45,7 +146,15 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
     super.dispose();
   }
 
-  Future<void> _importAfterFrd() async {
+  void _beginAfterFrd(ProProject project) {
+    setState(() {
+      _afterFrdInput = FullSystemAfterFrdInput(project);
+      _afterFrdError = null;
+    });
+    ref.read(guidedAiProvider.notifier).enterAwaitingAfterFrd();
+  }
+
+  Future<void> _importAfterFrd(String channelId) async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['frd', 'txt'],
@@ -55,55 +164,36 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
     if (file.path == null) return;
 
     final content = await File(file.path!).readAsString();
-    final afterPoints = FrdParser.parseFrd(content);
-    if (afterPoints.isEmpty) return;
+    final parsed =
+        ProMeasurementParser.parseFrd(fileName: file.name, content: content);
+    final afterData = parsed.data;
+    if (afterData == null || !afterData.hasMagnitude) return;
 
     final aiState = ref.read(guidedAiProvider);
     if (aiState is! ProGuidedAiCompleted) return;
     if (aiState.loopPhase != ProClosedLoopPhase.awaitingAfterFrd) return;
 
-    final project = ref
-        .read(proProjectStoreProvider)
-        .projects
-        .where((p) => p.id == widget.projectId)
-        .firstOrNull;
-    if (project == null) return;
+    final input = _afterFrdInput;
+    if (input == null) return;
+    try {
+      input.add(channelId: channelId, afterFrd: afterData);
+    } catch (error) {
+      if (mounted) setState(() => _afterFrdError = '$error');
+      return;
+    }
+    if (mounted) setState(() {});
+    if (!input.isComplete) return;
 
-    // Use the channelId from the apply result if available; avoids firstOrNull.
-    final appliedChannelId = aiState.applyResult?.channelId;
-    final driverCh = appliedChannelId != null
-        ? project.acousticState.driverChannels
-            .where((c) => c.id == appliedChannelId)
-            .firstOrNull
-        : project.acousticState.driverChannels.firstOrNull;
-    final beforePoints = driverCh?.frdData?.points
-            .where((p) => p.magnitudeDb != null)
-            .map((p) => FrdPoint(frequency: p.frequencyHz, spl: p.magnitudeDb!))
-            .toList() ??
-        <FrdPoint>[];
-
-    final peqChannel = appliedChannelId != null
-        ? project.tuningState.peqChannels
-            .where((c) => c.channelId == appliedChannelId)
-            .firstOrNull
-        : project.tuningState.peqChannels.firstOrNull;
-    if (peqChannel == null) return;
-
-    final beforeRef = aiState.beforeMeasurementRef ??
-        'before_${widget.projectId}_${DateTime.now().millisecondsSinceEpoch}';
-    final afterRef =
-        'after_${widget.projectId}_${DateTime.now().millisecondsSinceEpoch}';
-
-    final cycle = ref.read(guidedAiProvider.notifier).submitAfterFrd(
-          projectId: widget.projectId,
-          channelId: peqChannel.channelId,
-          beforeFrdPoints: beforePoints,
-          beforeMeasurementRef: beforeRef,
-          afterFrdPoints: afterPoints,
-          afterMeasurementRef: afterRef,
-          afterMeasurementFileName: file.name,
-          peqSnapshot: peqChannel,
-          cycleNumber: project.correctionCycles.length + 1,
+    final beforeProject = input.beforeProject;
+    final cycle = ref.read(guidedAiProvider.notifier).submitAfterFourChannelFrd(
+          beforeProject: beforeProject,
+          afterProject: input.buildAfterProject(),
+          previousTuningState: beforeProject.tuningState,
+          deployedTuningState: beforeProject.tuningState,
+          cycleNumber: beforeProject.correctionCycles.length + 1,
+          safetyPassed: beforeProject.safetyStatus == SafetyStatus.verified,
+          beforeEvidenceRefs: input.beforeEvidenceRefs,
+          afterEvidenceRefs: input.afterEvidenceRefs,
         );
     if (cycle == null) return;
 
@@ -146,9 +236,10 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
 
     // Expert single-channel handoff from Import tab (kept for Expert path only).
     final targetChannelId = ref.watch(guidedAiTargetChannelProvider);
-    final frdChannels =
-        project?.acousticState.driverChannels.where((d) => d.hasParsedFrd).toList() ??
-            [];
+    final frdChannels = project?.acousticState.driverChannels
+            .where((d) => d.hasParsedFrd)
+            .toList() ??
+        [];
     // Resolve the target driver channel for Expert-mode display only.
     final DriverChannel? targetChannel = targetChannelId != null
         ? frdChannels.where((d) => d.id == targetChannelId).firstOrNull
@@ -157,8 +248,11 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
         targetChannelId != null && targetChannel == null;
     // 4-channel default mode: no single-channel selection required.
     // Required channels for full-system analysis.
-    const _requiredChannelIds = [
-      'ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r',
+    const requiredChannelIds = [
+      'ch_tw_l',
+      'ch_wf_l',
+      'ch_tw_r',
+      'ch_wf_r',
     ];
 
     return Scaffold(
@@ -189,8 +283,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 hwTarget: project?.dspTarget,
                 primaryFrdFilename: targetChannel?.frdFile?.fileName,
                 driverChannelLabel: targetChannel?.shortLabel,
-                repeatSweepCount:
-                    targetChannel?.additionalFrdSweeps.length,
+                repeatSweepCount: targetChannel?.additionalFrdSweeps.length,
                 cycleNumber: (project?.correctionCycles.length ?? 0) + 1,
               ),
               const SizedBox(height: 20),
@@ -213,8 +306,8 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                         Expanded(
                           child: Text(
                             'FRD 파일이 없습니다 — Import 탭에서 측정 파일을 먼저 불러오세요.',
-                            style:
-                                TextStyle(color: Colors.amber, fontSize: 12, height: 1.4),
+                            style: TextStyle(
+                                color: Colors.amber, fontSize: 12, height: 1.4),
                           ),
                         ),
                       ],
@@ -254,7 +347,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                     project.acousticState.driverChannels.isNotEmpty) ...[
                   _FourChannelStatusPanel(
                     driverChannels: project.acousticState.driverChannels,
-                    requiredChannelIds: _requiredChannelIds,
+                    requiredChannelIds: requiredChannelIds,
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -285,7 +378,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                             project.acousticState.parsedFrdCount == 0 ||
                             channelIdInvalid)
                         ? null
-                        : () {
+                        : () async {
                             // 4-channel default: do not pass targetChannelId.
                             // Expert single-channel: targetChannelId is from
                             // Import tab handoff (guidedAiTargetChannelProvider).
@@ -293,58 +386,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                             ref
                                 .read(guidedAiTargetChannelProvider.notifier)
                                 .state = null;
-                            ref.read(guidedAiProvider.notifier).start(
-                                  project: project,
-                                  userGoal: _goalCtrl.text,
-                                  onApply: (pid, applyResult) async {
-                                    final latestProject = ref
-                                        .read(proProjectStoreProvider)
-                                        .projects
-                                        .where((p) => p.id == pid)
-                                        .firstOrNull;
-                                    final op = GuidedAiProjectApply.apply(
-                                      projectId: pid,
-                                      applyResult: applyResult,
-                                      latestProject: latestProject,
-                                    );
-                                    if (!op.wrote ||
-                                        op.updatedProject == null) {
-                                      return;
-                                    }
-                                    await ref
-                                        .read(proProjectStoreProvider.notifier)
-                                        .updateTuningState(
-                                            pid,
-                                            op.updatedProject!.tuningState);
-                                  },
-                                  onExportPackage: (pid, package) async {
-                                    final current = ref
-                                        .read(proProjectStoreProvider)
-                                        .projects
-                                        .where((p) => p.id == pid)
-                                        .firstOrNull;
-                                    if (current == null) return;
-                                    final updated =
-                                        current.exportState.copyWith(
-                                      packages: [
-                                        ...current.exportState.packages
-                                            .where(
-                                                (p) => p.id != package.id),
-                                        package,
-                                      ],
-                                      activePackageId: package.id,
-                                    );
-                                    await ref
-                                        .read(proProjectStoreProvider.notifier)
-                                        .updateExportState(pid, updated);
-                                  },
-                                  onHardwareWritePlan: (pid, plan) async {
-                                    // 4채널 통합 플랜 완료 → Deploy 탭으로 이동
-                                    ref
-                                        .read(workbenchTabProvider.notifier)
-                                        .go(kTabDeploy);
-                                  },
-                                );
+                            await _startGuidedRun(project);
                           },
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF2A2A2A),
@@ -352,8 +394,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
-                    child: const Text(
-                        'AI 분석 시작',
+                    child: const Text('AI 분석 시작',
                         style: TextStyle(
                             color: Colors.white,
                             letterSpacing: 2,
@@ -370,8 +411,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   const Padding(
                     padding: EdgeInsets.only(top: 8),
                     child: Text('분석 불가 — FRD 파일이 없습니다.',
-                        style:
-                            TextStyle(color: Colors.white38, fontSize: 12)),
+                        style: TextStyle(color: Colors.white38, fontSize: 12)),
                   ),
               ],
 
@@ -411,9 +451,9 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   availablePeqSlots: aiState.availablePeqSlots,
                   beforeAfterSummary: aiState.beforeAfterSummary,
                   insufficientEvidence: aiState.insufficientEvidence,
-                  onConfirm: () => ref
-                      .read(guidedAiProvider.notifier)
-                      .confirm(aiState.request.stepId),
+                  confirmInProgress: _confirmInProgress,
+                  onConfirm: () async =>
+                      await _confirmApply(aiState.request.stepId),
                   onCancel: () => ref
                       .read(guidedAiProvider.notifier)
                       .cancel(aiState.request.stepId),
@@ -441,13 +481,11 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 if (aiState.applyResult != null)
                   _ApplyResultCard(
                     result: aiState.applyResult!,
-                    onGoToDeploy: () => ref
-                        .read(workbenchTabProvider.notifier)
-                        .go(kTabDeploy),
+                    onGoToDeploy: () =>
+                        ref.read(workbenchTabProvider.notifier).go(kTabDeploy),
                   )
                 else if (aiState.outcome.stepRecords.any((r) =>
-                    r.toolId ==
-                        ProOrchestratorToolId.acousticValidateSafety &&
+                    r.toolId == ProOrchestratorToolId.acousticValidateSafety &&
                     r.status == ProStepStatus.failed)) ...[
                   const SizedBox(height: 12),
                   const _StatusCard(
@@ -473,14 +511,16 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 ],
                 // "Add After Measurement" — shown when apply succeeded and no
                 // after FRD cycle is in progress or complete yet.
-                if (aiState.loopPhase == ProClosedLoopPhase.awaitingMeasurement &&
+                if (aiState.loopPhase ==
+                        ProClosedLoopPhase.awaitingMeasurement &&
                     aiState.applyResult?.status == TuningApplyStatus.ok) ...[
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: () =>
-                          ref.read(guidedAiProvider.notifier).enterAwaitingAfterFrd(),
+                      onPressed: project == null
+                          ? null
+                          : () => _beginAfterFrd(project),
                       icon: const Icon(Icons.upload_file, size: 16),
                       label: const Text('After 측정 FRD 불러오기'),
                       style: OutlinedButton.styleFrom(
@@ -494,23 +534,35 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   ),
                 ],
                 // FRD file import — shown when awaitingAfterFrd.
-                if (aiState.loopPhase == ProClosedLoopPhase.awaitingAfterFrd) ...[
+                if (aiState.loopPhase ==
+                    ProClosedLoopPhase.awaitingAfterFrd) ...[
                   const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _importAfterFrd,
-                      icon: const Icon(Icons.folder_open_outlined, size: 16),
-                      label: const Text('FRD 파일 선택'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF1E2A3A),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
+                  const _FourChannelRemeasurementGuide(),
+                  const SizedBox(height: 12),
+                  for (final channelId in requiredChannelIds)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _afterFrdInput?.afterByChannel
+                                      .containsKey(channelId) ==
+                                  true
+                              ? null
+                              : () => _importAfterFrd(channelId),
+                          icon:
+                              const Icon(Icons.folder_open_outlined, size: 16),
+                          label: Text(_afterFrdInput?.afterByChannel
+                                      .containsKey(channelId) ==
+                                  true
+                              ? '$channelId 준비 완료'
+                              : '$channelId After FRD 선택'),
+                        ),
                       ),
                     ),
-                  ),
+                  if (_afterFrdError != null)
+                    Text(_afterFrdError!,
+                        style: const TextStyle(color: Colors.redAccent)),
                 ],
                 // evaluated phase: prompt next action.
                 if (aiState.loopPhase == ProClosedLoopPhase.evaluated) ...[
@@ -518,7 +570,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
-                      onPressed: _importAfterFrd,
+                      onPressed: null,
                       icon: const Icon(Icons.folder_open_outlined, size: 16),
                       label: const Text('After FRD 불러오기'),
                       style: FilledButton.styleFrom(
@@ -554,16 +606,13 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   const SizedBox(height: 12),
                   _CycleDecisionCard(
                     cycle: aiState.completedCycle!,
-                    cycleNumber:
-                        (project?.correctionCycles.length ?? 1),
+                    cycleNumber: (project?.correctionCycles.length ?? 1),
                     onContinue: () =>
                         ref.read(guidedAiProvider.notifier).reset(),
                     onComplete: () {
                       ref.read(deployScrollTargetProvider.notifier).state =
                           DeployScrollTarget.factoryProfile;
-                      ref
-                          .read(workbenchTabProvider.notifier)
-                          .go(kTabDeploy);
+                      ref.read(workbenchTabProvider.notifier).go(kTabDeploy);
                     },
                   ),
                 ],
@@ -731,6 +780,7 @@ class _ConfirmationCard extends StatefulWidget {
   /// True when the measurement has insufficientEvidence confidence. Requires
   /// an explicit Expert approval checkbox before the Apply button is enabled.
   final bool insufficientEvidence;
+  final bool confirmInProgress;
 
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
@@ -743,6 +793,7 @@ class _ConfirmationCard extends StatefulWidget {
     this.availablePeqSlots,
     this.beforeAfterSummary,
     this.insufficientEvidence = false,
+    this.confirmInProgress = false,
     required this.onConfirm,
     required this.onCancel,
   });
@@ -789,7 +840,9 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                   Text(
                     '후보 ${widget.candidatePreview!.length}개',
                     style: const TextStyle(
-                        color: Colors.white38, fontSize: 11, letterSpacing: 1.5),
+                        color: Colors.white38,
+                        fontSize: 11,
+                        letterSpacing: 1.5),
                   ),
                   if (widget.availablePeqSlots != null) ...[
                     const Text('  /  ',
@@ -838,7 +891,9 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                       children: [
                         _td('${c.applicationOrder}'),
                         _td(c.channelId, overflow: TextOverflow.ellipsis),
-                        _td(c.targetPeqSlot != null ? '${c.targetPeqSlot}' : '—'),
+                        _td(c.targetPeqSlot != null
+                            ? '${c.targetPeqSlot}'
+                            : '—'),
                         _td('${c.frequencyHz.round()} Hz'),
                         _td('${c.gainDb >= 0 ? '+' : ''}${c.gainDb.toStringAsFixed(1)} dB'),
                         _td(c.q.toStringAsFixed(2)),
@@ -868,9 +923,7 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                       child: Text(
                         widget.beforeAfterSummary!,
                         style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 11,
-                            height: 1.4),
+                            color: Colors.white54, fontSize: 11, height: 1.4),
                       ),
                     ),
                   ],
@@ -896,9 +949,7 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                       child: Text(
                         '단일 FRD — 반복 측정 없음. 신뢰도가 낮습니다. Expert 승인 후에만 적용 가능합니다.',
                         style: TextStyle(
-                            color: Colors.amber,
-                            fontSize: 11,
-                            height: 1.4),
+                            color: Colors.amber, fontSize: 11, height: 1.4),
                       ),
                     ),
                   ],
@@ -906,8 +957,8 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
               ),
               const SizedBox(height: 6),
               InkWell(
-                onTap: () =>
-                    setState(() => _expertApprovalGranted = !_expertApprovalGranted),
+                onTap: () => setState(
+                    () => _expertApprovalGranted = !_expertApprovalGranted),
                 borderRadius: BorderRadius.circular(4),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
@@ -952,9 +1003,7 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                       child: Text(
                         '적용 차단: ${widget.applyBlockedReason}',
                         style: const TextStyle(
-                            color: Colors.redAccent,
-                            fontSize: 11,
-                            height: 1.4),
+                            color: Colors.redAccent, fontSize: 11, height: 1.4),
                       ),
                     ),
                   ],
@@ -979,7 +1028,9 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
-                    onPressed: isBlocked ? null : widget.onConfirm,
+                    onPressed: isBlocked || widget.confirmInProgress
+                        ? null
+                        : widget.onConfirm,
                     style: FilledButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: Colors.black,
@@ -1142,6 +1193,39 @@ class _AwaitingMeasurementCard extends StatelessWidget {
       );
 }
 
+class _FourChannelRemeasurementGuide extends StatelessWidget {
+  const _FourChannelRemeasurementGuide();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF141414),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('4채널 재측정 안내',
+                style: TextStyle(color: Colors.white, fontSize: 13)),
+            SizedBox(height: 8),
+            Text(
+              '• 적용된 DSP 상태 유지\n'
+              '• 같은 마이크 위치·방향·높이\n'
+              '• 같은 출력 레벨·입력 게인·샘플레이트·윈도우\n'
+              '• ch_tw_l → ch_wf_l → ch_tw_r → ch_wf_r 순서\n'
+              '• 가능하면 phase/time reference 유지\n'
+              '• 유닛·인클로저·배선이 같으면 ZMA 재측정 불필요',
+              style:
+                  TextStyle(color: Colors.white60, fontSize: 12, height: 1.6),
+            ),
+          ],
+        ),
+      );
+}
+
 class _ApplyResultCard extends StatelessWidget {
   final TuningApplyResult result;
   final VoidCallback? onGoToDeploy;
@@ -1153,10 +1237,14 @@ class _ApplyResultCard extends StatelessWidget {
     final (label, color) = switch (result.status) {
       TuningApplyStatus.ok => ('프로젝트 PEQ 업데이트 완료', const Color(0xFF4CAF50)),
       TuningApplyStatus.partiallyApplied => ('일부 적용', Colors.amber),
-      TuningApplyStatus.noSlotAvailable =>
-        ('슬롯 부족 — PEQ 밴드가 없습니다', Colors.redAccent),
-      TuningApplyStatus.notPermitted =>
-        ('적용 차단 — 안전 검증이 허가하지 않음', Colors.redAccent),
+      TuningApplyStatus.noSlotAvailable => (
+          '슬롯 부족 — PEQ 밴드가 없습니다',
+          Colors.redAccent
+        ),
+      TuningApplyStatus.notPermitted => (
+          '적용 차단 — 안전 검증이 허가하지 않음',
+          Colors.redAccent
+        ),
     };
 
     return Container(
@@ -1195,8 +1283,8 @@ class _ApplyResultCard extends StatelessWidget {
                       '${b.frequencyHz.round()} Hz  '
                       '${b.gainDb >= 0 ? '+' : ''}${b.gainDb.toStringAsFixed(1)} dB  '
                       'Q ${b.q.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                          color: Colors.white38, fontSize: 11),
+                      style:
+                          const TextStyle(color: Colors.white38, fontSize: 11),
                     ),
                   ],
                 ),
@@ -1213,8 +1301,8 @@ class _ApplyResultCard extends StatelessWidget {
                 label: const Text('Deploy로 이동'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF4CAF50),
-                  side: BorderSide(
-                      color: const Color(0xFF4CAF50).withAlpha(100)),
+                  side:
+                      BorderSide(color: const Color(0xFF4CAF50).withAlpha(100)),
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(6)),
@@ -1248,27 +1336,27 @@ class _CycleDecisionCard extends StatelessWidget {
 
     final (decisionLabel, decisionColor, icon) = switch (decision) {
       CorrectionCycleDecision.improvedAndComplete => (
-          '개선 완료',
+          '개선 승인 · 완료',
           const Color(0xFF4CAF50),
           Icons.check_circle_outline,
         ),
       CorrectionCycleDecision.improvedNeedsAnotherCycle => (
-          '개선됨 — 추가 보정 권장',
+          '개선 승인 · 다음 cycle 제안',
           Colors.amber,
           Icons.refresh,
         ),
       CorrectionCycleDecision.noMeaningfulImprovement => (
-          '의미 있는 개선 없음',
+          '수렴 완료',
           Colors.white54,
           Icons.remove_circle_outline,
         ),
       CorrectionCycleDecision.worsened => (
-          '성능 저하 감지',
+          '악화 · rollback 제안',
           Colors.redAccent,
           Icons.warning_amber_outlined,
         ),
       CorrectionCycleDecision.insufficientEvidence => (
-          '데이터 부족',
+          '근거 부족',
           Colors.white38,
           Icons.help_outline,
         ),
@@ -1280,10 +1368,12 @@ class _CycleDecisionCard extends StatelessWidget {
       null => ('평가 미완료', Colors.white24, Icons.hourglass_empty),
     };
 
-    final canContinue = decision == CorrectionCycleDecision.improvedNeedsAnotherCycle;
-    final isTerminal = decision == CorrectionCycleDecision.improvedAndComplete ||
-        decision == CorrectionCycleDecision.worsened ||
-        decision == CorrectionCycleDecision.wrongProjectOrChannel;
+    final canContinue =
+        decision == CorrectionCycleDecision.improvedNeedsAnotherCycle;
+    final isTerminal =
+        decision == CorrectionCycleDecision.improvedAndComplete ||
+            decision == CorrectionCycleDecision.worsened ||
+            decision == CorrectionCycleDecision.wrongProjectOrChannel;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1352,16 +1442,15 @@ class _CycleDecisionCard extends StatelessWidget {
               CorrectionCycleDecision.improvedNeedsAnotherCycle) ...[
             const SizedBox(height: 10),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: Colors.amber.withAlpha(20),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: const Text(
                 'After 측정 결과가 다음 사이클의 Before로 사용됩니다.',
-                style: TextStyle(
-                    color: Colors.amber, fontSize: 11, height: 1.4),
+                style:
+                    TextStyle(color: Colors.amber, fontSize: 11, height: 1.4),
               ),
             ),
           ],
@@ -1369,8 +1458,7 @@ class _CycleDecisionCard extends StatelessWidget {
               decision == CorrectionCycleDecision.wrongProjectOrChannel) ...[
             const SizedBox(height: 10),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: Colors.redAccent.withAlpha(25),
                 borderRadius: BorderRadius.circular(6),
@@ -1494,10 +1582,8 @@ class _ContextRow extends StatelessWidget {
         spacing: 16,
         runSpacing: 4,
         children: [
-          if (projectName != null)
-            _Chip(Icons.folder_outlined, projectName!),
-          if (hwTarget != null)
-            _Chip(Icons.memory_outlined, hwTarget!),
+          if (projectName != null) _Chip(Icons.folder_outlined, projectName!),
+          if (hwTarget != null) _Chip(Icons.memory_outlined, hwTarget!),
           if (primaryFrdFilename != null)
             _Chip(Icons.graphic_eq_outlined, primaryFrdFilename!),
           if (driverChannelLabel != null)

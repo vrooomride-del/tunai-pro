@@ -39,6 +39,7 @@ import 'package:tunai_pro/core/pro_export_data.dart' show DspExportPackage;
 import 'package:tunai_pro/core/orchestrator/pro_acoustic_intent.dart';
 import 'package:tunai_pro/core/orchestrator/pro_explanation.dart';
 import 'package:tunai_pro/core/orchestrator/pro_guided_ai_controller.dart';
+import 'package:tunai_pro/core/orchestrator/guided_ai_project_apply.dart';
 import 'package:tunai_pro/core/orchestrator/pro_guided_ai_state.dart';
 import 'package:tunai_pro/core/orchestrator/pro_orchestrate_request.dart';
 import 'package:tunai_pro/core/orchestrator/pro_orchestrate_response.dart';
@@ -62,6 +63,7 @@ import 'package:tunai_pro/core/pro_acoustic_data.dart'
         MeasurementProjectState,
         ParsedMeasurementData;
 import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/pro_demo_project_factory.dart';
 import 'package:tunai_pro/core/pro_response_error.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart'
     show PeqBandType, PeqChannelState, TuningProjectState;
@@ -2863,6 +2865,65 @@ void main() {
       expect(capturedPackage!.parameterBlocks.map((b) => b.channelId).toSet(),
           const {'ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r'},
           reason: 'export package must include all 4 required channel blocks');
+    });
+
+    test('Demo approval persists four PEQ channels and emits one write plan',
+        () async {
+      var project = createTunaiProDemoProject();
+      final before = project.tuningState.peqChannels
+          .map((channel) => channel.toJson())
+          .toList();
+      var applyCalls = 0;
+      var writePlanCalls = 0;
+      HardwareWritePlan? writePlan;
+      final ctrl = _ctrl(_peqStubs());
+      final future = ctrl.start(
+        project: project,
+        userGoal: 'Demo full-system tuning',
+        onApply: (projectId, result) async {
+          applyCalls++;
+          final applied = GuidedAiProjectApply.apply(
+            projectId: projectId,
+            applyResult: result,
+            latestProject: project,
+          );
+          expect(applied.wrote, isTrue);
+          project = applied.updatedProject!;
+        },
+        onHardwareWritePlan: (_, plan) async {
+          writePlanCalls++;
+          writePlan = plan;
+        },
+      );
+
+      await _waitForApplyGateGroup16(ctrl);
+      expect(
+        project.tuningState.peqChannels
+            .map((channel) => channel.toJson())
+            .toList(),
+        before,
+        reason: 'continue 전에는 Demo PEQ state를 변경하면 안 된다',
+      );
+      ctrl.confirm((ctrl.state as ProGuidedAiConfirmPending).request.stepId);
+      await future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => fail(
+            'approved four-channel apply must produce resultCount=4 within 2 seconds'),
+      );
+
+      expect(applyCalls, 4);
+      expect(
+        project.tuningState.peqChannels
+            .map((channel) => channel.channelId)
+            .toSet(),
+        const {'ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r'},
+      );
+      expect(writePlanCalls, 1);
+      expect(writePlan, isNotNull);
+      expect(writePlan!.operations, isNotEmpty);
+      final completed = ctrl.state as ProGuidedAiCompleted;
+      expect(completed.applyBlockedReason,
+          isNot(contains('noCorrectableDirectives')));
     });
   });
 }

@@ -4,6 +4,7 @@ import 'package:tunai_pro/core/deploy/pro_hardware_write_plan.dart';
 import 'package:tunai_pro/core/deploy/pro_icp5_peq_write_port.dart';
 import 'package:tunai_pro/core/transport/adau1701_ch0_band0_read_service.dart';
 import 'package:tunai_pro/core/transport/adau1701_peq_deployment_gate.dart';
+import 'package:tunai_pro/core/transport/adau1701_deployment_report.dart';
 import 'package:tunai_pro/core/transport/adau1701_tuning_transport.dart';
 import 'package:tunai_pro/core/transport/icp5_raw_state_read.dart';
 
@@ -37,8 +38,10 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   _FakeTuningTransport({this.connected = true});
 
   final List<(int, double)> gainWrites = [];
+  final List<(int, int, double)> gainBandWrites = [];
   final List<(int, int)> freqWrites = [];        // XO: writeFilterFrequency (param 0x15)
   final List<(int, int)> peqFreqWrites = [];     // PEQ: writePeqFrequency (param 0x18)
+  final List<(int, int, int)> peqFreqBandWrites = [];
   final List<(int, double)> qWrites = [];
   final List<(int, double)> outputGainWrites = [];
   bool ackSuccess = true;
@@ -57,6 +60,7 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb,
       {int band = 0}) async {
     gainWrites.add((channel, gainDb));
+    gainBandWrites.add((channel, band, gainDb));
     return Adau1701WriteAck(success: ackSuccess, message: 'gain');
   }
 
@@ -71,6 +75,7 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
   Future<Adau1701WriteAck> writePeqFrequency(int channel, int frequencyHz,
       {int band = 0}) async {
     peqFreqWrites.add((channel, frequencyHz));
+    peqFreqBandWrites.add((channel, band, frequencyHz));
     return Adau1701WriteAck(success: ackSuccess, message: 'peqFreq');
   }
 
@@ -174,9 +179,10 @@ Adau1701Icp5PeqWritePort _port(
     );
 
 // A capture-proven op, as it would arrive from an approved plan.
-HardwareWriteOp _op(HardwareParamKind kind, num value, {int? band = 0}) =>
+HardwareWriteOp _op(HardwareParamKind kind, num value,
+        {int? band = 0, String channelId = 'wf'}) =>
     HardwareWriteOp(
-      channelId: 'wf',
+      channelId: channelId,
       parameterKind: kind,
       bandIndex: band,
       targetValue: value,
@@ -462,6 +468,113 @@ void main() {
   });
 
   // ── ACK-only dispatch: Q + bands 1–9 ────────────────────────────────────────
+
+  group('UI band to protocol band readback boundary', () {
+    Adau1701Icp5PeqWritePort countingPort(
+      _FakeTuningTransport transport,
+      _CountingReadService reads,
+    ) =>
+        Adau1701Icp5PeqWritePort(
+          transport: transport,
+          gate: Adau1701PeqDeploymentGate(transport: transport),
+          readService: reads,
+          channelResolver: (id) => switch (id) {
+            'ch_tw_l' => 0,
+            'ch_wf_l' => 1,
+            'ch_tw_r' => 2,
+            'ch_wf_r' => 3,
+            _ => -1,
+          },
+          readbackRetryDelay: Duration.zero,
+        );
+
+    test('UI B1/ch0 maps protocol0 and invokes readback', () async {
+      final transport = _FakeTuningTransport();
+      final reads = _CountingReadService(transport, _readOk(gainDb: -1));
+      final report = await countingPort(transport, reads).preflightAndWrite(
+        _op(HardwareParamKind.peqGain, -1,
+            band: 0, channelId: 'ch_tw_l'),
+      );
+
+      expect(transport.gainBandWrites, [(0, 0, -1.0)]);
+      expect(reads.callCount, 1);
+      expect(report.isAckOnly, isFalse);
+    });
+
+    test('UI B2/ch0 maps protocol1 with zero readback and ACK-only', () async {
+      final transport = _FakeTuningTransport();
+      final reads = _CountingReadService(transport, _readFail);
+      final report = await countingPort(transport, reads).preflightAndWrite(
+        _op(HardwareParamKind.peqGain, -2,
+            band: 1, channelId: 'ch_tw_l'),
+      );
+
+      expect(transport.gainBandWrites, [(0, 1, -2.0)]);
+      expect(reads.callCount, 0);
+      expect(report.deploymentSucceeded, isTrue);
+      expect(report.isAckOnly, isTrue);
+    });
+
+    test('UI B10/ch0 maps protocol9 with zero readback and ACK-only', () async {
+      final transport = _FakeTuningTransport();
+      final reads = _CountingReadService(transport, _readFail);
+      final report = await countingPort(transport, reads).preflightAndWrite(
+        _op(HardwareParamKind.peqGain, -2,
+            band: 9, channelId: 'ch_tw_l'),
+      );
+
+      expect(transport.gainBandWrites, [(0, 9, -2.0)]);
+      expect(reads.callCount, 0);
+      expect(report.deploymentSucceeded, isTrue);
+      expect(report.isAckOnly, isTrue);
+    });
+
+    test('60 PEQ operations complete without ACK-only readback misrouting',
+        () async {
+      final transport = _FakeTuningTransport();
+      final reads = _CountingReadService(
+          transport, _readOk(gainDb: -1, freq: 1800));
+      final port = countingPort(transport, reads);
+      final reports = <Adau1701DeploymentReport>[];
+      for (final channelId in ['ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r']) {
+        for (var band = 0; band < 5; band++) {
+          reports.add(await port.preflightAndWrite(HardwareWriteOp(
+            channelId: channelId,
+            parameterKind: HardwareParamKind.peqGain,
+            bandIndex: band,
+            targetValue: -1,
+            verification: HardwareParamVerification.captureProven,
+            writable: true,
+            reason: '60-op regression',
+          )));
+          reports.add(await port.preflightAndWrite(HardwareWriteOp(
+            channelId: channelId,
+            parameterKind: HardwareParamKind.peqFrequency,
+            bandIndex: band,
+            targetValue: 1800,
+            verification: HardwareParamVerification.captureProven,
+            writable: true,
+            reason: '60-op regression',
+          )));
+          reports.add(await port.preflightAndWrite(HardwareWriteOp(
+            channelId: channelId,
+            parameterKind: HardwareParamKind.peqQ,
+            bandIndex: band,
+            targetValue: 2,
+            verification: HardwareParamVerification.captureProven,
+            writable: true,
+            reason: '60-op regression',
+          )));
+        }
+      }
+
+      expect(reports, hasLength(60));
+      expect(reports.every((report) => report.deploymentSucceeded), isTrue);
+      expect(reads.callCount, 2,
+          reason: 'only ch0 protocol band0 gain/frequency use readback');
+      expect(reports.where((report) => report.isAckOnly), hasLength(58));
+    });
+  });
 
   test('Q on band 9 (boundary) dispatches ACK-only', () async {
     final t = _FakeTuningTransport();

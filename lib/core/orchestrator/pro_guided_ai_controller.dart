@@ -16,10 +16,11 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../acoustic/acoustic_apply_engine.dart';
-import '../acoustic/full_system_candidate_evaluator.dart';
-import '../acoustic/full_system_alignment_evaluator.dart';
+import '../acoustic/full_system_candidate_evaluator.dart'
+    show FullSystemSummationMode;
 import '../acoustic/full_system_closed_loop_evaluator.dart';
 import '../acoustic/candidate_safety.dart';
 import '../acoustic/measurement_confidence.dart' show ConfidenceStatus;
@@ -440,6 +441,12 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       return;
     }
     _orchestrator?.confirm(stepId);
+  }
+
+  /// Converts an asynchronous UI/callback failure into visible Guided AI
+  /// state. This boundary never terminates the application or navigation root.
+  void reportFailure(Object error) {
+    state = ProGuidedAiFailed('적용 처리 실패: $error');
   }
 
   void cancel(String stepId) {
@@ -977,6 +984,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     ProOrchestratorPlan plan,
     ProProject project,
   ) {
+    debugPrint('MULTI_APPLY_START');
     final safetyByChannel = <String, CandidateSafetyResult>{};
     final safetyRefByChannel = <String, String>{};
     for (final record in completedSteps.where(
@@ -994,23 +1002,20 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
         }
       } catch (_) {}
     }
-    final alignment = FullSystemAlignmentEvaluator.evaluate(project: project);
-    final alignedProject = alignment.accepted
-        ? project.copyWith(tuningState: alignment.tuning)
-        : project;
-    final joint = FullSystemCandidateEvaluator.evaluate(
-      project: alignedProject,
-      safetyByChannel: safetyByChannel,
-    );
-    if (!joint.accepted) return const [];
-
     final results = <TuningApplyResult>[];
     for (final channelId in requiredFullSystemChannelIds) {
+      debugPrint('MULTI_CHANNEL $channelId START');
       final safety = safetyByChannel[channelId];
       final safetyRef = safetyRefByChannel[channelId];
-      if (safety == null || safetyRef == null) continue;
-      final selected = joint.selectedByChannel[channelId] ?? const [];
-      if (selected.isEmpty) continue;
+      if (safety == null || safetyRef == null) {
+        debugPrint('MULTI_CHANNEL $channelId END');
+        continue;
+      }
+      // The candidates reaching this gate were already scored jointly and
+      // Safety-approved before the user confirmed. Re-evaluating the same FRD
+      // here can turn an approved apply into noCorrectableDirectives. The
+      // post-confirm path is persistence-only.
+      final selected = safety.verifiedCandidates;
       final filteredSafety = CandidateSafetyResult(
         applyPermitted: true,
         issues: safety.issues,
@@ -1026,10 +1031,11 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
         project,
         analyzedChannelId: channelId,
         safetyOverride: filteredSafety,
-        alignedTuningState: alignment.accepted ? alignment.tuning : null,
       );
       if (result != null) results.add(result);
+      debugPrint('MULTI_CHANNEL $channelId END');
     }
+    debugPrint('MULTI_APPLY resultCount=${results.length}');
     return results;
   }
 
