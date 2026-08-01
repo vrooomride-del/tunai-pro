@@ -77,8 +77,15 @@ abstract final class GuidedAiProjectApply {
           .where((ch) => ch.channelId != applyResult.channelId),
       applyResult.updatedChannel,
     ];
+    final aligned = applyResult.alignedTuningState;
     final updated = latestProject.copyWith(
-        tuningState: latestProject.tuningState.copyWith(peqChannels: channels));
+        tuningState: latestProject.tuningState.copyWith(
+      peqChannels: channels,
+      crossoverChannels: aligned?.crossoverChannels ??
+          latestProject.tuningState.crossoverChannels,
+      channelControls:
+          aligned?.channelControls ?? latestProject.tuningState.channelControls,
+    ));
     return GuidedAiProjectApplyResult._(
         outcome: GuidedAiProjectApplyOutcome.wrote, updatedProject: updated);
   }

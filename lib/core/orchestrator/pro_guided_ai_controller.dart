@@ -19,6 +19,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/full_system_candidate_evaluator.dart';
+import '../acoustic/full_system_alignment_evaluator.dart';
 import '../acoustic/candidate_safety.dart';
 import '../acoustic/measurement_confidence.dart' show ConfidenceStatus;
 import '../deploy/pro_hardware_capability.dart';
@@ -795,6 +796,49 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     if (fullResults == null) return null;
 
     final blocks = <ExportParameterBlock>[];
+    final alignedTuning = fullResults.first.alignedTuningState;
+    if (alignedTuning != null) {
+      for (final channelId in requiredFullSystemChannelIds) {
+        final xo = alignedTuning.getOrCreateCrossoverChannel(channelId);
+        if (xo.isConfigured && !xo.bypassed) {
+          blocks.add(ExportParameterBlock(
+            id: 'guided-$channelId-alignment-xo',
+            type: ExportBlockType.crossover,
+            channelId: channelId,
+            title: 'Guided alignment XO $channelId',
+            summary: 'Deterministic full-system XO/polarity alignment',
+            parameters: {
+              if (xo.hasHighPass)
+                'highPass': {'freq_hz': xo.highPass!.frequencyHz},
+              if (xo.hasLowPass)
+                'lowPass': {'freq_hz': xo.lowPass!.frequencyHz},
+              'polarityInverted': xo.polarityInverted,
+            },
+          ));
+        }
+        final control = alignedTuning.getOrCreateControl(channelId);
+        if (control.hasGainTrim) {
+          blocks.add(ExportParameterBlock(
+            id: 'guided-$channelId-alignment-gain',
+            type: ExportBlockType.gain,
+            channelId: channelId,
+            title: 'Guided alignment gain $channelId',
+            summary: 'Deterministic full-system level alignment',
+            parameters: {'gainDb': control.gainDb},
+          ));
+        }
+        if (control.hasDelay) {
+          blocks.add(ExportParameterBlock(
+            id: 'guided-$channelId-alignment-delay',
+            type: ExportBlockType.delay,
+            channelId: channelId,
+            title: 'Guided alignment delay $channelId',
+            summary: 'Deterministic full-system time alignment',
+            parameters: {'delayMs': control.delayMs},
+          ));
+        }
+      }
+    }
     for (final result in fullResults) {
       final bands = <String, dynamic>{};
       final normalized = result.updatedChannel.normalized();
@@ -861,8 +905,12 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
         }
       } catch (_) {}
     }
+    final alignment = FullSystemAlignmentEvaluator.evaluate(project: project);
+    final alignedProject = alignment.accepted
+        ? project.copyWith(tuningState: alignment.tuning)
+        : project;
     final joint = FullSystemCandidateEvaluator.evaluate(
-      project: project,
+      project: alignedProject,
       safetyByChannel: safetyByChannel,
     );
     if (!joint.accepted) return const [];
@@ -889,6 +937,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
         project,
         analyzedChannelId: channelId,
         safetyOverride: filteredSafety,
+        alignedTuningState: alignment.accepted ? alignment.tuning : null,
       );
       if (result != null) results.add(result);
     }
@@ -1136,6 +1185,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     ProProject project, {
     String? analyzedChannelId,
     CandidateSafetyResult? safetyOverride,
+    TuningProjectState? alignedTuningState,
   }) {
     if (!store.has(projectId, safetyRef)) return null;
     CandidateSafetyResult safety;
@@ -1151,7 +1201,20 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             .where((ch) => ch.channelId == analyzedChannelId)
             .firstOrNull ??
         PeqChannelState.fixed(analyzedChannelId);
-    return AcousticApplyEngine.apply(safety, channel);
+    final result = AcousticApplyEngine.apply(safety, channel);
+    if (alignedTuningState == null) return result;
+    return TuningApplyResult(
+      status: result.status,
+      updatedChannel: result.updatedChannel,
+      applied: result.applied,
+      skipped: result.skipped,
+      channelId: result.channelId,
+      safetyPolicyId: result.safetyPolicyId,
+      safetyPolicyVersion: result.safetyPolicyVersion,
+      evidenceRefs: result.evidenceRefs,
+      reasons: result.reasons,
+      alignedTuningState: alignedTuningState,
+    );
   }
 
   // ── Guided tuning session summary builder ─────────────────────────────────────

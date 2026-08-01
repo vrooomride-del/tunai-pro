@@ -124,6 +124,9 @@ class TuningApplyResult {
 
   final List<String> reasons;
 
+  /// Optional deterministic full-system alignment selected before PEQ.
+  final TuningProjectState? alignedTuningState;
+
   const TuningApplyResult({
     required this.status,
     required this.updatedChannel,
@@ -134,6 +137,7 @@ class TuningApplyResult {
     required this.safetyPolicyVersion,
     required this.evidenceRefs,
     required this.reasons,
+    this.alignedTuningState,
   });
 
   Map<String, dynamic> toJson() => {

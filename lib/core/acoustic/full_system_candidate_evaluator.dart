@@ -29,6 +29,16 @@ class FullSystemCandidateEvaluation {
   });
 }
 
+class FullSystemResponseMeasurement {
+  final FullSystemSummationMode mode;
+  final double weightedRmsDb;
+
+  const FullSystemResponseMeasurement({
+    required this.mode,
+    required this.weightedRmsDb,
+  });
+}
+
 abstract final class FullSystemCandidateEvaluator {
   static const requiredChannelIds = [
     'ch_tw_l',
@@ -37,6 +47,49 @@ abstract final class FullSystemCandidateEvaluator {
     'ch_wf_r',
   ];
   static const maxCandidatesPerChannel = 3;
+
+  static FullSystemResponseMeasurement? measure({
+    required ProProject project,
+    TuningProjectState? tuning,
+    double? minFrequencyHz,
+    double? maxFrequencyHz,
+  }) {
+    final drivers = <String, DriverChannel>{
+      for (final driver in project.acousticState.driverChannels)
+        if (requiredChannelIds.contains(driver.id) && driver.hasParsedFrd)
+          driver.id: driver,
+    };
+    if (!requiredChannelIds.every(drivers.containsKey)) return null;
+    final mode = requiredChannelIds
+            .every((channelId) => drivers[channelId]!.frdData!.hasPhase)
+        ? FullSystemSummationMode.phaseAware
+        : FullSystemSummationMode.magnitudeOnly;
+    final freqs = _commonFrequencyGrid(drivers.values)
+        .where((frequency) =>
+            (minFrequencyHz == null || frequency >= minFrequencyHz) &&
+            (maxFrequencyHz == null || frequency <= maxFrequencyHz))
+        .toList();
+    if (freqs.length < 2) return null;
+    final effectiveProject =
+        tuning == null ? project : project.copyWith(tuningState: tuning);
+    final curve = _summedResponse(
+      project: effectiveProject,
+      drivers: drivers,
+      freqs: freqs,
+      mode: mode,
+      selectedByChannel: const {},
+    );
+    final error = ProResponseError.analyze(
+      freqs: freqs,
+      responseDb: curve,
+      targetDb: List<double>.filled(freqs.length, 0),
+      weights: ProResponseError.defaultWeights(freqs),
+    );
+    return FullSystemResponseMeasurement(
+      mode: mode,
+      weightedRmsDb: error.weightedRmsDb,
+    );
+  }
 
   static FullSystemCandidateEvaluation evaluate({
     required ProProject project,
