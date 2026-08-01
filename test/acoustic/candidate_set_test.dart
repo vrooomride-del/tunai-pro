@@ -30,6 +30,7 @@ AcousticObservedFeature _feat({
   AcousticFeatureType type = AcousticFeatureType.narrowPeak,
   double centerHz = 200,
   double deviationDb = 8.0,
+  double? prominenceDb,
   double estimatedQ = 4.0,
   AcousticFeatureQuality quality = AcousticFeatureQuality.confident,
   AcousticActionability actionability =
@@ -42,7 +43,7 @@ AcousticObservedFeature _feat({
       centerHz: centerHz,
       endHz: centerHz * 1.1,
       deviationDb: deviationDb,
-      prominenceDb: deviationDb.abs(),
+      prominenceDb: prominenceDb ?? deviationDb.abs(),
       bandwidthHz: centerHz * 0.2,
       bandwidthOctaves: 0.28,
       estimatedQ: estimatedQ,
@@ -291,6 +292,28 @@ void main() {
         expect(cs.candidates.single.gainDb, isNegative,
             reason: 'deviation=$dev must yield negative gainDb');
       }
+    });
+
+    test('gain follows residual/prominence and avoids unnecessary -6 saturation', () {
+      final small = _generate([_feat(
+          id: 'small', deviationDb: 2.0, prominenceDb: 2.0)]).candidates.single;
+      final large = _generate([_feat(
+          id: 'large', deviationDb: 8.0, prominenceDb: 8.0)]).candidates.single;
+      final broad = _generate([_feat(
+          id: 'broad', deviationDb: 8.0, prominenceDb: 3.0)]).candidates.single;
+      expect(small.gainDb, -2.0);
+      expect(large.gainDb, -8.0);
+      expect(broad.gainDb, -3.0);
+    });
+
+    test('narrow dip / phase-XO suspect feature yields no candidate', () {
+      final set = _generate([_feat(
+        id: 'dip',
+        type: AcousticFeatureType.narrowDip,
+        deviationDb: -5.0,
+      )]);
+      expect(set.candidates, isEmpty);
+      expect(set.status, CandidateSetStatus.noCorrectableDirectives);
     });
   });
 

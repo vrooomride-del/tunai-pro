@@ -305,6 +305,23 @@ abstract final class CandidateGenerator {
         continue;
       }
 
+      // A narrow dip is not a stable PEQ-cut target. It is commonly caused by
+      // phase/XO interaction and must remain inspect-only even if an upstream
+      // plan is malformed or overly permissive.
+      if (directive.featureType == AcousticFeatureType.narrowDip ||
+          featureMap[directive.featureId]?.actionability ==
+              AcousticActionability.inspectPlacementOrPhase ||
+          featureMap[directive.featureId]?.actionability ==
+              AcousticActionability.requiresExpertReview) {
+        skipped.add(SkippedDirective(
+          featureId: directive.featureId,
+          featureType: directive.featureType,
+          disposition: directive.disposition,
+          reason: 'narrow dip or phase/XO-suspect region — PEQ prohibited.',
+        ));
+        continue;
+      }
+
       // Only correctable directives produce candidates.
       if (directive.disposition != CorrectionDisposition.correctable) {
         skipped.add(SkippedDirective(
@@ -401,7 +418,15 @@ abstract final class CandidateGenerator {
     CandidatePolicy policy, {
     String? channelId,
   }) {
-    final rawMagnitude = feature.deviationDb.abs() * policy.gainScale;
+    // Use both target residual and local prominence. This prevents a broad
+    // residual with little local evidence from saturating every candidate at
+    // -6 dB while retaining deterministic proportional correction.
+    final observedMagnitude = feature.deviationDb.abs().isFinite &&
+            feature.prominenceDb.isFinite &&
+            feature.prominenceDb > 0
+        ? feature.deviationDb.abs().clamp(0.0, feature.prominenceDb)
+        : feature.deviationDb.abs();
+    final rawMagnitude = observedMagnitude * policy.gainScale;
     if (rawMagnitude < policy.minimumGainDb) return null;
 
     // gainDb is always a cut (negative). Clamped within policy bounds.

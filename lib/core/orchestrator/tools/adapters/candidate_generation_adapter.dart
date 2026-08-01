@@ -1,4 +1,5 @@
 import '../../../acoustic/candidate_set.dart';
+import '../../../acoustic/full_system_candidate_evaluator.dart';
 import '../../../pro_acoustic_data.dart' show DriverRole;
 import '../../../pro_project.dart' show ProProject;
 import '../../pro_orchestrator_plan.dart';
@@ -92,7 +93,12 @@ class CandidateGenerationAdapter implements ProToolAdapter {
             .toUpperCase() ==
         'ADAU1701';
     final project = ctx.resolver.resolveProjectSnapshot(ctx.projectId);
-    final channelId = step.inputRefs.length >= 3 ? step.inputRefs[2] : null;
+    // Candidate generation consumes exactly planRef + classificationRef.
+    // The channel is carried in the deterministic step objective and is used
+    // only to derive the existing Driver/XO/FRD correction range.
+    final channelId = FullSystemCandidateEvaluator.requiredChannelIds
+        .where((id) => step.objective.contains(id))
+        .firstOrNull;
     final candidateSet = CandidateGenerator.generate(
       planArtifact.value,
       classArtifact.value,
