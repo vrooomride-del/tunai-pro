@@ -7,6 +7,7 @@ import '../../../core/pro_measurement_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../shared/pro_widgets.dart';
 import '../../../shared/components/stat_chip.dart';
+import '../../../shared/components/section_header.dart';
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -44,6 +45,12 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
     final acoustic = project.acousticState;
 
     return Column(children: [
+      // ── Orientation bar: workflow guidance + simulated-data indicator ─────
+      _MeasureOrientationBar(
+        guidance: _measurementGuidance(mStore.sessions, selectedSession),
+      ),
+      // ── Workflow progress card: 5-step guided sequence ────────────────────
+      _WorkflowProgressCard(sessions: mStore.sessions, selected: selectedSession),
       // ── Phase C: Driver readiness overview bar ────────────────────────────
       _DriverReadinessBar(acoustic: acoustic),
       Expanded(child: Row(children: [
@@ -236,6 +243,167 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
   }
 }
 
+// ── Orientation Bar ───────────────────────────────────────────────────────────
+
+String _measurementGuidance(List<MeasurementSession> sessions, MeasurementSession? selected) {
+  if (sessions.isEmpty) return 'Create a measurement session to begin acoustic capture.';
+  if (selected == null) return 'Select a session on the left to continue its measurement points.';
+  final isCompleted = selected.status == MeasurementSessionStatus.completed ||
+      selected.status == MeasurementSessionStatus.reviewed;
+  if (isCompleted) return 'This session is complete.';
+  if (selected.points.isEmpty) return 'Add measurement points to begin capturing data for this session.';
+  final hasCaptured = selected.points.any((p) => p.status == MeasurementPointStatus.captured);
+  if (hasCaptured) return 'Review captured points — accept or reject each before marking complete.';
+  return 'Simulate capture for each point, then accept or reject the result.';
+}
+
+class _MeasureOrientationBar extends StatelessWidget {
+  final String guidance;
+  const _MeasureOrientationBar({required this.guidance});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+    decoration: const BoxDecoration(
+      color: kProSurface,
+      border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+    ),
+    child: Row(children: [
+      const Icon(Icons.explore_outlined, color: kProAccent, size: 13),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(guidance, style: proSubtitle(size: 11),
+            overflow: TextOverflow.ellipsis, maxLines: 1),
+      ),
+      const SizedBox(width: 10),
+      const ProStatusPill(label: 'SIMULATED DATA', color: kProAmber),
+    ]),
+  );
+}
+
+// ── Workflow Progress Card ────────────────────────────────────────────────────
+
+const _kWorkflowStepLabels = ['Session', 'Point', 'Capture', 'Review', 'Complete'];
+
+List<bool> _workflowStepCompletion(List<MeasurementSession> sessions, MeasurementSession? selected) => [
+  sessions.isNotEmpty,
+  selected != null && selected.points.isNotEmpty,
+  selected != null && selected.capturedCount > 0,
+  selected != null &&
+      !selected.points.any((p) => p.status == MeasurementPointStatus.captured) &&
+      selected.points.any((p) =>
+          p.status == MeasurementPointStatus.accepted || p.status == MeasurementPointStatus.rejected),
+  selected != null &&
+      (selected.status == MeasurementSessionStatus.completed ||
+          selected.status == MeasurementSessionStatus.reviewed),
+];
+
+String _workflowNextText(List<MeasurementSession> sessions, MeasurementSession? selected) {
+  if (sessions.isEmpty) return 'Next: Create a measurement session';
+  if (selected == null) return 'Next: Select a session to continue';
+  if (selected.status == MeasurementSessionStatus.completed ||
+      selected.status == MeasurementSessionStatus.reviewed) {
+    return 'Measurement complete';
+  }
+  if (selected.points.isEmpty) return 'Next: Add your first listening point';
+  if (selected.points.any((p) => p.status == MeasurementPointStatus.captured)) {
+    return 'Next: Review and accept the result';
+  }
+  if (selected.capturedCount == 0) return 'Next: Capture measurement data';
+  return 'Next: Mark this session complete';
+}
+
+class _WorkflowProgressCard extends StatelessWidget {
+  final List<MeasurementSession> sessions;
+  final MeasurementSession? selected;
+  const _WorkflowProgressCard({required this.sessions, required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    final completion = _workflowStepCompletion(sessions, selected);
+    final activeIndex = completion.indexWhere((c) => !c);
+    final currentIndex = activeIndex == -1 ? _kWorkflowStepLabels.length - 1 : activeIndex;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: const BoxDecoration(
+        color: kProSurface,
+        border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const ProSectionHeader(title: 'Measurement Workflow'),
+        const SizedBox(height: 8),
+        Row(children: [
+          for (var i = 0; i < _kWorkflowStepLabels.length; i++) ...[
+            _WorkflowStepChip(
+              number: i + 1,
+              label: _kWorkflowStepLabels[i],
+              complete: completion[i],
+              current: i == currentIndex,
+            ),
+            if (i < _kWorkflowStepLabels.length - 1)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4),
+                child: Icon(Icons.arrow_forward, size: 10, color: Colors.white24),
+              ),
+          ],
+        ]),
+        const SizedBox(height: 6),
+        Text(
+          _workflowNextText(sessions, selected),
+          style: proSubtitle(size: 10, color: kProAccent),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+      ]),
+    );
+  }
+}
+
+class _WorkflowStepChip extends StatelessWidget {
+  final int number;
+  final String label;
+  final bool complete;
+  final bool current;
+  const _WorkflowStepChip({
+    required this.number,
+    required this.label,
+    required this.complete,
+    required this.current,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = complete ? kProGreen : (current ? kProAccent : Colors.white24);
+    final tinted = complete || current;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          color: tinted ? color.withValues(alpha: 0.08) : Colors.transparent,
+          border: Border.all(color: color.withValues(alpha: tinted ? 0.4 : 0.2)),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
+          if (complete)
+            Icon(Icons.check, size: 10, color: color)
+          else
+            Text('$number', style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(color: color, fontSize: 9.5),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
 // ── Session List Panel ────────────────────────────────────────────────────────
 
 class _SessionListPanel extends StatelessWidget {
@@ -270,16 +438,11 @@ class _SessionListPanel extends StatelessWidget {
           decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              const Icon(Icons.mic_none_outlined, color: kProAccent, size: 14),
-              const SizedBox(width: 8),
-              Text('MEASUREMENT SESSIONS', style: proLabel(size: 9, color: kProAccent, spacing: 1.5)),
-            ]),
-            const SizedBox(height: 4),
-            Text(project.name, style: proTitle(size: 11, color: Colors.white60),
-                overflow: TextOverflow.ellipsis),
-          ]),
+          child: ProSectionHeader(
+            title: 'Measurement Sessions',
+            icon: Icons.mic_none_outlined,
+            subtitle: project.name,
+          ),
         ),
 
         // New session button
@@ -309,10 +472,10 @@ class _SessionListPanel extends StatelessWidget {
             child: Column(children: [
               const Icon(Icons.mic_off_outlined, color: Colors.white12, size: 28),
               const SizedBox(height: 10),
-              Text('No sessions yet.', style: proSubtitle(size: 11)),
-              const SizedBox(height: 4),
-              Text('Create a measurement session\nto begin acoustic capture.',
-                  style: proLabel(size: 9, color: Colors.white24, spacing: 0.3),
+              Text('Start your first measurement', style: proTitle(size: 12, color: Colors.white38)),
+              const SizedBox(height: 6),
+              Text('Create a session to begin acoustic measurement.',
+                  style: proSubtitle(size: 11),
                   textAlign: TextAlign.center),
             ]),
           )
@@ -444,13 +607,13 @@ class _ReadinessCard extends StatelessWidget {
             border: Border.all(color: kProBorder),
             borderRadius: BorderRadius.circular(4),
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('MEASUREMENT PROTOCOL', style: proLabel(size: 9, spacing: 1.8)),
-            const SizedBox(height: 10),
-            const _ProtocolRow(Icons.chevron_right, 'Measurement data must be reviewed before tuning.'),
-            const _ProtocolRow(Icons.chevron_right, 'AI suggestions require expert verification.'),
-            const _ProtocolRow(Icons.chevron_right, 'AOS protection remains active throughout.'),
-            const _ProtocolRow(Icons.chevron_right, 'DSP execution occurs only after verified deployment.'),
+          child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            ProSectionHeader(title: 'Measurement Protocol'),
+            SizedBox(height: 10),
+            _ProtocolRow(Icons.chevron_right, 'Measurement data must be reviewed before tuning.'),
+            _ProtocolRow(Icons.chevron_right, 'AI suggestions require expert verification.'),
+            _ProtocolRow(Icons.chevron_right, 'AOS protection remains active throughout.'),
+            _ProtocolRow(Icons.chevron_right, 'DSP execution occurs only after verified deployment.'),
           ]),
         ),
 
@@ -493,7 +656,7 @@ class _ChecklistCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('MEASUREMENT READINESS', style: proLabel(size: 9, spacing: 1.8)),
+        const ProSectionHeader(title: 'Measurement Readiness'),
         const SizedBox(height: 12),
         _CheckRow('Project selected', true, project.name),
         _CheckRow('Hardware connection', isConnected, project.connection.label),
@@ -621,19 +784,19 @@ class _SessionDetailPanel extends StatelessWidget {
         const SizedBox(height: 20),
 
         // Points section
-        Row(children: [
-          Text('MEASUREMENT POINTS', style: proLabel(size: 9, spacing: 1.8)),
-          const Spacer(),
-          if (!_isCompleted)
-            GestureDetector(
-              onTap: onAddPoint,
-              child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.add, color: kProAccent, size: 13),
-                SizedBox(width: 4),
-                Text('Add Point', style: TextStyle(color: kProAccent, fontSize: 11)),
-              ]),
-            ),
-        ]),
+        ProSectionHeader(
+          title: 'Measurement Points',
+          trailing: _isCompleted
+              ? null
+              : GestureDetector(
+                  onTap: onAddPoint,
+                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.add, color: kProAccent, size: 13),
+                    SizedBox(width: 4),
+                    Text('Add Point', style: TextStyle(color: kProAccent, fontSize: 11)),
+                  ]),
+                ),
+        ),
         const SizedBox(height: 10),
 
         if (session.points.isEmpty)
@@ -721,6 +884,20 @@ class _EmptyPoints extends StatelessWidget {
 
 // ── Point Card ────────────────────────────────────────────────────────────────
 
+String? _pointStatusGuidance(MeasurementPointStatus status) => switch (status) {
+  MeasurementPointStatus.captured => 'Review this result before continuing.',
+  MeasurementPointStatus.accepted => 'Measurement accepted.',
+  MeasurementPointStatus.rejected => 'Measurement rejected. Capture again.',
+  _ => null,
+};
+
+String? _pointActionGuidance(MeasurementPointStatus status) => switch (status) {
+  MeasurementPointStatus.pending || MeasurementPointStatus.ready => 'Generate measurement data for this point.',
+  MeasurementPointStatus.captured => 'Review this result, then accept or reject it.',
+  MeasurementPointStatus.rejected => 'Capture again to retry this point.',
+  _ => null,
+};
+
 class _PointCard extends StatelessWidget {
   final MeasurementPoint point;
   final bool readOnly;
@@ -770,6 +947,10 @@ class _PointCard extends StatelessWidget {
               Text('${point.distanceCm.toStringAsFixed(0)} cm · ${point.angleDeg.toStringAsFixed(0)}°',
                   style: proLabel(size: 9, color: Colors.white24, spacing: 0.3)),
             ]),
+            if (_pointStatusGuidance(point.status) != null) ...[
+              const SizedBox(height: 6),
+              Text(_pointStatusGuidance(point.status)!, style: proSubtitle(size: 10)),
+            ],
           ])),
           if (!readOnly)
             PopupMenuButton<String>(
@@ -823,6 +1004,11 @@ class _PointCard extends StatelessWidget {
         // Actions
         if (!readOnly) ...[
           const SizedBox(height: 10),
+          if (_pointActionGuidance(point.status) != null) ...[
+            Text(_pointActionGuidance(point.status)!,
+                style: proLabel(size: 9, color: Colors.white38, spacing: 0.2)),
+            const SizedBox(height: 6),
+          ],
           Wrap(spacing: 8, runSpacing: 8, children: [
             if (point.status == MeasurementPointStatus.pending ||
                 point.status == MeasurementPointStatus.ready)
