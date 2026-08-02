@@ -17,6 +17,7 @@ import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/workbench_tab_provider.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/section_header.dart';
 
 // ── Filename heuristic helpers (pure — easily testable) ───────────────────────
 
@@ -521,6 +522,12 @@ class _ImportTabState extends ConsumerState<ImportTab> {
               ),
               const SizedBox(height: 20),
 
+              // Orientation + workflow guidance
+              _ImportOrientationBar(acoustic: acoustic),
+              const SizedBox(height: 12),
+              _ImportWorkflowCard(acoustic: acoustic),
+              const SizedBox(height: 20),
+
               // Supported formats card
               _FormatsCard(),
               const SizedBox(height: 16),
@@ -533,7 +540,7 @@ class _ImportTabState extends ConsumerState<ImportTab> {
               const SizedBox(height: 20),
 
               // Driver channel cards (each is also a drop target)
-              Text('DRIVER CHANNELS', style: proLabel(size: 9, spacing: 2)),
+              const ProSectionHeader(title: 'Driver Channels'),
               const SizedBox(height: 8),
               ...acoustic.driverChannels.map((ch) => _DroppableDriverCard(
                     channel: ch,
@@ -620,6 +627,136 @@ class _ImportTabState extends ConsumerState<ImportTab> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Import Orientation Bar + Workflow Card ────────────────────────────────────
+
+const _kImportStepLabels = ['Files', 'Assign', 'Validate', 'Analyze'];
+
+List<bool> _importWorkflowCompletion(MeasurementProjectState acoustic) => [
+  acoustic.importedFiles.isNotEmpty,
+  acoustic.driverChannels.any((d) => d.hasFrd || d.hasZma),
+  acoustic.parsedFrdCount > 0,
+];
+
+String _importNextText(MeasurementProjectState acoustic) {
+  if (acoustic.importedFiles.isEmpty) return 'Next: Import your first FRD or ZMA file';
+  if (acoustic.parsedFrdCount == 0) return 'Next: Import an FRD file for frequency response';
+  if (acoustic.hasMissingMeasurements) {
+    return 'Next: Import remaining channel files (${acoustic.readyDriverCount}/${acoustic.totalDrivers} ready)';
+  }
+  return 'Next: Analyze with AI';
+}
+
+class _ImportOrientationBar extends StatelessWidget {
+  final MeasurementProjectState acoustic;
+  const _ImportOrientationBar({required this.acoustic});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+    decoration: const BoxDecoration(
+      color: kProSurface,
+      border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+    ),
+    child: Row(children: [
+      const Icon(Icons.explore_outlined, color: kProAccent, size: 13),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(acoustic.readinessLabel, style: proSubtitle(size: 11),
+            overflow: TextOverflow.ellipsis, maxLines: 1),
+      ),
+    ]),
+  );
+}
+
+class _ImportWorkflowCard extends StatelessWidget {
+  final MeasurementProjectState acoustic;
+  const _ImportWorkflowCard({required this.acoustic});
+
+  @override
+  Widget build(BuildContext context) {
+    final completion = [..._importWorkflowCompletion(acoustic), false];
+    final currentIndex = completion.indexWhere((c) => !c);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: const BoxDecoration(
+        color: kProSurface,
+        border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const ProSectionHeader(title: 'Import Workflow'),
+        const SizedBox(height: 8),
+        Row(children: [
+          for (var i = 0; i < _kImportStepLabels.length; i++) ...[
+            _ImportStepChip(
+              number: i + 1,
+              label: _kImportStepLabels[i],
+              complete: completion[i],
+              current: i == currentIndex,
+            ),
+            if (i < _kImportStepLabels.length - 1)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4),
+                child: Icon(Icons.arrow_forward, size: 10, color: Colors.white24),
+              ),
+          ],
+        ]),
+        const SizedBox(height: 6),
+        Text(
+          _importNextText(acoustic),
+          style: proSubtitle(size: 10, color: kProAccent),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+      ]),
+    );
+  }
+}
+
+class _ImportStepChip extends StatelessWidget {
+  final int number;
+  final String label;
+  final bool complete;
+  final bool current;
+  const _ImportStepChip({
+    required this.number,
+    required this.label,
+    required this.complete,
+    required this.current,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = complete ? kProGreen : (current ? kProAccent : Colors.white24);
+    final tinted = complete || current;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          color: tinted ? color.withValues(alpha: 0.08) : Colors.transparent,
+          border: Border.all(color: color.withValues(alpha: tinted ? 0.4 : 0.2)),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
+          if (complete)
+            Icon(Icons.check, size: 10, color: color)
+          else
+            Text('$number', style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(color: color, fontSize: 9.5),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+        ]),
       ),
     );
   }
@@ -1658,15 +1795,11 @@ class _RepeatSweepsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          Text(
-            sweeps.isEmpty
-                ? 'REPEAT SWEEPS'
-                : 'REPEAT SWEEPS (${sweeps.length})',
-            style: proLabel(size: 8, spacing: 1.2),
-          ),
-          const Spacer(),
-          GestureDetector(
+        ProSectionHeader(
+          title: sweeps.isEmpty
+              ? 'Repeat Sweeps'
+              : 'Repeat Sweeps (${sweeps.length})',
+          trailing: GestureDetector(
             onTap: onAdd,
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               const Icon(Icons.add, color: kProAccent, size: 11),
@@ -1676,7 +1809,7 @@ class _RepeatSweepsSection extends StatelessWidget {
                       color: kProAccent.withValues(alpha: 0.8), fontSize: 9)),
             ]),
           ),
-        ]),
+        ),
         if (sweeps.isNotEmpty) ...[
           const SizedBox(height: 6),
           for (var i = 0; i < sweeps.length; i++)
@@ -1836,8 +1969,7 @@ class _FormatsCard extends StatelessWidget {
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-          Text('SUPPORTED FORMATS',
-              style: proLabel(size: 9, spacing: 1.8)),
+          const ProSectionHeader(title: 'Supported Formats'),
           const SizedBox(height: 10),
           const Wrap(spacing: 8, runSpacing: 6, children: [
             _FormatChip(ext: '.frd', desc: 'SPL freq magnitude [phase]'),
@@ -1898,7 +2030,7 @@ class _ImportActionCard extends StatelessWidget {
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-          Text('IMPORT', style: proLabel(size: 9, spacing: 1.8)),
+          const ProSectionHeader(title: 'Import'),
           const SizedBox(height: 12),
           Row(children: [
             // Primary: file picker
