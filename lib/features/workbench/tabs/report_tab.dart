@@ -23,6 +23,7 @@ import '../../../core/pro_hardware_connection_data.dart';
 import '../../../core/pro_deploy_package_data.dart';
 import '../../../shared/pro_widgets.dart';
 import '../../../shared/components/stat_chip.dart';
+import '../../../shared/components/section_header.dart';
 import 'pro_hardware_mvp_status_card.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -47,6 +48,11 @@ class ReportTab extends ConsumerWidget {
 
     final readiness = _measurementReadiness(completedSessions.length, acceptedPoints.length);
 
+    // Shared snapshot — same inputs/function as before, hoisted so both the
+    // export bar/summary card and the new orientation/workflow widgets below
+    // can reuse it without recomputing.
+    final report = project != null ? buildTuningReport(project, mStore) : null;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -60,6 +66,14 @@ class ReportTab extends ConsumerWidget {
             style: proSubtitle()),
         const SizedBox(height: 20),
 
+        // Orientation + workflow guidance
+        _ReportOrientationBar(project: project),
+        const SizedBox(height: 12),
+        if (project != null && report != null) ...[
+          _ReportWorkflowCard(project: project, report: report),
+          const SizedBox(height: 20),
+        ],
+
         // Project summary
         if (project != null) ...[
           _ProjectSummaryCard(project: project),
@@ -68,17 +82,10 @@ class ReportTab extends ConsumerWidget {
 
         // Unified tuning summary — rendered from a single frozen snapshot.
         // The same snapshot backs the JSON export action below.
-        if (project != null) ...[
-          Builder(builder: (context) {
-            final report = buildTuningReport(project, mStore);
-            return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _ReportExportBar(report: report),
-                  const SizedBox(height: 12),
-                  _TuningSummaryCard(report: report),
-                ]);
-          }),
+        if (project != null && report != null) ...[
+          _ReportExportBar(report: report),
+          const SizedBox(height: 12),
+          _TuningSummaryCard(report: report),
           const SizedBox(height: 16),
         ],
 
@@ -202,7 +209,7 @@ class ReportTab extends ConsumerWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Full report generation (PDF / JSON) will be available after the project is Verified. '
+                'Next: reach Verified status to unlock full PDF/JSON report generation and signing. '
                 'AI suggestions require expert verification before any report is signed.',
                 style: proSubtitle(size: 11),
               ),
@@ -229,6 +236,152 @@ class ReportTab extends ConsumerWidget {
   }
 }
 
+// ── Report Orientation Bar + Workflow Card ────────────────────────────────────
+
+String _reportOrientationText(ProfileStatus? status) => switch (status) {
+  null => 'No project loaded.',
+  ProfileStatus.draft => 'Stage: Draft — measurements and tuning are still pending. '
+      'Next: complete measurements and tuning before reviewing this report.',
+  ProfileStatus.measured => 'Stage: Measured — tuning not yet complete. '
+      'Next: continue tuning — PEQ, XO, and channel controls.',
+  ProfileStatus.tuned => 'Stage: Tuned — verification pending. '
+      'Next: verify safety and protection before deploy.',
+  ProfileStatus.verified => 'Stage: Verified — ready to deploy. Next: see the Deploy tab.',
+  ProfileStatus.deployed => 'Stage: Deployed — this report reflects a deployed profile.',
+};
+
+class _ReportOrientationBar extends StatelessWidget {
+  final ProProject? project;
+  const _ReportOrientationBar({required this.project});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+    decoration: const BoxDecoration(
+      color: kProSurface,
+      border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+    ),
+    child: Row(children: [
+      const Icon(Icons.explore_outlined, color: kProAccent, size: 13),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(_reportOrientationText(project?.profileStatus),
+            style: proSubtitle(size: 11),
+            overflow: TextOverflow.ellipsis, maxLines: 1),
+      ),
+    ]),
+  );
+}
+
+const _kReportWorkflowLabels = ['Import', 'Measure', 'Tune', 'Optimize', 'Deploy', 'Report'];
+
+const _kReportNextTexts = [
+  'Next: Import FRD/ZMA measurement files',
+  'Next: Complete a measurement session',
+  'Next: Configure PEQ or crossover tuning',
+  'Next: Run the Optimizer for target-match scoring',
+  'Next: Prepare a deploy package',
+  'Next: Review this report',
+];
+
+List<bool> _reportWorkflowCompletion(ProProject project, TuningReportData report) => [
+  project.acousticState.hasAnyFrd,
+  report.measurement.completedSessionCount > 0,
+  report.crossover.configuredChannels > 0 || report.peq.activeBands > 0,
+  report.optimizer.afterScore != null,
+  project.deployState.readyPackageCount > 0,
+];
+
+class _ReportWorkflowCard extends StatelessWidget {
+  final ProProject project;
+  final TuningReportData report;
+  const _ReportWorkflowCard({required this.project, required this.report});
+
+  @override
+  Widget build(BuildContext context) {
+    final completion = [..._reportWorkflowCompletion(project, report), false];
+    final currentIndex = completion.indexWhere((c) => !c);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: const BoxDecoration(
+        color: kProSurface,
+        border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const ProSectionHeader(title: 'Report Workflow'),
+        const SizedBox(height: 8),
+        Row(children: [
+          for (var i = 0; i < _kReportWorkflowLabels.length; i++) ...[
+            _ReportStepChip(
+              number: i + 1,
+              label: _kReportWorkflowLabels[i],
+              complete: completion[i],
+              current: i == currentIndex,
+            ),
+            if (i < _kReportWorkflowLabels.length - 1)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4),
+                child: Icon(Icons.arrow_forward, size: 10, color: Colors.white24),
+              ),
+          ],
+        ]),
+        const SizedBox(height: 6),
+        Text(
+          _kReportNextTexts[currentIndex],
+          style: proSubtitle(size: 10, color: kProAccent),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+      ]),
+    );
+  }
+}
+
+class _ReportStepChip extends StatelessWidget {
+  final int number;
+  final String label;
+  final bool complete;
+  final bool current;
+  const _ReportStepChip({
+    required this.number,
+    required this.label,
+    required this.complete,
+    required this.current,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = complete ? kProGreen : (current ? kProAccent : Colors.white24);
+    final tinted = complete || current;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          color: tinted ? color.withValues(alpha: 0.08) : Colors.transparent,
+          border: Border.all(color: color.withValues(alpha: tinted ? 0.4 : 0.2)),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
+          if (complete)
+            Icon(Icons.check, size: 10, color: color)
+          else
+            Text('$number', style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(color: color, fontSize: 9.5),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
 class _ProjectSummaryCard extends StatelessWidget {
   final ProProject project;
   const _ProjectSummaryCard({required this.project});
@@ -250,7 +403,7 @@ class _ProjectSummaryCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('PROJECT SUMMARY', style: proLabel(size: 9, spacing: 1.8)),
+      const ProSectionHeader(title: 'Project Summary'),
       const SizedBox(height: 12),
       _row('Project', project.name),
       _row('Speaker', project.speakerModel),
@@ -461,9 +614,12 @@ class _TuningSummaryCard extends StatelessWidget {
         Row(children: [
           Icon(Icons.tune_outlined, color: kProAccent.withValues(alpha: 0.6), size: 14),
           const SizedBox(width: 8),
-          Text('TUNING SUMMARY', style: proLabel(size: 9, spacing: 1.8)),
-          const Spacer(),
-          Text('SIMULATION', style: proLabel(size: 8, color: Colors.white24)),
+          Expanded(
+            child: ProSectionHeader(
+              title: 'Tuning Summary',
+              trailing: Text('SIMULATION', style: proLabel(size: 8, color: Colors.white24)),
+            ),
+          ),
         ]),
         const SizedBox(height: 4),
         Text('Generated ${_timestamp(report.generatedAt)}  ·  snapshot v${report.schemaVersion}',
@@ -626,7 +782,7 @@ class _MeasurementSummaryCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('MEASUREMENT SUMMARY', style: proLabel(size: 9, spacing: 1.8)),
+      const ProSectionHeader(title: 'Measurement Summary'),
       const SizedBox(height: 12),
       _row('Total sessions', '$sessionCount'),
       _row('Completed sessions', '$completedCount'),
@@ -671,7 +827,7 @@ class _AcousticReadinessCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('MEASUREMENT READINESS', style: proLabel(size: 9, spacing: 1.8)),
+      const ProSectionHeader(title: 'Measurement Readiness'),
       const SizedBox(height: 12),
       _row('Driver channels', '${acoustic.totalDrivers}'),
       _row('FRD imported', '${acoustic.importedFrdCount} / ${acoustic.totalDrivers}'),
@@ -737,7 +893,7 @@ class _MeasurementDataCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('MEASUREMENT DATA', style: proLabel(size: 9, spacing: 1.8)),
+      const ProSectionHeader(title: 'Measurement Data'),
       const SizedBox(height: 12),
       _row('Driver channels', '${acoustic.totalDrivers}'),
       _row('FRD parsed', '${acoustic.parsedFrdCount} / ${acoustic.totalDrivers}'),
@@ -808,7 +964,7 @@ class _TuningReadinessCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('TUNING READINESS', style: proLabel(size: 9, spacing: 1.8)),
+      const ProSectionHeader(title: 'Tuning Readiness'),
       const SizedBox(height: 12),
       _row('PEQ channels', '${tuning.peqChannels.length}'),
       _row('Total PEQ bands', '${tuning.totalPeqBands}'),
@@ -873,7 +1029,7 @@ class _ChannelControlReadinessCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('CHANNEL CONTROL READINESS', style: proLabel(size: 9, spacing: 1.8)),
+      const ProSectionHeader(title: 'Channel Control Readiness'),
       const SizedBox(height: 12),
       _row('Channel controls', '${tuning.channelControls.length}'),
       _row('Gain trim channels', '${tuning.totalGainTrimChannels}'),
@@ -983,14 +1139,13 @@ class _ImpedanceReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Text('IMPEDANCE / LOAD READINESS', style: proLabel(size: 9, spacing: 1.8)),
-          const Spacer(),
-          ProStatusPill(
+        ProSectionHeader(
+          title: 'Impedance / Load Readiness',
+          trailing: ProStatusPill(
             label: result.readinessLabel,
             color: riskColor(result.overallRisk),
           ),
-        ]),
+        ),
         const SizedBox(height: 10),
         Wrap(spacing: 10, runSpacing: 8, children: [
           _ReportChip(
@@ -1100,8 +1255,7 @@ class _ProtectionReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('PROTECTION / VERIFICATION',
-            style: proLabel(size: 9, spacing: 1.8)),
+        const ProSectionHeader(title: 'Protection / Verification'),
         const SizedBox(height: 12),
         _row('Active rules', '${protection.activeRuleCount}'),
         _row('Warnings', '${protection.warningCount}'),
@@ -1180,10 +1334,13 @@ class _OptimizerReadinessCard extends StatelessWidget {
           Icon(Icons.auto_awesome_outlined,
               color: kProAccent.withValues(alpha: 0.5), size: 13),
           const SizedBox(width: 8),
-          Text('OPTIMIZER', style: proLabel(size: 9, spacing: 2)),
-          const Spacer(),
-          Text(optimizer.readinessLabel,
-              style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
+          Expanded(
+            child: ProSectionHeader(
+              title: 'Optimizer',
+              trailing: Text(optimizer.readinessLabel,
+                  style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
+            ),
+          ),
         ]),
         const SizedBox(height: 10),
 
@@ -1287,10 +1444,13 @@ class _ExportReadinessCard extends StatelessWidget {
           const Icon(Icons.upload_outlined,
               color: Color(0xFF4A9EFF), size: 13),
           const SizedBox(width: 8),
-          Text('DSP EXPORT', style: proLabel(size: 9, spacing: 2)),
-          const Spacer(),
-          Text(exportState.readinessLabel,
-              style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
+          Expanded(
+            child: ProSectionHeader(
+              title: 'DSP Export',
+              trailing: Text(exportState.readinessLabel,
+                  style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
+            ),
+          ),
         ]),
         const SizedBox(height: 10),
 
@@ -1421,13 +1581,16 @@ class _DspImplementationReadinessCard extends StatelessWidget {
           const Icon(Icons.memory_outlined,
               color: Color(0xFF4A9EFF), size: 13),
           const SizedBox(width: 8),
-          Text('DSP IMPLEMENTATION', style: proLabel(size: 9, spacing: 2)),
-          const Spacer(),
-          Text(readinessLabel,
-              style: proLabel(
-                  size: 9,
-                  color: isBlocked ? kProRed : Colors.white38,
-                  spacing: 0.3)),
+          Expanded(
+            child: ProSectionHeader(
+              title: 'DSP Implementation',
+              trailing: Text(readinessLabel,
+                  style: proLabel(
+                      size: 9,
+                      color: isBlocked ? kProRed : Colors.white38,
+                      spacing: 0.3)),
+            ),
+          ),
         ]),
         const SizedBox(height: 10),
 
@@ -1547,11 +1710,14 @@ class _SimulationReadinessCard extends StatelessWidget {
           const Icon(Icons.show_chart_outlined,
               color: Color(0xFF4A9EFF), size: 13),
           const SizedBox(width: 8),
-          Text('SIMULATION', style: proLabel(size: 9, spacing: 2)),
-          const Spacer(),
-          Text(simState.readinessLabel,
-              style: proLabel(
-                  size: 9, color: Colors.white38, spacing: 0.3)),
+          Expanded(
+            child: ProSectionHeader(
+              title: 'Simulation',
+              trailing: Text(simState.readinessLabel,
+                  style: proLabel(
+                      size: 9, color: Colors.white38, spacing: 0.3)),
+            ),
+          ),
         ]),
         const SizedBox(height: 10),
 
@@ -1713,10 +1879,10 @@ class _DspMappingReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.hub_outlined, color: Color(0xFFA78BFA), size: 13),
-          const SizedBox(width: 8),
-          Text('DSP MAPPING READINESS', style: proLabel(size: 9, spacing: 2)),
+        const Row(children: [
+          Icon(Icons.hub_outlined, color: Color(0xFFA78BFA), size: 13),
+          SizedBox(width: 8),
+          Expanded(child: ProSectionHeader(title: 'DSP Mapping Readiness')),
         ]),
         const SizedBox(height: 10),
         _ReportChip(
@@ -1791,10 +1957,10 @@ class _HardwareReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.security_outlined, color: Color(0xFFA78BFA), size: 13),
-          const SizedBox(width: 8),
-          Text('HARDWARE READINESS', style: proLabel(size: 9, spacing: 2)),
+        const Row(children: [
+          Icon(Icons.security_outlined, color: Color(0xFFA78BFA), size: 13),
+          SizedBox(width: 8),
+          Expanded(child: ProSectionHeader(title: 'Hardware Readiness')),
         ]),
         const SizedBox(height: 10),
         _ReportChip(
@@ -1892,11 +2058,11 @@ class _DeployReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.inventory_2_outlined,
+        const Row(children: [
+          Icon(Icons.inventory_2_outlined,
               color: Color(0xFF34D399), size: 13),
-          const SizedBox(width: 8),
-          Text('DEPLOY READINESS', style: proLabel(size: 9, spacing: 2)),
+          SizedBox(width: 8),
+          Expanded(child: ProSectionHeader(title: 'Deploy Readiness')),
         ]),
         const SizedBox(height: 10),
         _ReportChip(
@@ -1996,10 +2162,15 @@ class _DspAddressMapReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.map_outlined, size: 13, color: Colors.white38),
-          const SizedBox(width: 6),
-          Text('DSP ADDRESS MAP', style: proLabel(size: 9, spacing: 1.8)),
+        const Row(children: [
+          Icon(Icons.map_outlined, size: 13, color: Colors.white38),
+          SizedBox(width: 6),
+          Expanded(
+            child: ProSectionHeader(
+              title: 'DSP Address Map',
+              trailing: ProStatusPill(label: 'REFERENCE', color: Colors.white38),
+            ),
+          ),
         ]),
         const SizedBox(height: 12),
         _ReportChip(
@@ -2074,10 +2245,10 @@ class _AddressValidationReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.task_alt_outlined, size: 13, color: Colors.white38),
-          const SizedBox(width: 7),
-          Text('Address Validation Readiness', style: proLabel()),
+        const Row(children: [
+          Icon(Icons.task_alt_outlined, size: 13, color: Colors.white38),
+          SizedBox(width: 7),
+          Expanded(child: ProSectionHeader(title: 'Address Validation Readiness')),
         ]),
         const SizedBox(height: 10),
         if (!hasQueue) ...[
@@ -2179,11 +2350,11 @@ class _TransportReadinessCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.compare_arrows_outlined,
+        const Row(children: [
+          Icon(Icons.compare_arrows_outlined,
               size: 13, color: Colors.white38),
-          const SizedBox(width: 7),
-          Text('Transport Readiness', style: proLabel()),
+          SizedBox(width: 7),
+          Expanded(child: ProSectionHeader(title: 'Transport Readiness')),
         ]),
         const SizedBox(height: 10),
 
@@ -2287,10 +2458,15 @@ class _UsbiExecutorReadinessCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(6),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Icon(Icons.usb_outlined, size: 13, color: Colors.white38),
-        const SizedBox(width: 7),
-        Text('USBi Temporary Executor Readiness', style: proLabel()),
+      const Row(children: [
+        Icon(Icons.usb_outlined, size: 13, color: Colors.white38),
+        SizedBox(width: 7),
+        Expanded(
+          child: ProSectionHeader(
+            title: 'USBi Temporary Executor Readiness',
+            trailing: ProStatusPill(label: 'REFERENCE', color: Colors.white38),
+          ),
+        ),
       ]),
       const SizedBox(height: 10),
 
@@ -2340,10 +2516,15 @@ class _TransportCommandReadinessCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(6),
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Icon(Icons.terminal_outlined, size: 13, color: Colors.white38),
-        const SizedBox(width: 7),
-        Text('Transport Command Readiness', style: proLabel()),
+      const Row(children: [
+        Icon(Icons.terminal_outlined, size: 13, color: Colors.white38),
+        SizedBox(width: 7),
+        Expanded(
+          child: ProSectionHeader(
+            title: 'Transport Command Readiness',
+            trailing: ProStatusPill(label: 'REFERENCE', color: Colors.white38),
+          ),
+        ),
       ]),
       const SizedBox(height: 10),
 
