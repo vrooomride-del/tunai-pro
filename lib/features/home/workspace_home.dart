@@ -4,8 +4,13 @@ import '../../core/pro_project.dart';
 import '../../core/pro_project_store.dart';
 import '../../core/pro_demo_project_factory.dart';
 import '../../shared/pro_widgets.dart';
+import '../../shared/design/pro_tokens.dart';
 import '../workbench/workbench_shell.dart';
 import 'project_list_screen.dart';
+import 'widgets/home_hero_header.dart';
+import 'widgets/workflow_progress_stepper.dart';
+import 'widgets/current_project_status_card.dart';
+import 'widgets/start_actions_section.dart';
 
 class WorkspaceHome extends ConsumerWidget {
   const WorkspaceHome({super.key});
@@ -22,115 +27,44 @@ class WorkspaceHome extends ConsumerWidget {
     );
   }
 
+  void _continueCurrentProject(BuildContext context, WidgetRef ref) {
+    final project = ref.read(proProjectStoreProvider).currentProject;
+    if (project != null) _openWorkbench(context, project.id);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      backgroundColor: kProBg,
+      backgroundColor: ProColors.bg,
       body: SafeArea(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          // Top header bar
-          Container(
-            padding: const EdgeInsets.fromLTRB(32, 20, 32, 20),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
-            ),
-            child: Row(children: [
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('TUNAI PRO', style: proTitle(size: 18, color: Colors.white)),
-                const SizedBox(height: 3),
-                Text('Acoustic Intelligence Workstation',
-                    style: proLabel(size: 11, color: kProAccent, spacing: 1)),
-              ]),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                decoration: BoxDecoration(
-                  color: kProSurface,
-                  border: Border.all(color: kProBorder),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  'AI suggests · Expert verifies · AOS protects · DSP executes',
-                  style: proLabel(size: 9, color: Colors.white38, spacing: 0.8),
-                ),
-              ),
-            ]),
-          ),
-
-          // Main content
+          const HomeHeroHeader(),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(32, 32, 32, 40),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(
-                  'Measure, tune, verify, and deploy professional Sound Profiles.',
-                  style: proSubtitle(size: 13, color: const Color(0xFF9CA3AF)),
+              padding: const EdgeInsets.symmetric(vertical: ProSpacing.xxl),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                const WorkflowProgressStepper(),
+                const SizedBox(height: ProSpacing.xl),
+                CurrentProjectStatusCard(
+                  onContinue: () => _continueCurrentProject(context, ref),
+                  onNewProject: () => _showNewProjectDialog(context, ref),
+                  onOpenDemo: () => _openDemoProject(context, ref),
                 ),
-                const SizedBox(height: 32),
-
-                Text('START', style: proLabel(size: 10, spacing: 2)),
-                const SizedBox(height: 12),
-                _HomeGrid(children: [
-                  ProHomeCard(
-                    title: 'New Project',
-                    subtitle: 'Create a new speaker or room tuning project.',
-                    icon: Icons.add_circle_outline,
-                    primary: true,
-                    onTap: () => _showNewProjectDialog(context, ref),
-                  ),
-                  ProHomeCard(
-                    title: 'Open Project',
-                    subtitle: 'Continue working on a saved tuning project.',
-                    icon: Icons.folder_open_outlined,
-                    onTap: () => _goToProjectList(context),
-                  ),
-                  ProHomeCard(
-                    title: 'Open Demo Workstation',
-                    subtitle: 'TUNAI ONE Coax Demo — preloaded synthetic FRD/ZMA data, PEQ, XO, and deploy package.',
-                    icon: Icons.science_outlined,
-                    onTap: () => _openDemoProject(context, ref),
-                  ),
-                ]),
-                const SizedBox(height: 28),
-
-                Text('HARDWARE & DATA', style: proLabel(size: 10, spacing: 2)),
-                const SizedBox(height: 12),
-                _HomeGrid(children: [
-                  ProHomeCard(
-                    title: 'Connect Hardware',
-                    subtitle: 'Connect TUNAI ONE, ACM, USB, network, or AOS-compatible hardware.',
-                    icon: Icons.usb_outlined,
-                    onTap: () => _goToProjectList(context),
-                  ),
-                  ProHomeCard(
-                    title: 'Import Data',
-                    subtitle: 'Load FRD, ZMA, impulse response, or measurement files.',
-                    icon: Icons.upload_file_outlined,
-                    onTap: () => _goToProjectList(context),
-                  ),
-                ]),
-                const SizedBox(height: 28),
-
-                Text('TOOLS', style: proLabel(size: 10, spacing: 2)),
-                const SizedBox(height: 12),
-                _HomeGrid(children: [
-                  ProHomeCard(
-                    title: 'DSP Profile Generator',
-                    subtitle: 'Convert tuning decisions into deployable DSP profiles.',
-                    icon: Icons.settings_ethernet_outlined,
-                    onTap: () => _goToProjectList(context),
-                  ),
-                  ProHomeCard(
-                    title: 'Device Manager',
-                    subtitle: 'Manage connected devices, firmware, and profile deployment.',
-                    icon: Icons.devices_outlined,
-                    onTap: () => _goToProjectList(context),
-                  ),
-                ]),
-
-                const SizedBox(height: 40),
-                Text('TUNAI PRO · T4C',
-                    style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
+                const SizedBox(height: ProSpacing.xxl),
+                StartActionsSection(
+                  onNewProject: () => _showNewProjectDialog(context, ref),
+                  onOpenProject: () => _goToProjectList(context),
+                  onOpenDemo: () => _openDemoProject(context, ref),
+                  onConnectHardware: () => _goToProjectList(context),
+                  onImportData: () => _goToProjectList(context),
+                  onDspProfileGenerator: () => _goToProjectList(context),
+                  onDeviceManager: () => _goToProjectList(context),
+                ),
+                const SizedBox(height: ProSpacing.xxl),
+                Center(
+                  child: Text('TUNAI PRO · T4C',
+                      style: TextStyle(color: ProColors.textTertiary.withValues(alpha: 0.4), fontSize: 9)),
+                ),
               ]),
             ),
           ),
@@ -396,34 +330,4 @@ class _DropInput<T> extends StatelessWidget {
       onChanged: (v) { if (v != null) onChanged(v); },
     ),
   );
-}
-
-// ── Grid Layout ───────────────────────────────────────────────────────────────
-
-class _HomeGrid extends StatelessWidget {
-  final List<Widget> children;
-  const _HomeGrid({required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (ctx, constraints) {
-      final cols = constraints.maxWidth > 600 ? 2 : 1;
-      if (cols == 1) {
-        return Column(
-          children: children
-              .map((c) => Padding(padding: const EdgeInsets.only(bottom: 10), child: c))
-              .toList(),
-        );
-      }
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: children.asMap().entries.map((e) => Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(right: e.key < children.length - 1 ? 10 : 0),
-            child: e.value,
-          ),
-        )).toList(),
-      );
-    });
-  }
 }

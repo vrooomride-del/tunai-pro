@@ -2,6 +2,7 @@
 // Tests that key screens render without RenderFlex overflow at common window widths.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/main.dart';
 
@@ -25,7 +26,11 @@ void main() {
         }
       };
 
-      await tester.pumpWidget(const TunaiProApp());
+      // Matches main()'s actual runApp(ProviderScope(child: TunaiProApp())) —
+      // without this ancestor, ConsumerWidgets fail to build and this test
+      // would silently check an error-placeholder tree instead of the real
+      // screen.
+      await tester.pumpWidget(const ProviderScope(child: TunaiProApp()));
       await tester.pump();
 
       FlutterError.onError = original;

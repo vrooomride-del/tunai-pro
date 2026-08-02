@@ -4,6 +4,7 @@
 // (Flutter default 800x600). This test only checks for fatal exceptions.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/main.dart';
 
@@ -20,7 +21,9 @@ void main() {
     };
 
     try {
-      await tester.pumpWidget(const TunaiProApp());
+      // Matches main()'s actual runApp(ProviderScope(child: TunaiProApp())) —
+      // TunaiProApp alone (without this ancestor) is not how the app runs.
+      await tester.pumpWidget(const ProviderScope(child: TunaiProApp()));
       await tester.pump();
     } finally {
       FlutterError.onError = originalOnError;
