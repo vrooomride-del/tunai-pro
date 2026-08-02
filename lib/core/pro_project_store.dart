@@ -139,8 +139,14 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     await updateProject(project.copyWith(safetyStatus: status, updatedAt: DateTime.now()));
   }
 
+  // Called unawaited from hardware_tab.dart's BLE PASS_HANDSHAKE/disconnect
+  // callbacks. A missing project (deleted mid-session, or the store not yet
+  // loaded when a stale BLE transport fires its reconnect callback) must be a
+  // silent no-op — an unawaited throw here would leave project.connection
+  // stale while activeAdau1701ContextProvider has already been updated.
   Future<void> updateHardwareConnection(String id, HardwareConnection conn) async {
-    final project = state.projects.firstWhere((p) => p.id == id);
+    final project = state.projects.where((p) => p.id == id).firstOrNull;
+    if (project == null) return;
     await updateProject(project.copyWith(connection: conn, updatedAt: DateTime.now()));
   }
 
