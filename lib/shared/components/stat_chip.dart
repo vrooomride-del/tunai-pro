@@ -1,7 +1,7 @@
 // TUNAI PRO UI v2 — common label/value chip.
 //
 // Replaces the per-tab private `_StatChip` widgets duplicated across
-// pro_widgets.dart / analyze_tab.dart / export_tab.dart / measure_tab.dart /
+// pro_widgets.dart / export_tab.dart / measure_tab.dart /
 // report_tab.dart. Not wired into those files yet.
 
 import 'package:flutter/material.dart';
