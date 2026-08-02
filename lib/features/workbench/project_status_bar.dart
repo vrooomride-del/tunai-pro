@@ -31,76 +31,79 @@ class ProjectStatusBar extends ConsumerWidget {
         project.acousticState.driverChannels.isNotEmpty;
 
     return Container(
-      height: 36,
       decoration: const BoxDecoration(
         color: kProPanel,
         border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
       ),
-      child: Row(children: [
-        // Scrollable left section with project metadata
-        Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(children: [
-              const SizedBox(width: 16),
-              _StatusItem(label: 'PROJECT', value: name, maxWidth: 140),
-              const _Div(),
-              _StatusItem(
-                label: 'DEVICE',
-                value: device,
-                valueColor: isConnected ? kProGreen : const Color(0xFF6B7280),
-              ),
-              const _Div(),
-              _StatusItem(label: 'SAMPLE RATE', value: sampleRate),
-              const _Div(),
-              _StatusItem(label: 'DSP TARGET', value: dspTarget, maxWidth: 100),
-              const _Div(),
-              _StatusItem(
-                label: 'PROFILE',
-                value: profileLabel,
-                valueColor: _profileColor(project?.profileStatus),
-              ),
-              const _Div(),
-              _StatusItem(
-                label: 'SAFETY',
-                value: safetyLabel,
-                valueColor: _safetyColor(project?.safetyStatus),
-                maxWidth: 110,
-              ),
-              if (project != null && project.measurementCount > 0) ...[
-                const _Div(),
-                _StatusItem(
-                  label: 'SESSIONS',
-                  value: '${project.measurementCount}',
-                  valueColor: kProGreen,
-                ),
-              ],
-              const SizedBox(width: 16),
-            ]),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        _PrimaryContextRow(
+          name: name,
+          profileStatus: project?.profileStatus,
+          profileColor: _profileColor(project?.profileStatus),
+          nextStep: _nextStepFor(project?.profileStatus),
+          canDeploy: canDeploy,
+          onDeploy: () => showDeployDialog(
+            context: context,
+            projectId: projectId,
+            channels: project!.acousticState.driverChannels,
+            tuning: project.tuningState,
+            previousAppliedGains: project.deployState.appliedGainsByChannel,
           ),
         ),
-        // DEPLOY button — ADAU1701 + ICP5 handshake + channels required
-        Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: _DeployButton(
-            enabled: canDeploy,
-            onTap: () => showDeployDialog(
-              context: context,
-              projectId: projectId,
-              channels: project!.acousticState.driverChannels,
-              tuning: project.tuningState,
-              previousAppliedGains: project.deployState.appliedGainsByChannel,
+        const Divider(height: 0.5, thickness: 0.5, color: kProBorder),
+        SizedBox(
+          height: 30,
+          child: Row(children: [
+            // Scrollable left section with project metadata
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  const SizedBox(width: 16),
+                  _StatusItem(
+                    label: 'DEVICE',
+                    value: device,
+                    valueColor: isConnected ? kProGreen : const Color(0xFF6B7280),
+                  ),
+                  const _Div(),
+                  _StatusItem(label: 'SAMPLE RATE', value: sampleRate),
+                  const _Div(),
+                  _StatusItem(label: 'DSP TARGET', value: dspTarget, maxWidth: 100),
+                  const _Div(),
+                  _StatusItem(
+                    label: 'PROFILE',
+                    value: profileLabel,
+                    valueColor: _profileColor(project?.profileStatus),
+                  ),
+                  const _Div(),
+                  _StatusItem(
+                    label: 'SAFETY',
+                    value: safetyLabel,
+                    valueColor: _safetyColor(project?.safetyStatus),
+                    maxWidth: 110,
+                  ),
+                  if (project != null && project.measurementCount > 0) ...[
+                    const _Div(),
+                    _StatusItem(
+                      label: 'SESSIONS',
+                      value: '${project.measurementCount}',
+                      valueColor: kProGreen,
+                    ),
+                  ],
+                  const SizedBox(width: 16),
+                ]),
+              ),
             ),
-          ),
-        ),
-        // Fixed right safety badge — never overflows
-        Padding(
-          padding: const EdgeInsets.only(right: 16),
-          child: Text(
-            'AI suggests · Expert verifies · AOS protects',
-            style: proLabel(size: 9, color: Colors.white24, spacing: 0.5),
-            overflow: TextOverflow.ellipsis,
-          ),
+            // Fixed right safety badge — never overflows
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Text(
+                'AI suggests · Expert verifies · AOS protects',
+                style: proLabel(size: 9, color: Colors.white24, spacing: 0.5),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ]),
         ),
       ]),
     );
@@ -122,6 +125,70 @@ class ProjectStatusBar extends ConsumerWidget {
     SafetyStatus.blocked => kProRed,
     null => const Color(0xFF6B7280),
   };
+
+  String _nextStepFor(ProfileStatus? s) => switch (s) {
+    ProfileStatus.draft => 'Take your first measurements',
+    ProfileStatus.measured => 'Start tuning your profile',
+    ProfileStatus.tuned => 'Verify your tuning is safe',
+    ProfileStatus.verified => 'Ready to deploy — see Deploy →',
+    ProfileStatus.deployed => 'Review or refine anytime',
+    null => '—',
+  };
+}
+
+class _PrimaryContextRow extends StatelessWidget {
+  final String name;
+  final ProfileStatus? profileStatus;
+  final Color profileColor;
+  final String nextStep;
+  final bool canDeploy;
+  final VoidCallback onDeploy;
+
+  const _PrimaryContextRow({
+    required this.name,
+    required this.profileStatus,
+    required this.profileColor,
+    required this.nextStep,
+    required this.canDeploy,
+    required this.onDeploy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(children: [
+        Flexible(
+          child: Text(
+            name,
+            style: proTitle(size: 12, color: Colors.white),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+        const SizedBox(width: 10),
+        const _Div(),
+        const SizedBox(width: 10),
+        Text(
+          profileStatus?.label ?? '—',
+          style: TextStyle(fontSize: 10, color: profileColor, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(width: 10),
+        const _Div(),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            'Next: $nextStep',
+            style: proSubtitle(size: 10, color: const Color(0xFF9CA3AF)),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+        const Spacer(),
+        _DeployButton(enabled: canDeploy, onTap: onDeploy),
+      ]),
+    );
+  }
 }
 
 class _StatusItem extends StatelessWidget {
