@@ -45,6 +45,7 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
   late Adau1701HardwareContext _context;
   HardwareWriteApproval? _approval;
   HardwareWriteExecutionResult? _result;
+  HardwareWriteProgress? _progress;
   bool _applying = false;
 
   @override
@@ -84,10 +85,17 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
         _applying) {
       return;
     }
-    setState(() => _applying = true);
+    setState(() {
+      _applying = true;
+      _progress = null;
+    });
     try {
-      final result =
-          await HardwareWriteExecutor(_context.writePort).execute(approval);
+      final result = await HardwareWriteExecutor(_context.writePort).execute(
+        approval,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
       if (mounted) {
         setState(() => _result = result);
         widget.onResult?.call(result);
@@ -144,6 +152,36 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
             ),
           ),
         ]),
+      ],
+
+      // Live progress during execution.
+      if (_applying) ...[
+        const SizedBox(height: 10),
+        Row(children: [
+          Text('Writing…', style: proSubtitle(size: 10)),
+          if (_progress case final p?) ...[
+            const SizedBox(width: 8),
+            Text('${p.completed + 1} / ${p.total}',
+                style: proSubtitle(size: 10, color: Colors.white38)),
+          ],
+        ]),
+        if (_progress case final p?) ...[
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: p.total > 0 ? p.completed / p.total : null,
+              backgroundColor: kProBorder,
+              color: kProAccent,
+              minHeight: 3,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(p.label,
+              style: proSubtitle(size: 10, color: Colors.white38),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+        ],
       ],
 
       // Readiness note.

@@ -120,6 +120,8 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
   final String? targetName;
   final String? targetPolicy;
   final String? hybridXoSummary;
+  final String? protectionSummary;
+  final List<String> unknownCapabilityChannels;
 
   /// True when the source measurement has [ConfidenceStatus.insufficientEvidence].
   /// The UI must show a warning and require explicit Expert approval before the
@@ -145,6 +147,8 @@ class ProGuidedAiConfirmPending extends ProGuidedAiState {
     this.targetName,
     this.targetPolicy,
     this.hybridXoSummary,
+    this.protectionSummary,
+    this.unknownCapabilityChannels = const [],
     this.insufficientEvidence = false,
   });
 }

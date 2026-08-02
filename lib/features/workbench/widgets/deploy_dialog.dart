@@ -332,6 +332,20 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
   Widget _planView() {
     final blocked = _blockedOps;
     if (!_hasWritableOps && blocked.isEmpty) {
+      final String title;
+      final String nextAction;
+      if (widget.channels.isEmpty) {
+        title = 'No driver channels configured.';
+        nextAction = 'Add driver channels in the Import tab, then deploy again.';
+      } else if (widget.tuning.peqChannels.isEmpty) {
+        title = 'No pending writes.';
+        nextAction =
+            'No PEQ/Gain/XO configuration exists yet for these channels. '
+            'Run Guided AI or manual tuning first, then deploy again.';
+      } else {
+        title = 'No pending writes.';
+        nextAction = 'Current tuning already matches what was last deployed.';
+      }
       return Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -339,11 +353,13 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           border: Border.all(color: kProBorder),
           borderRadius: BorderRadius.circular(4),
         ),
-        child: Text(
-          widget.channels.isEmpty
-              ? 'No driver channels configured.'
-              : 'No pending writes.',
-          style: proSubtitle(size: 11),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: proSubtitle(size: 11)),
+            const SizedBox(height: 4),
+            Text(nextAction, style: proSubtitle(size: 10, color: Colors.white38)),
+          ],
         ),
       );
     }

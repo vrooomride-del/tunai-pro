@@ -1,4 +1,5 @@
 import '../../../acoustic/candidate_safety.dart';
+import '../../../acoustic/speaker_capability_evidence.dart';
 import 'dart:math' as math;
 import '../../../pro_protection_data.dart';
 import '../../pro_orchestrator_plan.dart';
@@ -52,10 +53,34 @@ class CandidateSafetyAdapter implements ProToolAdapter {
       policy = policy.copyWith(
           maxCutDb: math.min(policy.maxCutDb, maxCutRule.threshold.abs()));
     }
-    final safetyResult = AcousticSelectionValidator.validate(
+    var safetyResult = AcousticSelectionValidator.validate(
       optimArtifact.value,
       policy,
     );
+    if (project != null) {
+      final evidence = SpeakerCapabilityEvidence.fromProject(project);
+      final capabilityIssues = <CandidateSafetyIssue>[];
+      for (final candidate in safetyResult.verifiedCandidates) {
+        final e = evidence[candidate.scoredCandidate.candidate.channelId];
+        if (e != null && !e.permitsGain(candidate.scoredCandidate.candidate.gainDb)) {
+          capabilityIssues.add(CandidateSafetyIssue(
+            code: CandidateSafetyViolationCode.gainOutOfRange,
+            candidateId: candidate.scoredCandidate.candidate.candidateId,
+            detail: 'Protection evidence rejects ${candidate.scoredCandidate.candidate.channelId}.',
+          ));
+        }
+      }
+      if (capabilityIssues.isNotEmpty) {
+        safetyResult = CandidateSafetyResult(
+          applyPermitted: false,
+          issues: [...safetyResult.issues, ...capabilityIssues],
+          verifiedCandidates: const [],
+          policyId: safetyResult.policyId,
+          policyVersion: safetyResult.policyVersion,
+          evidenceRefs: [...safetyResult.evidenceRefs, ...capabilityIssues.map((i) => i.detail)],
+        );
+      }
+    }
 
     ctx.store.put(
         ctx.projectId, step.outputRef, CandidateSafetyArtifact(safetyResult));

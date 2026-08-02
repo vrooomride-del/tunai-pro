@@ -110,6 +110,13 @@ void main() {
         findsOneWidget,
         reason: 'widget.channels non-empty, no writes needed → pending-writes message',
       );
+      // Never-tuned project (peqChannels empty): the empty state must name the
+      // next action, not just say "nothing to do".
+      expect(
+        find.textContaining('Run Guided AI or manual tuning first'),
+        findsOneWidget,
+        reason: 'empty state must tell the user what to do next',
+      );
     });
 
     testWidgets(

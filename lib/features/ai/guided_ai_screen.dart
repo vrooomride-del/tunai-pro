@@ -457,6 +457,8 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   targetName: aiState.targetName,
                   targetPolicy: aiState.targetPolicy,
                   hybridXoSummary: aiState.hybridXoSummary,
+                  protectionSummary: aiState.protectionSummary,
+                  unknownCapabilityChannels: aiState.unknownCapabilityChannels,
                   insufficientEvidence: aiState.insufficientEvidence,
                   confirmInProgress: _confirmInProgress,
                   onConfirm: () async =>
@@ -791,6 +793,8 @@ class _ConfirmationCard extends StatefulWidget {
   final String? targetName;
   final String? targetPolicy;
   final String? hybridXoSummary;
+  final String? protectionSummary;
+  final List<String> unknownCapabilityChannels;
 
   /// True when the measurement has insufficientEvidence confidence. Requires
   /// an explicit Expert approval checkbox before the Apply button is enabled.
@@ -814,6 +818,8 @@ class _ConfirmationCard extends StatefulWidget {
     this.targetName,
     this.targetPolicy,
     this.hybridXoSummary,
+    this.protectionSummary,
+    this.unknownCapabilityChannels = const [],
     this.insufficientEvidence = false,
     this.confirmInProgress = false,
     required this.onConfirm,
@@ -830,7 +836,8 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
   @override
   Widget build(BuildContext context) {
     final isBlocked = widget.applyBlockedReason != null ||
-        (widget.insufficientEvidence && !_expertApprovalGranted);
+        ((widget.insufficientEvidence || widget.unknownCapabilityChannels.isNotEmpty) &&
+            !_expertApprovalGranted);
     return _buildCard(isBlocked);
   }
 
@@ -925,6 +932,12 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                     ),
                 ],
               ),
+            ] else if (widget.applyBlockedReason == null) ...[
+              const SizedBox(height: 10),
+              const Text(
+                '생성된 보정 후보가 없습니다 — 측정 결과가 이미 목표 범위 내에 있습니다.',
+                style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
+              ),
             ],
             if (widget.beforeAfterSummary != null) ...[
               const SizedBox(height: 10),
@@ -993,7 +1006,13 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
               Text(widget.hybridXoSummary!,
                   style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.35)),
             ],
-            if (widget.insufficientEvidence) ...[
+            if (widget.protectionSummary != null) ...[
+              const SizedBox(height: 8),
+              Text('Protection evidence\n${widget.protectionSummary}',
+                  style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.35)),
+            ],
+            if (widget.insufficientEvidence ||
+                widget.unknownCapabilityChannels.isNotEmpty) ...[
               const SizedBox(height: 10),
               Container(
                 padding:
@@ -1003,15 +1022,17 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: Colors.amber.withAlpha(60)),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
-                    Icon(Icons.warning_amber_rounded,
+                    const Icon(Icons.warning_amber_rounded,
                         color: Colors.amber, size: 13),
-                    SizedBox(width: 8),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '단일 FRD — 반복 측정 없음. 신뢰도가 낮습니다. Expert 승인 후에만 적용 가능합니다.',
-                        style: TextStyle(
+                        widget.unknownCapabilityChannels.isNotEmpty
+                            ? '보호 근거 미확인 채널: ${widget.unknownCapabilityChannels.join(', ')}. 근거 미확인 승인 후에만 적용 가능합니다.'
+                            : '단일 FRD — 반복 측정 없음. 신뢰도가 낮습니다. Expert 승인 후에만 적용 가능합니다.',
+                        style: const TextStyle(
                             color: Colors.amber, fontSize: 11, height: 1.4),
                       ),
                     ),
@@ -1020,30 +1041,35 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
               ),
               const SizedBox(height: 6),
               InkWell(
-                onTap: () => setState(
-                    () => _expertApprovalGranted = !_expertApprovalGranted),
+                onTap: widget.confirmInProgress
+                    ? null
+                    : () => setState(() =>
+                        _expertApprovalGranted = !_expertApprovalGranted),
                 borderRadius: BorderRadius.circular(4),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
                     children: [
-                      Icon(
-                        _expertApprovalGranted
-                            ? Icons.check_box
-                            : Icons.check_box_outline_blank,
-                        size: 16,
-                        color: _expertApprovalGranted
-                            ? Colors.white70
-                            : Colors.white24,
+                      Checkbox(
+                        value: _expertApprovalGranted,
+                        onChanged: widget.confirmInProgress
+                            ? null
+                            : (value) => setState(() =>
+                                _expertApprovalGranted = value ?? false),
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                       const SizedBox(width: 8),
                       const Expanded(
                         child: Text(
-                          'Expert로서 낮은 신뢰도를 인지하고 적용을 승인합니다',
+                          'Expert로서 미확인 근거를 인지하고 적용을 승인합니다',
                           style: TextStyle(color: Colors.white54, fontSize: 11),
                         ),
                       ),
                     ],
+                    ),
                   ),
                 ),
               ),
@@ -1399,12 +1425,12 @@ class _CycleDecisionCard extends StatelessWidget {
 
     final (decisionLabel, decisionColor, icon) = switch (decision) {
       CorrectionCycleDecision.improvedAndComplete => (
-          '개선 승인 · 완료',
+          '개선 완료',
           const Color(0xFF4CAF50),
           Icons.check_circle_outline,
         ),
       CorrectionCycleDecision.improvedNeedsAnotherCycle => (
-          '개선 승인 · 다음 cycle 제안',
+          '개선됨 — 추가 보정 권장',
           Colors.amber,
           Icons.refresh,
         ),
@@ -1414,7 +1440,7 @@ class _CycleDecisionCard extends StatelessWidget {
           Icons.remove_circle_outline,
         ),
       CorrectionCycleDecision.worsened => (
-          '악화 · rollback 제안',
+          '성능 저하 감지',
           Colors.redAccent,
           Icons.warning_amber_outlined,
         ),

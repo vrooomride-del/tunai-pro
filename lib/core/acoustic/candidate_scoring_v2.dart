@@ -7,6 +7,7 @@ import 'correction_plan.dart';
 import '../pro_response_error.dart';
 import '../pro_project.dart';
 import '../pro_protection_data.dart';
+import 'speaker_capability_evidence.dart';
 
 /// Candidate Scoring v2 — deterministic 10-item scoring/ranking engine.
 ///
@@ -267,6 +268,7 @@ class CandidateScoringContextV2 {
   /// Available protection margin in dB above the protection threshold (optional).
   /// When null, item 8 defaults to a conservative half-score.
   final double? protectionMarginDb;
+  final Map<String, SpeakerCapabilityEvidence>? capabilityEvidence;
 
   const CandidateScoringContextV2({
     required this.candidateSet,
@@ -277,6 +279,7 @@ class CandidateScoringContextV2 {
     this.perCandidateSimulatedError,
     this.availableHeadroomDb,
     this.protectionMarginDb,
+    this.capabilityEvidence,
   });
 }
 
@@ -674,6 +677,16 @@ abstract final class CandidateScorerV2 {
 
     final entries = <_EntryV2>[];
     for (final candidate in candidateSet.candidates) {
+      final capability = ctx.capabilityEvidence?[candidate.channelId];
+      if (capability != null && !capability.permitsGain(candidate.gainDb)) {
+        entries.add(_hardReject(
+          candidate,
+          featureMap[candidate.featureId]?.prominenceDb ?? 0.0,
+          'Protection evidence rejects candidate for ${candidate.channelId}.',
+          [...candidateSet.evidenceRefs, ...capability.evidenceRefs],
+        ));
+        continue;
+      }
       // Per-candidate simulation error overrides shared metrics for items 2 & 3.
       final perCandError =
           ctx.perCandidateSimulatedError?[candidate.candidateId];

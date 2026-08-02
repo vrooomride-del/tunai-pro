@@ -4,6 +4,8 @@ import '../pro_project.dart';
 
 /// Collects post-Deploy FRDs without replacing the factory (Before) project.
 class FullSystemAfterFrdInput {
+  static const identicalMeasurementMessage =
+      '기존 측정과 동일한 파일입니다. DSP 적용 후 새로 측정한 After FRD가 필요합니다.';
   final ProProject beforeProject;
   final Map<String, ParsedMeasurementData> _afterByChannel = {};
 
@@ -38,11 +40,20 @@ class FullSystemAfterFrdInput {
       throw StateError(
           'Factory Before FRD is missing or duplicated for $channelId.');
     }
-    if (before.single.frdData!.id == afterFrd.id) {
-      throw StateError('Before and After FRD identities must be different.');
+    if (before.single.frdData!.id == afterFrd.id ||
+        _fingerprint(before.single.frdData!) == _fingerprint(afterFrd)) {
+      throw StateError(identicalMeasurementMessage);
     }
     _afterByChannel[channelId] = afterFrd;
   }
+
+  static String _fingerprint(ParsedMeasurementData data) => [
+        for (final point in [...data.points]
+          ..sort((a, b) => a.frequencyHz.compareTo(b.frequencyHz)))
+          '${point.frequencyHz.toStringAsPrecision(17)}|'
+          '${point.magnitudeDb?.toStringAsPrecision(17) ?? "null"}|'
+          '${point.phaseDeg?.toStringAsPrecision(17) ?? "null"}',
+      ].join(';');
 
   ProProject buildAfterProject() {
     if (!isComplete) {

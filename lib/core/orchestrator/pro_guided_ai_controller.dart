@@ -21,6 +21,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import '../acoustic/acoustic_apply_engine.dart';
 import '../acoustic/full_system_candidate_evaluator.dart';
 import '../acoustic/hybrid_xo_feasibility.dart';
+import '../acoustic/speaker_capability_evidence.dart';
 import '../acoustic/listening_position_frd.dart';
 import '../acoustic/full_system_closed_loop_evaluator.dart';
 import '../acoustic/candidate_safety.dart';
@@ -1250,6 +1251,16 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     final hybridXoSummary = HybridXoFeasibilityEvaluator.evaluate(
             project: project)
         .displaySummary;
+    final protectionSummary = SpeakerCapabilityEvidence.fromProject(project)
+        .values
+        .map((e) => '${e.channelId}: ${e.status.name}'
+            '${e.protectionMarginDb == null ? '' : ' margin=${e.protectionMarginDb!.toStringAsFixed(1)} dB'}')
+        .join('\n');
+    final unknownCapabilityChannels = SpeakerCapabilityEvidence.fromProject(project)
+        .values
+        .where((e) => e.status == SpeakerCapabilityStatus.unknown)
+        .map((e) => e.channelId)
+        .toList(growable: false);
     final positions = project.acousticState.listeningPositions;
     if (positions.isNotEmpty) {
       final safetyByChannel = <String, CandidateSafetyResult>{};
@@ -1314,6 +1325,9 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     if (beforeAfterSummary != null && robustTargetName != null) {
       beforeAfterSummary = '$beforeAfterSummary (Target: $robustTargetName)';
     }
+    if (beforeAfterSummary != null && protectionSummary.isNotEmpty) {
+      beforeAfterSummary = '$beforeAfterSummary\nProtection: $protectionSummary';
+    }
 
     return ProGuidedAiConfirmPending(
       request: ProUserConfirmationRequest(
@@ -1339,6 +1353,8 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       targetName: robustTargetName,
       targetPolicy: robustTargetPolicy,
       hybridXoSummary: hybridXoSummary,
+      protectionSummary: protectionSummary,
+      unknownCapabilityChannels: List.unmodifiable(unknownCapabilityChannels),
     );
   }
 

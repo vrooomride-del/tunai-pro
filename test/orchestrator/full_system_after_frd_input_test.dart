@@ -86,6 +86,31 @@ void main() {
           throwsStateError);
     });
 
+    test('same spectrum is rejected even when the FRD name changes', () {
+      final factory = _factoryProject();
+      final input = FullSystemAfterFrdInput(factory);
+      final original = factory.acousticState.driverChannels.first.frdData!;
+      final renamed = ParsedMeasurementData(
+        id: 'renamed-after',
+        sourceFileName: 'new-name.frd',
+        fileType: AcousticFileType.frd,
+        importedAt: DateTime(2030, 1, 1),
+        points: original.points,
+      );
+      expect(
+          () => input.add(channelId: 'ch_tw_l', afterFrd: renamed),
+          throwsA(predicate((e) => e.toString().contains(
+              FullSystemAfterFrdInput.identicalMeasurementMessage))));
+    });
+
+    test('one identical channel blocks a complete four-channel set', () {
+      final factory = _factoryProject();
+      final input = FullSystemAfterFrdInput(factory);
+      final same = factory.acousticState.driverChannels.first.frdData!;
+      expect(() => input.add(channelId: 'ch_tw_l', afterFrd: same), throwsStateError);
+      expect(input.afterByChannel, isEmpty);
+    });
+
     test('complete set invokes existing closed-loop verdict with no write', () {
       var hardwareWrites = 0;
       final factory = _factoryProject();

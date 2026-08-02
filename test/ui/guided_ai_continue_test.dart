@@ -34,6 +34,7 @@ class _CountingTabs extends WorkbenchTabNotifier {
 
 class _ContinueController extends ProGuidedAiController {
   final bool failAfterConfirm;
+  final bool insufficientEvidence;
   final _done = Completer<void>();
   Future<void> Function(String, TuningApplyResult)? _onApply;
   Future<void> Function(String, HardwareWritePlan)? _onWritePlan;
@@ -42,7 +43,7 @@ class _ContinueController extends ProGuidedAiController {
   int applyCalls = 0;
   int writePlanCalls = 0;
 
-  _ContinueController({this.failAfterConfirm = false});
+  _ContinueController({this.failAfterConfirm = false, this.insufficientEvidence = false});
 
   @override
   Future<void> start({
@@ -56,8 +57,8 @@ class _ContinueController extends ProGuidedAiController {
     _onApply = onApply;
     _onWritePlan = onHardwareWritePlan;
     _onExport = onExportPackage;
-    state = const ProGuidedAiConfirmPending(
-      request: ProUserConfirmationRequest(
+    state = ProGuidedAiConfirmPending(
+      request: const ProUserConfirmationRequest(
         stepId: 'apply-gate',
         toolId: ProOrchestratorToolId.acousticValidateSafety,
         objective: 'approve',
@@ -67,15 +68,16 @@ class _ContinueController extends ProGuidedAiController {
           explanationLevel: ProExplanationLevel.intermediate,
         ),
       ),
-      plan: ProOrchestratorPlan(
+      plan: const ProOrchestratorPlan(
         planId: 'p', intentRef: 'i', contextRef: 'c', steps: []),
-      explanation: ProExplanation(
+      explanation: const ProExplanation(
         title: 'approve',
         summary: 'approve',
         explanationLevel: ProExplanationLevel.intermediate,
       ),
       completedSteps: [],
       fullSystemReady: true,
+      insufficientEvidence: insufficientEvidence,
     );
     await _done.future;
   }
@@ -169,6 +171,32 @@ ProProject _project() {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('Expert evidence checkbox gates Continue and enables after tap',
+      (tester) async {
+    final project = _project();
+    SharedPreferences.setMockInitialValues({
+      'tunai_pro_projects': ProProject.encodeList([project]),
+    });
+    final controller = _ContinueController(insufficientEvidence: true);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [guidedAiProvider.overrideWith((ref) => controller)],
+        child: const MaterialApp(home: GuidedAiScreen(projectId: 'test-proj')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('AI 분석 시작'));
+    await tester.pump();
+    final continueButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '계속'));
+    expect(continueButton.onPressed, isNull);
+    await tester.tap(find.byType(Checkbox));
+    await tester.pump();
+    final enabledButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '계속'));
+    expect(enabledButton.onPressed, isNotNull);
+  });
 
   testWidgets('continue is awaited, single-flight, and keeps app root alive',
       (tester) async {
