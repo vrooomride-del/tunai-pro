@@ -6,6 +6,7 @@ import '../../../core/pro_measurement.dart';
 import '../../../core/pro_measurement_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/stat_chip.dart';
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -609,10 +610,13 @@ class _SessionDetailPanel extends StatelessWidget {
 
         // Stats row
         Wrap(spacing: 10, runSpacing: 10, children: [
-          _StatChip('POINTS', '${session.points.length}'),
-          _StatChip('CAPTURED', '${session.capturedCount}'),
-          _StatChip('ACCEPTED', '${session.acceptedCount}'),
-          _StatChip('REJECTED', '${session.points.where((p) => p.status == MeasurementPointStatus.rejected).length}'),
+          ProStatChip(label: 'POINTS', value: '${session.points.length}'),
+          ProStatChip(label: 'CAPTURED', value: '${session.capturedCount}'),
+          ProStatChip(label: 'ACCEPTED', value: '${session.acceptedCount}'),
+          ProStatChip(
+              label: 'REJECTED',
+              value:
+                  '${session.points.where((p) => p.status == MeasurementPointStatus.rejected).length}'),
         ]),
         const SizedBox(height: 20),
 
@@ -669,27 +673,6 @@ class _SessionDetailPanel extends StatelessWidget {
       ]),
     );
   }
-}
-
-class _StatChip extends StatelessWidget {
-  final String label;
-  final String value;
-  const _StatChip(this.label, this.value);
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: proLabel(size: 9)),
-      const SizedBox(height: 4),
-      Text(value, style: proValue(size: 14, color: Colors.white70)),
-    ]),
-  );
 }
 
 class _EmptyPoints extends StatelessWidget {

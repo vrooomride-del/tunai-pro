@@ -10,6 +10,7 @@ import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/channel_selector_sidebar.dart';
 
 class PhaseTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -47,6 +48,30 @@ class _PhaseTabState extends ConsumerState<PhaseTab> {
     await _savePhaseOffset(channelId, 0.0);
   }
 
+  /// Maps DriverChannel + per-channel polarity/phase-offset state onto the
+  /// presentation-only ChannelSelectorItem — no domain type crosses into
+  /// ChannelSelectorSidebar itself.
+  ChannelSelectorItem _channelItem(
+      DriverChannel d, TuningProjectState tuning) {
+    final xoCh = tuning.getOrCreateCrossoverChannel(d.id);
+    final ctrl = tuning.getOrCreateControl(d.id);
+    final badges = [
+      if (xoCh.polarityInverted) '∅ INV',
+      if (ctrl.phaseOffsetDeg != 0.0)
+        '${ctrl.phaseOffsetDeg.toStringAsFixed(0)}°',
+    ].join(' · ');
+    return ChannelSelectorItem(
+      id: d.id,
+      label: d.name,
+      subtitle: '${d.role.short}${badges.isEmpty ? '' : ' · $badges'}',
+      status: xoCh.polarityInverted
+          ? kProAmber
+          : ctrl.phaseOffsetDeg != 0.0
+              ? kProAccent
+              : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(proProjectStoreProvider);
@@ -67,14 +92,11 @@ class _PhaseTabState extends ConsumerState<PhaseTab> {
 
     return Row(children: [
       // ── Left: channel list ──────────────────────────────────────────────
-      SizedBox(
-        width: 192,
-        child: _PhaseChannelList(
-          drivers: drivers,
-          tuning: tuning,
-          selectedId: selectedId,
-          onSelect: (id) => setState(() => _selectedChannelId = id),
-        ),
+      ChannelSelectorSidebar(
+        title: 'CHANNELS',
+        items: [for (final d in drivers) _channelItem(d, tuning)],
+        selectedId: selectedId,
+        onSelected: (id) => setState(() => _selectedChannelId = id),
       ),
       Container(width: 0.5, color: kProBorder),
 
@@ -144,73 +166,6 @@ class _PhaseTabState extends ConsumerState<PhaseTab> {
 }
 
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
-
-class _PhaseChannelList extends StatelessWidget {
-  final List<DriverChannel> drivers;
-  final TuningProjectState tuning;
-  final String selectedId;
-  final ValueChanged<String> onSelect;
-  const _PhaseChannelList({required this.drivers, required this.tuning,
-      required this.selectedId, required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    color: kProPanel,
-    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-        child: Text('CHANNELS', style: proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
-      ),
-      Expanded(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: drivers.map((d) {
-            final active = d.id == selectedId;
-            final xoCh = tuning.getOrCreateCrossoverChannel(d.id);
-            final ctrl = tuning.getOrCreateControl(d.id);
-            final hasPhase = xoCh.polarityInverted || ctrl.phaseOffsetDeg != 0.0;
-            return GestureDetector(
-              onTap: () => onSelect(d.id),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: active ? kProAccent.withValues(alpha: 0.09) : Colors.transparent,
-                  border: Border(
-                    left: BorderSide(
-                        color: active ? kProAccent : Colors.transparent, width: 2),
-                  ),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    Expanded(
-                      child: Text(d.name,
-                          style: proTitle(size: 11,
-                              color: active ? Colors.white : const Color(0xFF6B7280))),
-                    ),
-                    Text(d.role.short,
-                        style: proLabel(size: 8,
-                            color: active ? kProAccent : Colors.white24, spacing: 0.5)),
-                  ]),
-                  if (hasPhase) ...[
-                    const SizedBox(height: 4),
-                    Wrap(spacing: 4, children: [
-                      if (xoCh.polarityInverted)
-                        const ProStatusPill(label: '∅ INV', color: kProAmber),
-                      if (ctrl.phaseOffsetDeg != 0.0)
-                        ProStatusPill(
-                            label: '${ctrl.phaseOffsetDeg.toStringAsFixed(0)}°',
-                            color: kProAccent),
-                    ]),
-                  ],
-                ]),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    ]),
-  );
-}
 
 class _PhaseChannelHeader extends StatelessWidget {
   final DriverChannel driver;

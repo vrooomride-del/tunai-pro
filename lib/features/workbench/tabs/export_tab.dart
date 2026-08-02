@@ -16,6 +16,7 @@ import '../../../core/pro_dsp_address_registry.dart';
 import '../../../core/pro_sigma_mapping_data.dart';
 import '../../../core/pro_adau1466_3way_address_map_embedded.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/stat_chip.dart';
 
 class ExportTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -345,25 +346,25 @@ class _ProtectionGateSummary extends StatelessWidget {
       Text('PROTECTION GATE', style: proLabel(size: 9, spacing: 2)),
       const SizedBox(height: 10),
       Wrap(spacing: 10, runSpacing: 8, children: [
-        _StatChip(
+        ProStatChip(
           label: 'STATUS',
           value: protection.verificationStatus.label,
-          color: _statusColor(),
+          valueColor: _statusColor(),
         ),
-        _StatChip(
+        ProStatChip(
           label: 'EXPORT',
           value: protection.exportLocked ? 'Locked' : 'Allowed',
-          color: protection.exportLocked ? kProRed : kProGreen,
+          valueColor: protection.exportLocked ? kProRed : kProGreen,
         ),
-        _StatChip(
+        ProStatChip(
           label: 'WARNINGS',
           value: '${protection.warningCount}',
-          color: protection.warningCount > 0 ? kProAmber : Colors.white38,
+          valueColor: protection.warningCount > 0 ? kProAmber : Colors.white38,
         ),
-        _StatChip(
+        ProStatChip(
           label: 'CRITICAL',
           value: '${protection.criticalCount}',
-          color: protection.criticalCount > 0 ? kProRed : Colors.white38,
+          valueColor: protection.criticalCount > 0 ? kProRed : Colors.white38,
         ),
       ]),
     ]),
@@ -417,14 +418,14 @@ class _PackageSummary extends StatelessWidget {
       ],
 
       Wrap(spacing: 10, runSpacing: 8, children: [
-        _StatChip(label: 'TARGET', value: pkg.targetPlatform.label),
-        _StatChip(label: 'FORMAT', value: pkg.format.label),
-        _StatChip(label: 'BLOCKS', value: '${pkg.blockCount}'),
-        _StatChip(label: 'CHANNELS', value: '${pkg.channelMaps.length}'),
-        _StatChip(
+        ProStatChip(label: 'TARGET', value: pkg.targetPlatform.label),
+        ProStatChip(label: 'FORMAT', value: pkg.format.label),
+        ProStatChip(label: 'BLOCKS', value: '${pkg.blockCount}'),
+        ProStatChip(label: 'CHANNELS', value: '${pkg.channelMaps.length}'),
+        ProStatChip(
           label: 'WARNINGS',
           value: '${pkg.warningCount}',
-          color: pkg.warningCount > 0 ? kProAmber : null,
+          valueColor: pkg.warningCount > 0 ? kProAmber : null,
         ),
       ]),
 
@@ -644,31 +645,6 @@ class _JsonPreviewCardState extends State<_JsonPreviewCard> {
   }
 }
 
-// ── Shared sub-widgets ────────────────────────────────────────────────────────
-
-class _StatChip extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? color;
-  const _StatChip({required this.label, required this.value, this.color});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: kProBg,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: proLabel(size: 9)),
-      const SizedBox(height: 4),
-      Text(value,
-          style: proValue(size: 12, color: color ?? Colors.white70)),
-    ]),
-  );
-}
-
 // ── Phase I: DSP Target Profile Panel ────────────────────────────────────────
 
 class _TargetProfilePanel extends StatelessWidget {
@@ -688,11 +664,12 @@ class _TargetProfilePanel extends StatelessWidget {
       const SizedBox(height: 10),
 
       Wrap(spacing: 10, runSpacing: 8, children: [
-        _StatChip(label: 'TARGET', value: profile.displayName),
-        _StatChip(label: 'PRECISION', value: profile.precision.label),
-        _StatChip(label: 'MAX CHANNELS', value: '${profile.maxChannels}'),
-        _StatChip(label: 'MAX PEQ/CH', value: '${profile.maxPeqBandsPerChannel}'),
-        _StatChip(label: 'SAMPLE RATES', value: profile.sampleRateLabel),
+        ProStatChip(label: 'TARGET', value: profile.displayName),
+        ProStatChip(label: 'PRECISION', value: profile.precision.label),
+        ProStatChip(label: 'MAX CHANNELS', value: '${profile.maxChannels}'),
+        ProStatChip(
+            label: 'MAX PEQ/CH', value: '${profile.maxPeqBandsPerChannel}'),
+        ProStatChip(label: 'SAMPLE RATES', value: profile.sampleRateLabel),
       ]),
       const SizedBox(height: 12),
 
@@ -769,17 +746,17 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
         const SizedBox(height: 10),
 
         Wrap(spacing: 10, runSpacing: 8, children: [
-          _StatChip(label: 'PARAM SLOTS', value: '${draft.slotCount}'),
-          _StatChip(label: 'BIQUAD STAGES', value: '${draft.stageCount}'),
+          ProStatChip(label: 'PARAM SLOTS', value: '${draft.slotCount}'),
+          ProStatChip(label: 'BIQUAD STAGES', value: '${draft.stageCount}'),
           if (calcCount > 0)
-            _StatChip(label: 'CALCULATED', value: '$calcCount',
-                color: kProGreen),
+            ProStatChip(
+                label: 'CALCULATED', value: '$calcCount', valueColor: kProGreen),
           if (phCount > 0)
-            _StatChip(label: 'PLACEHOLDER', value: '$phCount',
-                color: kProAmber),
+            ProStatChip(
+                label: 'PLACEHOLDER', value: '$phCount', valueColor: kProAmber),
           if (verCount > 0)
-            _StatChip(label: 'NEEDS VERIFY', value: '$verCount',
-                color: kProRed),
+            ProStatChip(
+                label: 'NEEDS VERIFY', value: '$verCount', valueColor: kProRed),
         ]),
 
         // XO cascade summary (Phase K)

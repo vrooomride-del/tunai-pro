@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'components/stat_chip.dart';
+
 // ── Colors ───────────────────────────────────────────────────────────────────
 
 const kProBg = Color(0xFF080C10);
@@ -106,7 +108,9 @@ class WorkbenchPlaceholder extends StatelessWidget {
             Wrap(
               spacing: 10,
               runSpacing: 10,
-              children: stats!.map((s) => _StatChip(stat: s)).toList(),
+              children: stats!
+                  .map((s) => ProStatChip(label: s.label, value: s.value))
+                  .toList(),
             ),
           ],
 
@@ -116,26 +120,6 @@ class WorkbenchPlaceholder extends StatelessWidget {
       ),
     );
   }
-}
-
-class _StatChip extends StatelessWidget {
-  final ProQuickStat stat;
-  const _StatChip({required this.stat});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(stat.label, style: proLabel(size: 9)),
-      const SizedBox(height: 4),
-      Text(stat.value, style: proValue(size: 13, color: Colors.white70)),
-    ]),
-  );
 }
 
 class _ReadyBanner extends StatelessWidget {

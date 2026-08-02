@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/info_row.dart';
 
 class ProjectTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -81,19 +82,19 @@ class _ProjectTabState extends ConsumerState<ProjectTab> {
         const _SectionLabel('PROJECT INFORMATION'),
         const SizedBox(height: 10),
         _InfoCard(children: [
-          _InfoRow('Project Name', project.name),
-          _InfoRow('Speaker Model', project.speakerModel),
-          _InfoRow('Room / Location', project.roomName),
-          _InfoRow('Sample Rate', project.sampleRateLabel),
-          _InfoRow('DSP Target', project.dspTarget),
-          _InfoRow('Channel Config', project.channelConfig),
-          _InfoRow('Measurements', '${project.measurementCount}'),
+          ProInfoRow(label: 'Project Name', value: project.name),
+          ProInfoRow(label: 'Speaker Model', value: project.speakerModel),
+          ProInfoRow(label: 'Room / Location', value: project.roomName),
+          ProInfoRow(label: 'Sample Rate', value: project.sampleRateLabel),
+          ProInfoRow(label: 'DSP Target', value: project.dspTarget),
+          ProInfoRow(label: 'Channel Config', value: project.channelConfig),
+          ProInfoRow(label: 'Measurements', value: '${project.measurementCount}'),
           if (project.activeProfileName != null)
-            _InfoRow('Active Profile', project.activeProfileName!),
-          _InfoRow('Created', _dateLabel(project.createdAt)),
-          _InfoRow('Last Updated', _dateLabel(project.updatedAt)),
+            ProInfoRow(label: 'Active Profile', value: project.activeProfileName!),
+          ProInfoRow(label: 'Created', value: _dateLabel(project.createdAt)),
+          ProInfoRow(label: 'Last Updated', value: _dateLabel(project.updatedAt)),
           if (project.notes != null && project.notes!.isNotEmpty)
-            _InfoRow('Notes', project.notes!),
+            ProInfoRow(label: 'Notes', value: project.notes!),
         ]),
         const SizedBox(height: 20),
 
@@ -325,20 +326,5 @@ class _InfoCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Column(children: children),
-  );
-}
-
-class _InfoRow extends StatelessWidget {
-  final String label;
-  final String value;
-  const _InfoRow(this.label, this.value);
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(children: [
-      SizedBox(width: 130, child: Text(label, style: proLabel(size: 10, spacing: 0.5))),
-      Expanded(child: Text(value, style: proValue(size: 11, color: Colors.white60))),
-    ]),
   );
 }

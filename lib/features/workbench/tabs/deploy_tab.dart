@@ -20,6 +20,8 @@ import '../widgets/hardware_apply_flow.dart';
 import '../../../core/deploy/pro_hardware_write_executor.dart';
 import '../../../core/workbench_tab_provider.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/section_header.dart';
+import '../../../shared/components/info_row.dart';
 
 class DeployTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -240,13 +242,15 @@ class _DeployTabState extends ConsumerState<DeployTab> {
         const SizedBox(height: 24),
 
         // ── A: Readiness overview ────────────────────────────────────────────
-        const _SectionHeader('DEPLOY READINESS', Icons.checklist_outlined),
+        const ProSectionHeader(
+            title: 'DEPLOY READINESS', icon: Icons.checklist_outlined),
         const SizedBox(height: 8),
         _ReadinessPanel(project: project),
         const SizedBox(height: 20),
 
         // ── B: Generate package panel ────────────────────────────────────────
-        const _SectionHeader('GENERATE PACKAGE', Icons.add_circle_outline),
+        const ProSectionHeader(
+            title: 'GENERATE PACKAGE', icon: Icons.add_circle_outline),
         const SizedBox(height: 8),
         _GeneratePanel(
           selectedKind: _selectedKind,
@@ -260,7 +264,8 @@ class _DeployTabState extends ConsumerState<DeployTab> {
 
         // ── C: Active package summary ────────────────────────────────────────
         if (activePkg != null) ...[
-          const _SectionHeader('ACTIVE PACKAGE', Icons.inventory_outlined),
+          const ProSectionHeader(
+              title: 'ACTIVE PACKAGE', icon: Icons.inventory_outlined),
           const SizedBox(height: 8),
           _ActivePackagePanel(pkg: activePkg),
           const SizedBox(height: 20),
@@ -268,7 +273,8 @@ class _DeployTabState extends ConsumerState<DeployTab> {
 
         // ── C2: Hardware apply (gated approve → apply workflow) ──────────────
         if (project != null && project.exportState.activePackage != null) ...[
-          const _SectionHeader('HARDWARE APPLY', Icons.memory_outlined),
+          const ProSectionHeader(
+              title: 'HARDWARE APPLY', icon: Icons.memory_outlined),
           const SizedBox(height: 8),
           HardwareApplyFlow(
             exportPackage: project.exportState.activePackage!,
@@ -357,7 +363,8 @@ class _DeployTabState extends ConsumerState<DeployTab> {
           ],
           const SizedBox(height: 20),
         ] else ...[
-          const _SectionHeader('HARDWARE APPLY', Icons.memory_outlined),
+          const ProSectionHeader(
+              title: 'HARDWARE APPLY', icon: Icons.memory_outlined),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(12),
@@ -376,7 +383,8 @@ class _DeployTabState extends ConsumerState<DeployTab> {
 
         // ── D: Package history ───────────────────────────────────────────────
         if (deployState.packages.isNotEmpty) ...[
-          const _SectionHeader('PACKAGE HISTORY', Icons.history_outlined),
+          const ProSectionHeader(
+            title: 'PACKAGE HISTORY', icon: Icons.history_outlined),
           const SizedBox(height: 8),
           _PackageHistoryPanel(
             packages: deployState.packages.reversed.toList(),
@@ -388,7 +396,8 @@ class _DeployTabState extends ConsumerState<DeployTab> {
         ],
 
         // ── E: Preset management ─────────────────────────────────────────────
-        const _SectionHeader('PRESET MANAGEMENT', Icons.bookmarks_outlined),
+        const ProSectionHeader(
+            title: 'PRESET MANAGEMENT', icon: Icons.bookmarks_outlined),
         const SizedBox(height: 8),
         _PresetPanel(
           deployState: deployState,
@@ -400,7 +409,8 @@ class _DeployTabState extends ConsumerState<DeployTab> {
 
         // ── F: JSON preview ──────────────────────────────────────────────────
         if (activePkg != null) ...[
-          const _SectionHeader('JSON PREVIEW', Icons.data_object_outlined),
+          const ProSectionHeader(
+              title: 'JSON PREVIEW', icon: Icons.data_object_outlined),
           const SizedBox(height: 8),
           GestureDetector(
             onTap: () => setState(() => _showJson = !_showJson),
@@ -448,7 +458,10 @@ class _DeployTabState extends ConsumerState<DeployTab> {
         ],
 
         // ── G: Factory Sound Profile ─────────────────────────────────────────
-        _SectionHeader('FACTORY SOUND PROFILE', Icons.verified_outlined, key: _fspKey),
+        ProSectionHeader(
+            key: _fspKey,
+            title: 'FACTORY SOUND PROFILE',
+            icon: Icons.verified_outlined),
         const SizedBox(height: 8),
         if (project != null)
           _FactoryProfileSection(
@@ -530,24 +543,29 @@ class _ReadinessPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _InfoRow('Project', '${project!.name} · ${project!.dspTarget}'),
-        _InfoRow('Status', project!.profileStatus.label),
-        _InfoRow('Measurement', acoustic.readinessLabel),
-        _InfoRow('PEQ bands', '${tuning.totalPeqBands} (${tuning.activePeqBands} active)'),
-        _InfoRow('Simulation', simulation.readinessLabel),
-        _InfoRow('Protection', protection.readinessLabel),
-        _InfoRow('Export', export.readinessLabel),
-        _InfoRow('Connection', connState.transportType.label),
-        _InfoRow('Hardware', hardware.readinessLabel),
-        _InfoRow('Deploy packages', '${deploy.packageCount}'),
-        _InfoRow('Presets', '${deploy.presetCount}'),
-        _InfoRow('Readiness', deploy.readinessLabel),
-        _InfoRow(
-          'Factory Profile',
-          eligibility.isApproved
+        ProInfoRow(
+            label: 'Project', value: '${project!.name} · ${project!.dspTarget}'),
+        ProInfoRow(label: 'Status', value: project!.profileStatus.label),
+        ProInfoRow(label: 'Measurement', value: acoustic.readinessLabel),
+        ProInfoRow(
+            label: 'PEQ bands',
+            value:
+                '${tuning.totalPeqBands} (${tuning.activePeqBands} active)'),
+        ProInfoRow(label: 'Simulation', value: simulation.readinessLabel),
+        ProInfoRow(label: 'Protection', value: protection.readinessLabel),
+        ProInfoRow(label: 'Export', value: export.readinessLabel),
+        ProInfoRow(label: 'Connection', value: connState.transportType.label),
+        ProInfoRow(label: 'Hardware', value: hardware.readinessLabel),
+        ProInfoRow(
+            label: 'Deploy packages', value: '${deploy.packageCount}'),
+        ProInfoRow(label: 'Presets', value: '${deploy.presetCount}'),
+        ProInfoRow(label: 'Readiness', value: deploy.readinessLabel),
+        ProInfoRow(
+          label: 'Factory Profile',
+          value: eligibility.isApproved
               ? 'Eligible'
               : 'Not eligible: ${eligibility.reasons.firstOrNull ?? '—'}',
-          warn: !eligibility.isApproved,
+          valueColor: eligibility.isApproved ? null : kProAmber,
         ),
       ]),
     );
@@ -715,15 +733,19 @@ class _ActivePackagePanel extends StatelessWidget {
               style: proLabel(size: 9, color: Colors.white38, spacing: 0.5)),
         ]),
         const SizedBox(height: 8),
-        _InfoRow('Name', pkg.name),
-        _InfoRow('Kind', pkg.kind.label),
-        _InfoRow('Created',
-            pkg.createdAt.toLocal().toString().substring(0, 16)),
+        ProInfoRow(label: 'Name', value: pkg.name),
+        ProInfoRow(label: 'Kind', value: pkg.kind.label),
+        ProInfoRow(
+            label: 'Created',
+            value: pkg.createdAt.toLocal().toString().substring(0, 16)),
         if (pkg.exportPackageId != null)
-          _InfoRow('Export Package ID', pkg.exportPackageId!),
+          ProInfoRow(
+              label: 'Export Package ID', value: pkg.exportPackageId!),
         if (pkg.hardwarePlanId != null)
-          _InfoRow('Hardware Plan ID', pkg.hardwarePlanId!),
-        _InfoRow('Warnings', '${pkg.snapshot.warnings.length}'),
+          ProInfoRow(
+              label: 'Hardware Plan ID', value: pkg.hardwarePlanId!),
+        ProInfoRow(
+            label: 'Warnings', value: '${pkg.snapshot.warnings.length}'),
         if (pkg.snapshot.blockedReason != null) ...[
           const SizedBox(height: 6),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -741,7 +763,7 @@ class _ActivePackagePanel extends StatelessWidget {
         ],
         if (pkg.notes != null) ...[
           const SizedBox(height: 4),
-          _InfoRow('Notes', pkg.notes!),
+          ProInfoRow(label: 'Notes', value: pkg.notes!),
         ],
       ]),
     );
@@ -969,43 +991,6 @@ class _PresetPanel extends StatelessWidget {
 }
 
 // ── Small helper widgets ──────────────────────────────────────────────────────
-
-class _SectionHeader extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  const _SectionHeader(this.label, this.icon, {super.key});
-
-  @override
-  Widget build(BuildContext context) => Row(children: [
-    Icon(icon, size: 11, color: Colors.white24),
-    const SizedBox(width: 6),
-    Text(label, style: proLabel(size: 9, color: Colors.white38, spacing: 1.5)),
-  ]);
-}
-
-class _InfoRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool warn;
-  const _InfoRow(this.label, this.value, {this.warn = false});
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 3),
-    child: Row(children: [
-      SizedBox(
-        width: 130,
-        child: Text(label, style: proLabel(size: 9, color: Colors.white38)),
-      ),
-      Expanded(
-        child: Text(value,
-            style: warn
-                ? proSubtitle(size: 10, color: kProAmber)
-                : proSubtitle(size: 10)),
-      ),
-    ]),
-  );
-}
 
 class _StatusPill extends StatelessWidget {
   final DeployPackageStatus status;

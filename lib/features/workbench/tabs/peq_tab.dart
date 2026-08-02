@@ -10,6 +10,7 @@ import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/channel_selector_sidebar.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../widgets/adau1701_peq_response_graph.dart';
 import 'pro_adau1466_peq_hardware_panel.dart';
@@ -78,6 +79,30 @@ class _PeqTabState extends ConsumerState<PeqTab> {
     await _savePeqChannel(PeqChannelState.fixed(channelId));
   }
 
+  /// Maps DriverChannel + per-channel PEQ state onto the presentation-only
+  /// ChannelSelectorItem — no domain type crosses into ChannelSelectorSidebar
+  /// itself.
+  ChannelSelectorItem _channelItem(
+      DriverChannel d, TuningProjectState tuning) {
+    final peqCh = tuning.peqChannels.firstWhere(
+        (c) => c.channelId == d.id, orElse: () => PeqChannelState.empty(d.id));
+    final badges = [
+      if (peqCh.enabledBandCount > 0)
+        '${peqCh.enabledBandCount} / ${PeqChannelState.bandCount} enabled',
+      if (peqCh.bypassed) 'BYPASSED',
+    ].join(' · ');
+    return ChannelSelectorItem(
+      id: d.id,
+      label: d.name,
+      subtitle: '${d.role.short}${badges.isEmpty ? '' : ' · $badges'}',
+      status: peqCh.bypassed
+          ? kProAmber
+          : peqCh.enabledBandCount > 0
+              ? kProAccent
+              : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(proProjectStoreProvider);
@@ -114,14 +139,11 @@ class _PeqTabState extends ConsumerState<PeqTab> {
 
     return Row(children: [
       // ── Left: channel list ──────────────────────────────────────────────
-      SizedBox(
-        width: 192,
-        child: _ChannelList(
-          drivers: drivers,
-          tuning: tuning,
-          selectedId: selectedId,
-          onSelect: (id) => setState(() => _selectedChannelId = id),
-        ),
+      ChannelSelectorSidebar(
+        title: 'CHANNELS',
+        items: [for (final d in drivers) _channelItem(d, tuning)],
+        selectedId: selectedId,
+        onSelected: (id) => setState(() => _selectedChannelId = id),
       ),
       Container(width: 0.5, color: kProBorder),
 
@@ -195,68 +217,6 @@ class _PeqTabState extends ConsumerState<PeqTab> {
 }
 
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
-
-class _ChannelList extends StatelessWidget {
-  final List<DriverChannel> drivers;
-  final TuningProjectState tuning;
-  final String selectedId;
-  final ValueChanged<String> onSelect;
-  const _ChannelList({required this.drivers, required this.tuning,
-      required this.selectedId, required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    color: kProPanel,
-    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-        child: Text('CHANNELS', style: proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
-      ),
-      Expanded(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: drivers.map((d) {
-            final active = d.id == selectedId;
-            final peqCh = tuning.peqChannels.firstWhere(
-                (c) => c.channelId == d.id, orElse: () => PeqChannelState.empty(d.id));
-            return GestureDetector(
-              onTap: () => onSelect(d.id),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: active ? kProAccent.withValues(alpha: 0.09) : Colors.transparent,
-                  border: Border(
-                    left: BorderSide(
-                        color: active ? kProAccent : Colors.transparent, width: 2),
-                  ),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    Text(d.name, style: proTitle(size: 11,
-                        color: active ? Colors.white : const Color(0xFF6B7280))),
-                    const Spacer(),
-                    Text(d.role.short,
-                        style: proLabel(size: 8, color: active ? kProAccent : Colors.white24, spacing: 0.5)),
-                  ]),
-                  if (peqCh.enabledBandCount > 0) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                        '${peqCh.enabledBandCount} / ${PeqChannelState.bandCount} enabled',
-                        style: proSubtitle(size: 9)),
-                  ],
-                  if (peqCh.bypassed) ...[
-                    const SizedBox(height: 3),
-                    const ProStatusPill(label: 'BYPASSED', color: kProAmber),
-                  ],
-                ]),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    ]),
-  );
-}
 
 class _ChannelHeader extends StatelessWidget {
   final DriverChannel driver;

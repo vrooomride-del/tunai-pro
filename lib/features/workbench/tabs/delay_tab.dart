@@ -9,6 +9,7 @@ import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/channel_selector_sidebar.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_delay_audit_registry.dart';
 import '../../../core/pro_adau1466_operational_delay_executor.dart';
@@ -63,6 +64,26 @@ class _DelayTabState extends ConsumerState<DelayTab> {
     await _saveControl(ctrl.copyWith(delayMs: 0.0));
   }
 
+  /// Maps DriverChannel + per-channel delay state onto the presentation-only
+  /// ChannelSelectorItem — no domain type crosses into ChannelSelectorSidebar
+  /// itself.
+  ChannelSelectorItem _channelItem(
+      DriverChannel d, TuningProjectState tuning) {
+    final ctrl = tuning.getOrCreateControl(d.id);
+    final delayLabel = ctrl.delayMs == 0.0
+        ? '0.00 ms'
+        : '${ctrl.delayMs.toStringAsFixed(2)} ms';
+    final distance = ctrl.hasDelay
+        ? ' · ≈${ctrl.delayDistanceCm.toStringAsFixed(1)} cm'
+        : '';
+    return ChannelSelectorItem(
+      id: d.id,
+      label: d.name,
+      subtitle: '${d.role.short} · $delayLabel$distance',
+      status: ctrl.hasDelay ? kProAccent : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(proProjectStoreProvider);
@@ -90,14 +111,11 @@ class _DelayTabState extends ConsumerState<DelayTab> {
 
     return Row(children: [
       // ── Left: channel list ──────────────────────────────────────────────
-      SizedBox(
-        width: 192,
-        child: _DelayChannelList(
-          drivers: drivers,
-          tuning: tuning,
-          selectedId: selectedId,
-          onSelect: (id) => setState(() => _selectedChannelId = id),
-        ),
+      ChannelSelectorSidebar(
+        title: 'CHANNELS',
+        items: [for (final d in drivers) _channelItem(d, tuning)],
+        selectedId: selectedId,
+        onSelected: (id) => setState(() => _selectedChannelId = id),
       ),
       Container(width: 0.5, color: kProBorder),
 
@@ -431,91 +449,6 @@ class _OperationalAdau1466DelayAuditState
 }
 
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
-
-class _DelayChannelList extends StatelessWidget {
-  final List<DriverChannel> drivers;
-  final TuningProjectState tuning;
-  final String selectedId;
-  final ValueChanged<String> onSelect;
-  const _DelayChannelList(
-      {required this.drivers,
-      required this.tuning,
-      required this.selectedId,
-      required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        color: kProPanel,
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-            child: Text('CHANNELS',
-                style: proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
-          ),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: drivers.map((d) {
-                final active = d.id == selectedId;
-                final ctrl = tuning.getOrCreateControl(d.id);
-                return GestureDetector(
-                  onTap: () => onSelect(d.id),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: active
-                          ? kProAccent.withValues(alpha: 0.09)
-                          : Colors.transparent,
-                      border: Border(
-                        left: BorderSide(
-                            color: active ? kProAccent : Colors.transparent,
-                            width: 2),
-                      ),
-                    ),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Expanded(
-                              child: Text(d.name,
-                                  style: proTitle(
-                                      size: 11,
-                                      color: active
-                                          ? Colors.white
-                                          : const Color(0xFF6B7280))),
-                            ),
-                            Text(d.role.short,
-                                style: proLabel(
-                                    size: 8,
-                                    color: active ? kProAccent : Colors.white24,
-                                    spacing: 0.5)),
-                          ]),
-                          const SizedBox(height: 3),
-                          Text(
-                            ctrl.delayMs == 0.0
-                                ? '0.00 ms'
-                                : '${ctrl.delayMs.toStringAsFixed(2)} ms',
-                            style: proSubtitle(size: 9),
-                          ),
-                          if (ctrl.hasDelay) ...[
-                            const SizedBox(height: 3),
-                            Text(
-                                '≈ ${ctrl.delayDistanceCm.toStringAsFixed(1)} cm',
-                                style: proSubtitle(
-                                    size: 9,
-                                    color: kProAccent.withValues(alpha: 0.7))),
-                          ],
-                        ]),
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-        ]),
-      );
-}
 
 class _DelayChannelHeader extends StatelessWidget {
   final DriverChannel driver;

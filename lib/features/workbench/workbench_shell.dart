@@ -42,6 +42,9 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     });
   }
 
+  // Index/order is load-bearing: it must stay in lockstep with _screens()
+  // below and the kTabXxx constants in workbench_tab_provider.dart. Never
+  // reorder this list — reorder the sidebar's *display* via _groups instead.
   static const _tabs = [
     _TabDef('Project', Icons.folder_outlined),
     _TabDef('Measure', Icons.mic_none_outlined),
@@ -61,6 +64,20 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     _TabDef('Hardware', Icons.security_outlined),
     _TabDef('Deploy', Icons.inventory_2_outlined),
     _TabDef('Report', Icons.summarize_outlined),
+  ];
+
+  // Sidebar rendering grouping only — a pure re-presentation of _tabs by
+  // workflow stage. Indices reference the kTabXxx constants directly so this
+  // can never drift out of sync with the fixed tab order above; it changes
+  // nothing about navigation, IndexedStack, or workbenchTabProvider.
+  static const _groups = [
+    _TabGroup('PROJECT', [kTabProject]),
+    _TabGroup('MEASURE', [kTabImport, kTabMeasure, kTabTarget]),
+    _TabGroup('INTELLIGENCE', [kTabOptimizer, kTabGuidedAi]),
+    _TabGroup('TUNE',
+        [kTabPeq, kTabXo, kTabPhase, kTabDelay, kTabGain, kTabMute]),
+    _TabGroup('VERIFY', [kTabSimulation, kTabProtection]),
+    _TabGroup('DEPLOY', [kTabExport, kTabHardware, kTabDeploy, kTabReport]),
   ];
 
   List<Widget> _screens(String projectId) => [
@@ -137,6 +154,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
           child: Row(children: [
             _Sidebar(
               tabs: _tabs,
+              groups: _groups,
               selected: tabIndex,
               projectName: project?.name ?? 'Project',
               onSelect: (i) => ref.read(workbenchTabProvider.notifier).go(i),
@@ -164,8 +182,18 @@ class _TabDef {
   const _TabDef(this.label, this.icon);
 }
 
+/// One workflow-stage grouping in the sidebar. [indices] are positions into
+/// _WorkbenchShellState._tabs / the IndexedStack — display order only, never
+/// the source of truth for navigation.
+class _TabGroup {
+  final String title;
+  final List<int> indices;
+  const _TabGroup(this.title, this.indices);
+}
+
 class _Sidebar extends StatelessWidget {
   final List<_TabDef> tabs;
+  final List<_TabGroup> groups;
   final int selected;
   final String projectName;
   final ValueChanged<int> onSelect;
@@ -173,6 +201,7 @@ class _Sidebar extends StatelessWidget {
 
   const _Sidebar({
     required this.tabs,
+    required this.groups,
     required this.selected,
     required this.projectName,
     required this.onSelect,
@@ -206,53 +235,20 @@ class _Sidebar extends StatelessWidget {
             ]),
           ),
         ),
-        // Tab section label
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-          child: Text('WORKBENCH',
-              style: proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
-        ),
         Expanded(
-          child: ListView.builder(
+          child: ListView(
             padding: EdgeInsets.zero,
-            itemCount: tabs.length,
-            itemBuilder: (ctx, i) {
-              final active = i == selected;
-              return GestureDetector(
-                onTap: () => onSelect(i),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: active
-                        ? kProAccent.withValues(alpha: 0.1)
-                        : Colors.transparent,
-                    border: Border(
-                      left: BorderSide(
-                        color: active ? kProAccent : Colors.transparent,
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                  child: Row(children: [
-                    Icon(tabs[i].icon,
-                        size: 14, color: active ? kProAccent : Colors.white38),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Text(
-                        tabs[i].label,
-                        style: proTitle(
-                            size: 11,
-                            color: active
-                                ? Colors.white
-                                : const Color(0xFF6B7280)),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ]),
+            children: [
+              for (final group in groups) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+                  child: Text(group.title,
+                      style:
+                          proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
                 ),
-              );
-            },
+                for (final i in group.indices) _tabRow(i),
+              ],
+            ],
           ),
         ),
         Padding(
@@ -261,6 +257,38 @@ class _Sidebar extends StatelessWidget {
               style: proLabel(size: 9, color: Colors.white12, spacing: 1)),
         ),
       ]),
+    );
+  }
+
+  Widget _tabRow(int i) {
+    final active = i == selected;
+    return GestureDetector(
+      onTap: () => onSelect(i),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: active ? kProAccent.withValues(alpha: 0.1) : Colors.transparent,
+          border: Border(
+            left: BorderSide(
+              color: active ? kProAccent : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Row(children: [
+          Icon(tabs[i].icon,
+              size: 14, color: active ? kProAccent : Colors.white38),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              tabs[i].label,
+              style: proTitle(
+                  size: 11, color: active ? Colors.white : const Color(0xFF6B7280)),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ]),
+      ),
     );
   }
 }

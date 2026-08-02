@@ -9,6 +9,7 @@ import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/channel_selector_sidebar.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_xo_audit_registry.dart';
 import '../../../core/pro_adau1466_wfl_lpf2_safeload_executor.dart';
@@ -66,6 +67,32 @@ class _XoTabState extends ConsumerState<XoTab> {
         );
   }
 
+  /// Maps DriverChannel + per-channel crossover state onto the
+  /// presentation-only ChannelSelectorItem — no domain type crosses into
+  /// ChannelSelectorSidebar itself.
+  ChannelSelectorItem _channelItem(
+      DriverChannel d, TuningProjectState tuning) {
+    final xoCh = tuning.crossoverChannels.firstWhere(
+      (c) => c.channelId == d.id,
+      orElse: () => CrossoverChannelState.empty(d.id),
+    );
+    final badges = [
+      if (xoCh.hasHighPass) 'HPF',
+      if (xoCh.hasLowPass) 'LPF',
+      if (xoCh.polarityInverted) '∅',
+    ].join(' · ');
+    return ChannelSelectorItem(
+      id: d.id,
+      label: d.name,
+      subtitle: '${d.role.short}${badges.isEmpty ? '' : ' · $badges'}',
+      status: xoCh.polarityInverted
+          ? kProRed
+          : xoCh.isConfigured
+              ? kProAccent
+              : null,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(proProjectStoreProvider);
@@ -96,14 +123,11 @@ class _XoTabState extends ConsumerState<XoTab> {
 
     return Row(children: [
       // ── Left: channel list ──────────────────────────────────────────────
-      SizedBox(
-        width: 192,
-        child: _XoChannelList(
-          drivers: drivers,
-          tuning: tuning,
-          selectedId: selectedId,
-          onSelect: (id) => setState(() => _selectedChannelId = id),
-        ),
+      ChannelSelectorSidebar(
+        title: 'CHANNELS',
+        items: [for (final d in drivers) _channelItem(d, tuning)],
+        selectedId: selectedId,
+        onSelected: (id) => setState(() => _selectedChannelId = id),
       ),
       Container(width: 0.5, color: kProBorder),
 
@@ -622,111 +646,6 @@ class _WflLpf2SafeLoadDiagnosticCardState
 }
 
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
-
-class _XoChannelList extends StatelessWidget {
-  final List<DriverChannel> drivers;
-  final TuningProjectState tuning;
-  final String selectedId;
-  final ValueChanged<String> onSelect;
-  const _XoChannelList(
-      {required this.drivers,
-      required this.tuning,
-      required this.selectedId,
-      required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        color: kProPanel,
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-            child: Text('CHANNELS',
-                style: proLabel(size: 9, color: Colors.white24, spacing: 2.5)),
-          ),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: drivers.map((d) {
-                final active = d.id == selectedId;
-                final xoCh = tuning.crossoverChannels.firstWhere(
-                  (c) => c.channelId == d.id,
-                  orElse: () => CrossoverChannelState.empty(d.id),
-                );
-                return GestureDetector(
-                  onTap: () => onSelect(d.id),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: active
-                          ? kProAccent.withValues(alpha: 0.09)
-                          : Colors.transparent,
-                      border: Border(
-                        left: BorderSide(
-                            color: active ? kProAccent : Colors.transparent,
-                            width: 2),
-                      ),
-                    ),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(children: [
-                            Text(d.name,
-                                style: proTitle(
-                                    size: 11,
-                                    color: active
-                                        ? Colors.white
-                                        : const Color(0xFF6B7280))),
-                            const Spacer(),
-                            Text(d.role.short,
-                                style: proLabel(
-                                    size: 8,
-                                    color: active ? kProAccent : Colors.white24,
-                                    spacing: 0.5)),
-                          ]),
-                          if (xoCh.isConfigured) ...[
-                            const SizedBox(height: 3),
-                            Wrap(spacing: 4, children: [
-                              if (xoCh.hasHighPass)
-                                const _XoBadge(label: 'HPF', color: kProAccent),
-                              if (xoCh.hasLowPass)
-                                const _XoBadge(label: 'LPF', color: kProAmber),
-                              if (xoCh.polarityInverted)
-                                const _XoBadge(label: '∅', color: kProRed),
-                            ]),
-                          ],
-                        ]),
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-        ]),
-      );
-}
-
-class _XoBadge extends StatelessWidget {
-  final String label;
-  final Color color;
-  const _XoBadge({required this.label, required this.color});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
-          borderRadius: BorderRadius.circular(2),
-        ),
-        child: Text(label,
-            style: TextStyle(
-                color: color,
-                fontSize: 8,
-                letterSpacing: 0.5,
-                fontWeight: FontWeight.w500)),
-      );
-}
 
 class _XoChannelHeader extends StatelessWidget {
   final DriverChannel driver;

@@ -298,6 +298,15 @@ void main() {
       child: MaterialApp(home: WorkbenchShell(projectId: 'missing-project')),
     ));
     await tester.pump();
+    // UI v2 Phase 3-B: the sidebar groups tabs under workflow-stage headers
+    // (TUNE, VERIFY, DEPLOY, ...), so at a short viewport height Mute now
+    // sits below the fold — scroll the sidebar list to reach it, same as a
+    // real narrow window would require. The sidebar's ListView is the first
+    // one in the tree (IndexedStack's own tab content builds its own
+    // scrollables afterward), so target it directly rather than via
+    // scrollUntilVisible, which requires the target to already be built.
+    await tester.drag(find.byType(ListView).first, const Offset(0, -600));
+    await tester.pump();
     expect(find.text('Mute'), findsOneWidget);
   });
 }

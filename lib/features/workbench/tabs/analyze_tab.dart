@@ -4,6 +4,7 @@ import '../../../core/pro_project_store.dart';
 import '../../../core/pro_measurement.dart';
 import '../../../core/pro_measurement_store.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/stat_chip.dart';
 
 class AnalyzeTab extends ConsumerWidget {
   final String projectId;
@@ -50,7 +51,7 @@ class AnalyzeTab extends ConsumerWidget {
             ProQuickStat('ACCEPTED POINTS', '0'),
             ProQuickStat('LAST MEASUREMENT', '—'),
             ProQuickStat('CONFIDENCE', '—'),
-          ].map((s) => _StatChip(stat: s)).toList()),
+          ].map((s) => ProStatChip(label: s.label, value: s.value)).toList()),
         ] else ...[
           // ── Measurement summary ──────────────────────────────────────────
           _MeasurementSummaryCard(
@@ -177,10 +178,10 @@ class _MeasurementSummaryCard extends StatelessWidget {
       ]),
       const SizedBox(height: 10),
       Wrap(spacing: 10, runSpacing: 10, children: [
-        _StatChip(stat: ProQuickStat('SESSIONS', '$sessionCount')),
-        _StatChip(stat: ProQuickStat('COMPLETED', '$completedCount')),
-        _StatChip(stat: ProQuickStat('ACCEPTED POINTS', '$acceptedCount')),
-        _StatChip(stat: ProQuickStat('LAST UPDATED', _dateLabel(lastDate))),
+        ProStatChip(label: 'SESSIONS', value: '$sessionCount'),
+        ProStatChip(label: 'COMPLETED', value: '$completedCount'),
+        ProStatChip(label: 'ACCEPTED POINTS', value: '$acceptedCount'),
+        ProStatChip(label: 'LAST UPDATED', value: _dateLabel(lastDate)),
       ]),
     ]),
   );
@@ -254,26 +255,6 @@ class _PlaceholderNotice extends StatelessWidget {
         'AI suggestions will require expert verification before tuning proceeds.',
         style: proSubtitle(size: 10),
       )),
-    ]),
-  );
-}
-
-class _StatChip extends StatelessWidget {
-  final ProQuickStat stat;
-  const _StatChip({required this.stat});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(stat.label, style: proLabel(size: 9)),
-      const SizedBox(height: 4),
-      Text(stat.value, style: proValue(size: 12, color: Colors.white70)),
     ]),
   );
 }

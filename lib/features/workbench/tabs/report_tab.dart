@@ -22,6 +22,7 @@ import '../../../core/pro_address_validation_data.dart';
 import '../../../core/pro_hardware_connection_data.dart';
 import '../../../core/pro_deploy_package_data.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../../shared/components/stat_chip.dart';
 import 'pro_hardware_mvp_status_card.dart';
 
 class ReportTab extends ConsumerWidget {
@@ -211,10 +212,10 @@ class ReportTab extends ConsumerWidget {
 
         const SizedBox(height: 16),
         const Wrap(spacing: 10, runSpacing: 10, children: [
-          _StatChipWidget(label: 'FORMAT', value: 'PDF / JSON'),
-          _StatChipWidget(label: 'PAGES', value: '—'),
-          _StatChipWidget(label: 'GENERATED', value: 'Never'),
-          _StatChipWidget(label: 'SIGNED BY', value: '—'),
+          ProStatChip(label: 'FORMAT', value: 'PDF / JSON'),
+          ProStatChip(label: 'PAGES', value: '—'),
+          ProStatChip(label: 'GENERATED', value: 'Never'),
+          ProStatChip(label: 'SIGNED BY', value: '—'),
         ]),
       ]),
     );
@@ -648,28 +649,6 @@ class _MeasurementSummaryCard extends StatelessWidget {
     ]),
   );
 }
-
-class _StatChipWidget extends StatelessWidget {
-  final String label;
-  final String value;
-  const _StatChipWidget({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: proLabel(size: 9)),
-      const SizedBox(height: 4),
-      Text(value, style: proValue(size: 12, color: Colors.white70)),
-    ]),
-  );
-}
-
 
 // ── Phase C: Acoustic Readiness Card ─────────────────────────────────────────
 
