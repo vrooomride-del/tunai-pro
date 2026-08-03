@@ -47,6 +47,8 @@ abstract final class FactoryProfileExporter {
         'sampleRate': profile.sampleRate,
         'channelConfig': profile.channelConfig,
       },
+      if (profile.targetCurvePreset != null)
+        'targetCurvePreset': profile.targetCurvePreset,
       'channels': channels,
       'validation': {
         'status': profile.validationStatus,

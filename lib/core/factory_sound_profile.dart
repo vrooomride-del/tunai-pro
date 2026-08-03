@@ -95,6 +95,13 @@ class FactorySoundProfile {
   /// Serialized name of [VerificationStatus] at creation time.
   final String validationStatus;
 
+  /// Serialized name of the [TargetCurvePreset] selected at creation time
+  /// (e.g. "flat", "warm"). Null for profiles created before this field
+  /// existed. This alone is sufficient to reconstruct the exact target
+  /// curve later via ProTargetCurve.db/.curve — no numeric curve data is
+  /// duplicated here.
+  final String? targetCurvePreset;
+
   /// Human-readable notes from protection issues at creation time.
   final List<String> validationNotes;
 
@@ -126,6 +133,7 @@ class FactorySoundProfile {
     this.completedCycleNumbers = const [],
     this.measurementRefs = const [],
     required this.validationStatus,
+    this.targetCurvePreset,
     this.validationNotes = const [],
     required this.projectFingerprint,
     this.manuallyApproved = false,
@@ -155,6 +163,7 @@ class FactorySoundProfile {
           'completedCycleNumbers': completedCycleNumbers,
         if (measurementRefs.isNotEmpty) 'measurementRefs': measurementRefs,
         'validationStatus': validationStatus,
+        if (targetCurvePreset != null) 'targetCurvePreset': targetCurvePreset,
         if (validationNotes.isNotEmpty) 'validationNotes': validationNotes,
         'projectFingerprint': projectFingerprint,
         if (manuallyApproved) 'manuallyApproved': manuallyApproved,
@@ -189,6 +198,7 @@ class FactorySoundProfile {
       measurementRefs:
           (j['measurementRefs'] as List? ?? []).map((e) => e.toString()).toList(),
       validationStatus: j['validationStatus'] as String? ?? 'notReady',
+      targetCurvePreset: j['targetCurvePreset'] as String?,
       validationNotes: (j['validationNotes'] as List? ?? [])
           .map((e) => e.toString())
           .toList(),

@@ -189,6 +189,7 @@ abstract final class FactoryProfileBuilder {
       completedCycleNumbers: completedCycles,
       measurementRefs: measurementRefs,
       validationStatus: project.protectionState.verificationStatus.name,
+      targetCurvePreset: project.acousticState.targetCurve.selectedPreset.name,
       validationNotes: validationNotes,
       projectFingerprint: fingerprint,
       manuallyApproved: manualApproval,

@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tunai_pro/core/factory_profile_builder.dart';
 import 'package:tunai_pro/core/factory_profile_exporter.dart';
 import 'package:tunai_pro/core/factory_sound_profile.dart';
+import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_correction_cycle.dart';
 import 'package:tunai_pro/core/pro_measurement_store.dart';
 import 'package:tunai_pro/core/pro_project.dart';
@@ -31,6 +32,7 @@ ProProject _eligibleProject({
   ProtectionProjectState? protectionState,
   List<FactorySoundProfile>? factoryProfiles,
   SafetyStatus safetyStatus = SafetyStatus.verified,
+  TargetCurvePreset? targetPreset,
 }) {
   final now = DateTime.now();
   final tuning = TuningProjectState(
@@ -53,6 +55,10 @@ ProProject _eligibleProject({
     createdAt: now,
     updatedAt: now,
     dspTarget: dspTarget,
+    acousticState: targetPreset != null
+        ? MeasurementProjectState(
+            targetCurve: TargetCurveState(selectedPreset: targetPreset))
+        : null,
     tuningState: tuning,
     protectionState: protection,
     correctionCycles: cycles,
@@ -627,6 +633,111 @@ void main() {
       expect(restored.factoryProfile, isNotNull);
       expect(
           restored.factoryProfile!.profileId, equals(profile.profileId));
+    });
+  });
+
+// ── J: Target curve metadata (Phase 5-B-2) ────────────────────────────────────
+
+  group('J — target curve metadata', () {
+    test('J1: new profile stores targetCurvePreset from the project\'s '
+        'selected preset', () {
+      final project =
+          _eligibleProject(targetPreset: TargetCurvePreset.warm);
+      final profile = FactoryProfileBuilder.build(project)!;
+
+      expect(profile.targetCurvePreset, equals('warm'));
+    });
+
+    test('J2: defaults to the project\'s default (flat) preset when none '
+        'explicitly selected', () {
+      final project = _eligibleProject();
+      final profile = FactoryProfileBuilder.build(project)!;
+
+      expect(profile.targetCurvePreset, equals('flat'));
+    });
+
+    test('J3: round-trips through toJson/fromJson exactly', () {
+      final project =
+          _eligibleProject(targetPreset: TargetCurvePreset.nearfield);
+      final profile = FactoryProfileBuilder.build(project)!;
+
+      final restored = FactorySoundProfile.fromJson(profile.toJson());
+
+      expect(restored.targetCurvePreset, equals('nearfield'));
+    });
+
+    test('J4: old JSON without targetCurvePreset loads safely as null, '
+        'with every other field unaffected', () {
+      final project =
+          _eligibleProject(targetPreset: TargetCurvePreset.studio);
+      final profile = FactoryProfileBuilder.build(project)!;
+
+      final oldJson = profile.toJson()..remove('targetCurvePreset');
+      final restored = FactorySoundProfile.fromJson(oldJson);
+
+      expect(restored.targetCurvePreset, isNull);
+      expect(restored.profileId, equals(profile.profileId));
+      expect(restored.hardwareTarget, equals(profile.hardwareTarget));
+      expect(restored.validationStatus, equals(profile.validationStatus));
+      expect(restored.tuningSnapshot.toJson(),
+          equals(profile.tuningSnapshot.toJson()));
+    });
+
+    test('J5: export JSON contains targetCurvePreset', () {
+      final project =
+          _eligibleProject(targetPreset: TargetCurvePreset.warm);
+      final profile = FactoryProfileBuilder.build(project)!;
+
+      final exported = FactoryProfileExporter.toJson(profile);
+
+      expect(exported['targetCurvePreset'], equals('warm'));
+    });
+
+    test('J6: existing profile fields/behavior unaffected by the new field '
+        '(tuningSnapshot, protectionSnapshot, fingerprint, eligibility)', () {
+      // Both variants share the exact same TuningProjectState/
+      // ProtectionProjectState *instances* (not just equal content) so
+      // there is no incidental timestamp drift between them — the only
+      // thing that differs is targetCurve.selectedPreset. Isolates whether
+      // the new field leaks into the fingerprint (it must not).
+      final now = DateTime.now();
+      final tuning = TuningProjectState(
+          peqChannels: [PeqChannelState.empty('ch_wf')]);
+      final protection = ProtectionProjectState(
+          exportLocked: false, verificationStatus: VerificationStatus.passed);
+      final cycles = [_completedCycle(projectId: 'proj_1')];
+
+      ProProject projectWith(TargetCurvePreset preset) => ProProject(
+            id: 'proj_1',
+            name: 'Test Project',
+            createdAt: now,
+            updatedAt: now,
+            dspTarget: 'ADAU1701',
+            acousticState: MeasurementProjectState(
+                targetCurve: TargetCurveState(selectedPreset: preset)),
+            tuningState: tuning,
+            protectionState: protection,
+            correctionCycles: cycles,
+            safetyStatus: SafetyStatus.verified,
+          );
+
+      final profileFlat =
+          FactoryProfileBuilder.build(projectWith(TargetCurvePreset.flat))!;
+      final profileWarm =
+          FactoryProfileBuilder.build(projectWith(TargetCurvePreset.warm))!;
+
+      // Fingerprint is unaffected by target preset — it only covers tuning +
+      // protection snapshots, unchanged by this phase.
+      expect(profileFlat.projectFingerprint,
+          equals(profileWarm.projectFingerprint));
+      expect(profileFlat.tuningSnapshot.toJson(),
+          equals(profileWarm.tuningSnapshot.toJson()));
+      expect(profileFlat.protectionSnapshot.toJson(),
+          equals(profileWarm.protectionSnapshot.toJson()));
+      expect(
+          FactoryProfileBuilder.checkEligibility(projectWith(TargetCurvePreset.warm))
+              .isApproved,
+          isTrue);
     });
   });
 }
