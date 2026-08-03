@@ -95,7 +95,9 @@ class TargetTab extends ConsumerWidget {
 
         const SizedBox(height: 20),
 
-        // Phase D notice
+        // How this selection is used (Phase 5-C-1A: replaces the stale
+        // "will be available in Phase D" notice — target curve matching and
+        // PEQ optimization are both live today, driven by this selection).
         Container(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
           decoration: BoxDecoration(
@@ -104,12 +106,13 @@ class TargetTab extends ConsumerWidget {
             borderRadius: BorderRadius.circular(4),
           ),
           child: Row(children: [
-            const Icon(Icons.hourglass_empty_outlined, color: Colors.white24, size: 13),
+            const Icon(Icons.info_outline, color: Colors.white24, size: 13),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Target curve matching and PEQ optimization will be available in Phase D. '
-                'Import FRD data and select a target preset to prepare for optimization.',
+                'The selected target curve defines the tuning goal — the Optimizer '
+                "and Guided AI's acoustic evaluation both measure against it. "
+                'Import FRD data so a measured response can be compared to it.',
                 style: proSubtitle(size: 11),
               ),
             ),
