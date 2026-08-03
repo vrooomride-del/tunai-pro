@@ -5,6 +5,12 @@
 // and improvement verdicts are shown.
 //
 // Existing AiScreen (aiTunePro path) is NOT modified by this file.
+//
+// Phase 5-B-1A: this is the measurement-based, closed-loop automated tuning
+// path — it independently classifies and analyzes the system from its own
+// measurement/tuning snapshot on every run. It is not a continuation of, and
+// does not read, any suggestions from the Optimizer tab (Draft Optimizer);
+// the two are intentionally separate systems.
 
 import 'dart:io';
 

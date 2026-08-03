@@ -1,6 +1,14 @@
 // ── Optimizer Tab — Phase G ───────────────────────────────────────────────────
 // Draft suggestion engine. Accept / Reject / Lock. No DSP write.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
+//
+// Phase 5-B-1A: an expert/manual tuning assistant. Suggestions here are
+// generated from the current measurement + simulation snapshot only —
+// accepting one writes it into tuningState immediately, but this tab never
+// runs a closed-loop re-measurement to confirm the result. That verified,
+// automated loop is Guided AI's job (lib/features/ai/guided_ai_screen.dart);
+// the two are intentionally separate systems and this tab is not a
+// preparatory or continuation step for a later Guided AI run.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -175,8 +183,14 @@ class _OptimizerTabState extends ConsumerState<OptimizerTab> {
                 style: proLabel(size: 9, color: Colors.white38, spacing: 0.5)),
         ]),
         const SizedBox(height: 4),
-        Text('AI suggests draft corrections. Expert reviews and accepts each one.',
+        Text(
+            'Expert tuning suggestions — review, then Accept, Reject, or Lock '
+            'each one. Accepted suggestions update the tuning state immediately.',
             style: proSubtitle()),
+        const SizedBox(height: 2),
+        Text(
+            'No automatic closed-loop measurement validation — that runs in Guided AI.',
+            style: proSubtitle(size: 10, color: Colors.white38)),
         const SizedBox(height: 20),
 
         // Config panel

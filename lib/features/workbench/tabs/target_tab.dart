@@ -3,6 +3,12 @@
 // (Phase 5-A-2) driven by the same ProTargetCurve.db formula the Optimizer
 // and Guided AI evaluator already use. No FRD overlay, no before/after
 // comparison here — that remains the Optimizer preview's job.
+//
+// Phase 5-A-3A: TargetCurvePreset.custom has no real curve-authoring path
+// yet (ProTargetCurve.db(custom, f) is still a fixed 0.0, identical to
+// Flat — unchanged, and deliberately not touched here). This file presents
+// it as "Coming soon" and blocks selecting it, purely at the UI layer, so a
+// user can never be misled into thinking Custom already does something.
 
 import 'dart:math' as math;
 
@@ -13,6 +19,15 @@ import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_simulation_optimizer.dart';
 import '../../../core/pro_target_curve.dart';
 import '../../../shared/pro_widgets.dart';
+
+// Presentation-only override — does not touch TargetCurvePreset.description
+// (pro_acoustic_data.dart is out of scope for this phase). Custom is the
+// only preset whose displayed description differs from the model's own.
+String _presetDisplayDescription(TargetCurvePreset preset) =>
+    preset == TargetCurvePreset.custom
+        ? 'Coming soon — manual entry and file import for a fully custom '
+            'target curve will be available in a future TUNAI PRO release.'
+        : preset.description;
 
 class TargetTab extends ConsumerWidget {
   final String projectId;
@@ -48,17 +63,27 @@ class TargetTab extends ConsumerWidget {
         ...TargetCurvePreset.values.map((preset) => _PresetCard(
           preset: preset,
           selected: target.selectedPreset == preset,
-          onSelect: () async {
-            final project = ref.read(proProjectStoreProvider)
-                .projects.where((p) => p.id == projectId).firstOrNull;
-            if (project == null) return;
-            await ref.read(proProjectStoreProvider.notifier).updateAcousticState(
-              projectId,
-              project.acousticState.copyWith(
-                targetCurve: target.copyWith(selectedPreset: preset),
-              ),
-            );
-          },
+          // Custom has no real curve-authoring path yet (see file header) —
+          // selection is disabled at the UI layer so it can never silently
+          // become active from here on. A project that already had
+          // `custom` persisted before this change is unaffected by this
+          // guard (that's a read of existing state, not a new selection),
+          // but _CurrentTargetCard below flags it as "Coming soon" too.
+          onSelect: preset == TargetCurvePreset.custom
+              ? null
+              : () async {
+                  final project = ref.read(proProjectStoreProvider)
+                      .projects.where((p) => p.id == projectId).firstOrNull;
+                  if (project == null) return;
+                  await ref
+                      .read(proProjectStoreProvider.notifier)
+                      .updateAcousticState(
+                    projectId,
+                    project.acousticState.copyWith(
+                      targetCurve: target.copyWith(selectedPreset: preset),
+                    ),
+                  );
+                },
         )),
 
         const SizedBox(height: 20),
@@ -102,33 +127,44 @@ class _CurrentTargetCard extends StatelessWidget {
   const _CurrentTargetCard({required this.target});
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Row(children: [
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('CURRENT TARGET', style: proLabel(size: 9, spacing: 1.8)),
-          const SizedBox(height: 6),
-          Text(target.selectedPreset.label, style: proTitle(size: 14, color: kProAccent)),
-          const SizedBox(height: 4),
-          Text(target.selectedPreset.description, style: proSubtitle(size: 10)),
-        ]),
+  Widget build(BuildContext context) {
+    final isCustom = target.selectedPreset == TargetCurvePreset.custom;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
       ),
-      const ProStatusPill(label: 'SELECTED', color: kProAccent),
-    ]),
-  );
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('CURRENT TARGET', style: proLabel(size: 9, spacing: 1.8)),
+            const SizedBox(height: 6),
+            Text(target.selectedPreset.label,
+                style: proTitle(size: 14,
+                    color: isCustom ? Colors.white38 : kProAccent)),
+            const SizedBox(height: 4),
+            Text(_presetDisplayDescription(target.selectedPreset),
+                style: proSubtitle(size: 10)),
+          ]),
+        ),
+        isCustom
+            ? const ProStatusPill(label: 'COMING SOON', color: Colors.amber)
+            : const ProStatusPill(label: 'SELECTED', color: kProAccent),
+      ]),
+    );
+  }
 }
 
 class _PresetCard extends StatelessWidget {
   final TargetCurvePreset preset;
   final bool selected;
-  final VoidCallback onSelect;
+  // Null = unavailable ("Coming soon") — tap does nothing, never selectable.
+  final VoidCallback? onSelect;
   const _PresetCard({required this.preset, required this.selected, required this.onSelect});
+
+  bool get _disabled => onSelect == null;
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -137,20 +173,34 @@ class _PresetCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
-        color: selected ? kProAccent.withValues(alpha: 0.06) : kProSurface,
-        border: Border.all(color: selected ? kProAccent.withValues(alpha: 0.5) : kProBorder),
+        color: _disabled
+            ? kProSurface.withValues(alpha: 0.5)
+            : (selected ? kProAccent.withValues(alpha: 0.06) : kProSurface),
+        border: Border.all(
+            color: _disabled
+                ? kProBorder.withValues(alpha: 0.5)
+                : (selected ? kProAccent.withValues(alpha: 0.5) : kProBorder)),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Row(children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(preset.label,
-                style: proTitle(size: 12, color: selected ? kProAccent : Colors.white70)),
+                style: proTitle(
+                    size: 12,
+                    color: _disabled
+                        ? Colors.white24
+                        : (selected ? kProAccent : Colors.white70))),
             const SizedBox(height: 3),
-            Text(preset.description, style: proSubtitle(size: 10)),
+            Text(_presetDisplayDescription(preset),
+                style: _disabled
+                    ? proSubtitle(size: 10, color: Colors.white24)
+                    : proSubtitle(size: 10)),
           ]),
         ),
-        if (selected)
+        if (_disabled)
+          const ProStatusPill(label: 'COMING SOON', color: Colors.amber)
+        else if (selected)
           const Icon(Icons.check_circle_outline, color: kProAccent, size: 14)
         else
           const Icon(Icons.radio_button_unchecked, color: Colors.white12, size: 14),
