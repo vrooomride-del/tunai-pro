@@ -110,6 +110,94 @@ void main() {
     });
   });
 
+  group('Stale package consistency (Phase 4-C-4A)', () {
+    late DeployPackage readyPkg;
+    late DeployPackage exportedPkg;
+    late DeployPackage stalePkg;
+    late DeployPackage blockedPkg;
+
+    setUp(() {
+      final now = DateTime.now();
+      final snap = DeployPackageSnapshot(
+        projectId: 'p1',
+        projectName: 'Test',
+        projectStatus: 'Tuned',
+        createdAt: now,
+      );
+      DeployPackage make(String id, DeployPackageStatus status,
+              DeployReadinessLevel readiness) =>
+          DeployPackage(
+            id: id,
+            version: 'v0.0.1',
+            name: 'Package $id',
+            kind: DeployPackageKind.fullProjectSnapshot,
+            status: status,
+            readinessLevel: readiness,
+            createdAt: now,
+            updatedAt: now,
+            snapshot: snap,
+          );
+
+      readyPkg = make('ready1', DeployPackageStatus.ready,
+          DeployReadinessLevel.readyForReview);
+      exportedPkg = make('exported1', DeployPackageStatus.exported,
+          DeployReadinessLevel.readyForDryRun);
+      // Stale, but its readinessLevel is left as the historical
+      // readyForDryRun record — exactly what rollbackTuningState() produces
+      // (it only rewrites status, never readinessLevel).
+      stalePkg = make('stale1', DeployPackageStatus.stale,
+          DeployReadinessLevel.readyForDryRun);
+      blockedPkg = make(
+          'blocked1', DeployPackageStatus.blocked, DeployReadinessLevel.blocked);
+    });
+
+    test('readyPackageCount excludes a stale package even though its '
+        'readinessLevel still says readyForDryRun', () {
+      final state = DeployProjectState(
+        packages: [readyPkg, exportedPkg, stalePkg, blockedPkg],
+      );
+      // Only readyPkg + exportedPkg count; stalePkg is excluded despite its
+      // historical readyForDryRun readinessLevel.
+      expect(state.readyPackageCount, 2);
+    });
+
+    test('readyPackageCount is 0 when the only "ready-looking" package is '
+        'stale', () {
+      final state = DeployProjectState(packages: [stalePkg]);
+      expect(state.readyPackageCount, 0);
+    });
+
+    test('readinessLabel says "Stale" for the active package, not its '
+        'historical readinessLevel', () {
+      final state = DeployProjectState(
+        packages: [stalePkg],
+        activePackageId: 'stale1',
+      );
+      expect(state.readinessLabel, contains('Stale'));
+      expect(state.readinessLabel, isNot(stalePkg.readinessLevel.label));
+    });
+
+    test('readinessLabel still reflects readinessLevel for a non-stale '
+        'active package', () {
+      final state = DeployProjectState(
+        packages: [readyPkg],
+        activePackageId: 'ready1',
+      );
+      expect(state.readinessLabel, readyPkg.readinessLevel.label);
+    });
+
+    test('activePackage still resolves to a stale package by id — the '
+        'model does not hide it, only the readiness summary is corrected',
+        () {
+      final state = DeployProjectState(
+        packages: [stalePkg],
+        activePackageId: 'stale1',
+      );
+      expect(state.activePackage?.id, 'stale1');
+      expect(state.activePackage?.status, DeployPackageStatus.stale);
+    });
+  });
+
   group('Active preset lookup', () {
     test('activePreset returns correct preset by id', () {
       final now = DateTime.now();

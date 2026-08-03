@@ -417,11 +417,16 @@ class DeployProjectState {
 
   int get presetCount => presets.length;
 
+  // `stale` is excluded unconditionally: readinessLevel is a permanent record
+  // of what was validated at build time and is never rewritten, so a package
+  // whose tuning has since been rolled back must not count as ready purely
+  // because its historical readinessLevel still says so.
   int get readyPackageCount => packages
       .where((p) =>
-          p.status == DeployPackageStatus.ready ||
-          p.readinessLevel == DeployReadinessLevel.readyForReview ||
-          p.readinessLevel == DeployReadinessLevel.readyForDryRun)
+          p.status != DeployPackageStatus.stale &&
+          (p.status == DeployPackageStatus.ready ||
+              p.readinessLevel == DeployReadinessLevel.readyForReview ||
+              p.readinessLevel == DeployReadinessLevel.readyForDryRun))
       .length;
 
   int get blockedPackageCount =>
@@ -430,6 +435,9 @@ class DeployProjectState {
   String get readinessLabel {
     final pkg = activePackage;
     if (pkg == null) return 'No deploy package';
+    if (pkg.status == DeployPackageStatus.stale) {
+      return 'Stale — tuning has changed since this package was built';
+    }
     return pkg.readinessLevel.label;
   }
 

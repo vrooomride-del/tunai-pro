@@ -30,6 +30,7 @@ ProProject _eligibleProject({
   List<CorrectionCycle>? correctionCycles,
   ProtectionProjectState? protectionState,
   List<FactorySoundProfile>? factoryProfiles,
+  SafetyStatus safetyStatus = SafetyStatus.verified,
 }) {
   final now = DateTime.now();
   final tuning = TuningProjectState(
@@ -56,6 +57,7 @@ ProProject _eligibleProject({
     protectionState: protection,
     correctionCycles: cycles,
     factoryProfiles: factoryProfiles ?? const [],
+    safetyStatus: safetyStatus,
   );
 }
 
@@ -292,6 +294,78 @@ void main() {
 
       expect(elig.isApproved, isTrue);
     });
+
+    // Phase 4-C-4A: safetyStatus == verified is now a required rule — this
+    // is what closes the gap where a software-rolled-back project (whose
+    // safetyStatus is reset to notVerified) could otherwise still produce a
+    // new Factory Sound Profile.
+
+    test('E6: verified project remains eligible (all other rules default)',
+        () {
+      final project = _eligibleProject(safetyStatus: SafetyStatus.verified);
+      final elig = FactoryProfileBuilder.checkEligibility(project);
+
+      expect(elig.isApproved, isTrue);
+      expect(FactoryProfileBuilder.build(project), isNotNull);
+    });
+
+    test(
+        'E7: notVerified project (e.g. just software-rolled-back) is '
+        'blocked, reason mentions safety/verif', () {
+      final project =
+          _eligibleProject(safetyStatus: SafetyStatus.notVerified);
+      final elig = FactoryProfileBuilder.checkEligibility(project);
+
+      expect(elig.isApproved, isFalse);
+      expect(
+          elig.reasons
+              .any((r) => r.toLowerCase().contains('verif')),
+          isTrue);
+      expect(FactoryProfileBuilder.build(project), isNull);
+    });
+
+    test('E8: notVerified is not bypassed by manualApproval=true — safety '
+        'verification is independent of the completed-cycle bypass', () {
+      final project =
+          _eligibleProject(safetyStatus: SafetyStatus.notVerified);
+      final elig = FactoryProfileBuilder.checkEligibility(project,
+          manualApproval: true);
+
+      expect(elig.isApproved, isFalse);
+      expect(
+          elig.reasons.any((r) => r.toLowerCase().contains('verif')), isTrue);
+    });
+
+    test('E9: warning/blocked safetyStatus are also not eligible (only '
+        'verified passes)', () {
+      for (final status in [SafetyStatus.warning, SafetyStatus.blocked]) {
+        final project = _eligibleProject(safetyStatus: status);
+        final elig = FactoryProfileBuilder.checkEligibility(project);
+        expect(elig.isApproved, isFalse, reason: 'status=$status');
+      }
+    });
+
+    test(
+        'E10: all pre-existing eligibility rules remain intact alongside '
+        'the new safety rule (multiple failures each still reported)', () {
+      final project = _eligibleProject(
+        dspTarget: 'Unknown_DSP',
+        peqChannels: [],
+        correctionCycles: [],
+        protectionState: ProtectionProjectState(exportLocked: true),
+        safetyStatus: SafetyStatus.notVerified,
+      );
+      final elig = FactoryProfileBuilder.checkEligibility(project);
+
+      expect(elig.isApproved, isFalse);
+      expect(elig.reasons.any((r) => r.contains('Unknown_DSP')), isTrue);
+      expect(elig.reasons.any((r) => r.toLowerCase().contains('peq')), isTrue);
+      expect(
+          elig.reasons.any((r) => r.toLowerCase().contains('cycle')), isTrue);
+      expect(elig.reasons.any((r) => r.toLowerCase().contains('lock')), isTrue);
+      expect(
+          elig.reasons.any((r) => r.toLowerCase().contains('verif')), isTrue);
+    });
   });
 
 // ── F: Persistence / reload ───────────────────────────────────────────────────
@@ -318,6 +392,7 @@ void main() {
             exportLocked: false,
             verificationStatus: VerificationStatus.passed),
         correctionCycles: [_completedCycle(projectId: 'proj_f1')],
+        safetyStatus: SafetyStatus.verified,
       );
       await container
           .read(proProjectStoreProvider.notifier)
@@ -372,6 +447,7 @@ void main() {
             exportLocked: false,
             verificationStatus: VerificationStatus.passed),
         correctionCycles: [_completedCycle(projectId: 'proj_f2')],
+        safetyStatus: SafetyStatus.verified,
       );
       await container
           .read(proProjectStoreProvider.notifier)

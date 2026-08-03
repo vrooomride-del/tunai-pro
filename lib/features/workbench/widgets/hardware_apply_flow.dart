@@ -109,7 +109,12 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
   Widget build(BuildContext context) {
     final approved = _approval?.isApproved ?? false;
     final ready = _context.isReady;
-    final canApprove = _plan.summary.writableOps > 0 && !approved;
+    final isStale = widget.exportPackage.status == ExportStatus.stale;
+    // A stale package (tuning changed since it was built, e.g. after a
+    // software rollback) must never reach approval, and therefore never
+    // reach HardwareWriteExecutor — the smallest, single-point gate to
+    // enforce that is refusing to approve it in the first place.
+    final canApprove = _plan.summary.writableOps > 0 && !approved && !isStale;
     final canApply = approved && ready && !_applying;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -182,6 +187,23 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis),
         ],
+      ],
+
+      // Stale-package note — this package cannot be approved/applied at all
+      // until a current one is built or selected.
+      if (isStale) ...[
+        const SizedBox(height: 6),
+        Row(children: [
+          const Icon(Icons.warning_amber_outlined, size: 12, color: kProAmber),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Stale package — tuning changed after this package was '
+              'created. Build or select a current package before deploying.',
+              style: proSubtitle(size: 10, color: kProAmber),
+            ),
+          ),
+        ]),
       ],
 
       // Readiness note.

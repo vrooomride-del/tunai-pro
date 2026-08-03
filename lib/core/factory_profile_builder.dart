@@ -39,6 +39,10 @@ abstract final class FactoryProfileBuilder {
   ///  5. At least one completed correction cycle exists, OR the caller
   ///     supplies [manualApproval] == true.
   ///  6. Project state is internally consistent (non-empty channel state).
+  ///  7. `project.safetyStatus == SafetyStatus.verified` — a project whose
+  ///     tuning was just software-rolled-back (safetyStatus reset to
+  ///     notVerified) must not be eligible for a new factory profile until
+  ///     it is re-verified.
   static FactoryProfileEligibility checkEligibility(
     ProProject project, {
     bool manualApproval = false,
@@ -97,6 +101,15 @@ abstract final class FactoryProfileBuilder {
         reasons.add('A PEQ channel has an empty channelId.');
         break;
       }
+    }
+
+    // Rule 7 — safety verification
+    if (project.safetyStatus != SafetyStatus.verified) {
+      reasons.add(
+        'Project safety status is "${project.safetyStatus.label}", not '
+        'Verified. Re-verify tuning safety before creating a factory '
+        'profile — this often follows a software tuning rollback.',
+      );
     }
 
     final result = reasons.isEmpty

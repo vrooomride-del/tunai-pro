@@ -76,7 +76,8 @@ class _FakeTransport implements Adau1701TuningTransport {
       const Adau1701WriteAck(success: true, message: 'ok');
 }
 
-DspExportPackage _pkg() => DspExportPackage(id: 'exp1', parameterBlocks: [
+DspExportPackage _pkg({ExportStatus status = ExportStatus.draftReady}) =>
+    DspExportPackage(id: 'exp1', status: status, parameterBlocks: [
       const ExportParameterBlock(
         id: 'blk',
         type: ExportBlockType.peq,
@@ -162,6 +163,44 @@ void main() {
     expect(transport.freqWrites, isEmpty);         // XO path not triggered
     expect(find.text('APPLY RESULTS'), findsOneWidget);
     expect(find.text('WRITTEN'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // Phase 4-C-4A: a stale export package (tuning changed since it was built,
+  // e.g. after a software rollback) must never reach HardwareWriteExecutor —
+  // proven here even with a fully-ready, connected transport, so the only
+  // thing preventing the write is the stale-package gate itself.
+  testWidgets(
+      'stale package: approve/apply stay disabled, warning shown, zero '
+      'hardware/transport invocation even on a ready context',
+      (tester) async {
+    final transport = _FakeTransport(connected: true);
+    await tester.pumpWidget(_wrap(HardwareApplyFlow(
+      exportPackage: _pkg(status: ExportStatus.stale),
+      profile: HardwareDeviceProfiles.adau1701Icp5,
+      contextFactory: () => Adau1701HardwareContext.fromTransport(transport),
+    )));
+
+    expect(
+        tester
+            .widget<OutlinedButton>(_btn('APPROVE VERIFIED WRITE'))
+            .onPressed,
+        isNull,
+        reason: 'approve must be disabled for a stale package');
+    expect(find.textContaining('Stale package'), findsOneWidget);
+
+    // Attempt taps anyway (defense in depth) — disabled buttons ignore taps,
+    // but this proves the disabled state actually holds under interaction.
+    await tester.tap(_btn('APPROVE VERIFIED WRITE'), warnIfMissed: false);
+    await tester.pump();
+    await tester.tap(_btn('APPLY VERIFIED SETTINGS'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(find.text('APPLY RESULTS'), findsNothing,
+        reason: 'no execution must ever occur for a stale package');
+    expect(transport.gainWrites, isEmpty);
+    expect(transport.peqFreqWrites, isEmpty);
+    expect(transport.freqWrites, isEmpty);
     expect(tester.takeException(), isNull);
   });
 }

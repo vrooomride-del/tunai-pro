@@ -732,6 +732,30 @@ class _ActivePackagePanel extends StatelessWidget {
           Text(pkg.version,
               style: proLabel(size: 9, color: Colors.white38, spacing: 0.5)),
         ]),
+        if (pkg.status == DeployPackageStatus.stale) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: kProAmber.withValues(alpha: 0.08),
+              border: Border.all(color: kProAmber.withValues(alpha: 0.35)),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.warning_amber_outlined,
+                  size: 13, color: kProAmber),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Stale package — tuning changed after this package was '
+                  'created. Build or select a current package before '
+                  'deploying.',
+                  style: proSubtitle(size: 10, color: kProAmber),
+                ),
+              ),
+            ]),
+          ),
+        ],
         const SizedBox(height: 8),
         ProInfoRow(label: 'Name', value: pkg.name),
         ProInfoRow(label: 'Kind', value: pkg.kind.label),
