@@ -98,6 +98,20 @@ class Adau1701HardwareContext {
   /// BLE GATT driver. Wiring is identical to USBi — only the injected driver
   /// differs. Marked placeholder because the BLE path's end-to-end write is not
   /// yet capture-proven.
+  ///
+  /// Phase 5-C-3A: confirmed unused by the live Deploy flow — this factory is
+  /// not referenced anywhere in production wiring. The real hardware-write
+  /// path (`HardwareApplyFlow`, driven by `deploy_tab.dart`'s
+  /// `adau1701Icp5UsbContextProvider`) always uses
+  /// [Adau1701HardwareContext.icp5Usb] instead. This constructor exists only
+  /// as a construction/reference placeholder for a future BLE write path — do
+  /// not assume it is production-ready BLE hardware writing, and do not wire
+  /// it into `HardwareApplyFlow` or any deploy/write flow without first
+  /// removing the "not yet capture-proven" caveat above. For a real, working
+  /// example of a BLE ICP5 *connection* context (handshake/connection-status
+  /// only, not hardware writes), see `hardware_tab.dart`'s own
+  /// `Adau1701HardwareContext.fromTransport(_adau1701BleTransport)` — that is
+  /// a separate, already-working mechanism, unrelated to this factory.
   factory Adau1701HardwareContext.bleIcp5Placeholder({
     Icp5ChannelResolver? channelResolver,
     DateTime Function()? clock,

@@ -251,7 +251,8 @@ class _XoTabState extends ConsumerState<XoTab> {
               ]),
             ),
 
-            // Phase D notice
+            // Export/deploy status (Phase 5-C-2A: corrects the prior wording,
+            // which implied DSP export/deployment itself was unimplemented).
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -261,13 +262,15 @@ class _XoTabState extends ConsumerState<XoTab> {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Row(children: [
-                const Icon(Icons.hourglass_empty_outlined,
+                const Icon(Icons.info_outline,
                     color: Colors.white24, size: 12),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Phase-aware simulation is available in the Simulation tab. '
-                    'DSP export requires SigmaStudio address capture — not yet implemented.',
+                    'These crossover settings already deploy through the existing '
+                    'ADAU1701 hardware path in Deploy. A separate SigmaStudio-format '
+                    'project export is not yet available.',
                     style: proSubtitle(size: 10),
                   ),
                 ),
