@@ -65,8 +65,10 @@ import 'package:tunai_pro/core/pro_acoustic_data.dart'
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_demo_project_factory.dart';
 import 'package:tunai_pro/core/pro_response_error.dart';
+import 'package:tunai_pro/core/pro_correction_cycle.dart'
+    show CorrectionCycle, CorrectionCycleDecision;
 import 'package:tunai_pro/core/pro_tuning_data.dart'
-    show PeqBandType, PeqChannelState, TuningProjectState;
+    show ChannelControlState, PeqBandType, PeqChannelState, TuningProjectState;
 import 'package:tunai_pro/core/pro_tuning_report_data.dart'
     show GuidedTuningSessionSummary;
 
@@ -2926,4 +2928,342 @@ void main() {
           isNot(contains('noCorrectableDirectives')));
     });
   });
+
+  // ── 25. continueWithNextCycle (Phase 4-C-2A) ──────────────────────────────
+  group('25. continueWithNextCycle', () {
+    ParsedMeasurementData _frd(String channelId, List<double> mags) =>
+        ParsedMeasurementData(
+          id: 'frd-$channelId-${mags.first}-${DateTime.now().microsecondsSinceEpoch}',
+          sourceFileName: '$channelId.frd',
+          fileType: AcousticFileType.frd,
+          importedAt: DateTime(2025, 1, 1),
+          points: [
+            MeasurementDataPoint(frequencyHz: 100, magnitudeDb: mags[0]),
+            MeasurementDataPoint(frequencyHz: 1000, magnitudeDb: mags[1]),
+            MeasurementDataPoint(frequencyHz: 10000, magnitudeDb: mags[2]),
+          ],
+        );
+
+    ProProject _withFrd(List<double> mags) {
+      final base = _projectWith4Frd();
+      return base.copyWith(
+        acousticState: base.acousticState.copyWith(
+          driverChannels: base.acousticState.driverChannels
+              .map((ch) => ch.copyWith(frdData: _frd(ch.id, mags)))
+              .toList(),
+        ),
+      );
+    }
+
+    Map<String, String> _refsFor(ProProject project) => {
+          for (final ch in project.acousticState.driverChannels)
+            ch.id: ch.frdData!.id,
+        };
+
+    // Returns both the controller and the exact ProProject instance passed
+    // into cycle 1's start() — the canonical project a real caller would have
+    // read from proProjectStoreProvider — so tests can assert it is never
+    // mutated by submitAfterFourChannelFrd/continueWithNextCycle.
+    Future<(ProGuidedAiController, ProProject)> _driveCycle1ToAwaitingAfterFrd(
+        List<ProProject?> captured) async {
+      final adapters = <ProToolAdapter>[
+        _ProjectCapturingAdapter(
+            ProOrchestratorToolId.measurementAnalyze, captured),
+        const _StubAdapter(ProOrchestratorToolId.acousticClassify),
+        const _StubAdapter(ProOrchestratorToolId.acousticPlan),
+        const _StubAdapter(ProOrchestratorToolId.acousticGenerateCandidates),
+        _ScoringWithSimErrAdapter(),
+        _OptimizerWithCandidateStubAdapter(),
+        _SafetyWithCandidateStubAdapter(),
+      ];
+      final ctrl = ProGuidedAiController(
+        service: ProOrchestrateService(dio: _failingDio()),
+        adapterOverrides: adapters,
+      );
+      final canonicalProject = _projectWith4Frd();
+      final future = ctrl.start(
+        project: canonicalProject,
+        userGoal: 'continue test',
+        onApply: (_, __) async {},
+        onHardwareWritePlan: (_, __) async {},
+      );
+      await _waitForApplyGateGroup16(ctrl);
+      final pending = ctrl.state as ProGuidedAiConfirmPending;
+      ctrl.confirm(pending.request.stepId);
+      await future;
+      ctrl.enterAwaitingAfterFrd();
+      return (ctrl, canonicalProject);
+    }
+
+    // Empirically confirmed against the real 4-channel weighted-RMS
+    // combination (FullSystemCandidateEvaluator.measure) — NOT the same
+    // thresholds as the simpler per-channel evaluator unit test fixtures,
+    // since this combines all 4 driver channels' curves into one composite
+    // score. Verified via a throwaway diagnostic (not part of this suite)
+    // that printed the actual decision/RMS for each candidate pair below.
+    const _improveBeforeMag = [-10.0, -12.0, -10.0];
+    const _improveAfterMag = [-7.0, -12.0, -7.0]; // -> improvedNeedsAnotherCycle @ cycle 1
+
+    // measurementAnalyze runs once per required channel (4x) per full
+    // pipeline run, not once globally — confirmed empirically. So one
+    // complete cycle contributes 4 entries to `captured`.
+    const _perCycleCaptures = 4;
+
+    test(
+        'improvedNeedsAnotherCycle: continueWithNextCycle starts cycle 2 on '
+        'the After FRD + deployed tuning, with cycle 1 in history', () async {
+      final captured = <ProProject?>[];
+      final (ctrl, canonicalProject) =
+          await _driveCycle1ToAwaitingAfterFrd(captured);
+      expect(captured.length, _perCycleCaptures);
+
+      // Snapshot of the canonical project's acoustic data before cycle 1's
+      // decision/continuation, for the immutability check after the fact.
+      final canonicalMagsBefore = {
+        for (final ch in canonicalProject.acousticState.driverChannels)
+          ch.id: ch.frdData!.points.map((p) => p.magnitudeDb).toList(),
+      };
+
+      final beforeProject = _withFrd(_improveBeforeMag);
+      final afterProject = _withFrd(_improveAfterMag);
+      final deployedTuning = TuningProjectState(
+        channelControls: const [
+          ChannelControlState(channelId: 'ch_tw_l', gainDb: -7),
+        ],
+      );
+
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        previousTuningState: TuningProjectState.createDefault(),
+        deployedTuningState: deployedTuning,
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor(beforeProject),
+        afterEvidenceRefs: _refsFor(afterProject),
+      );
+
+      expect(cycle, isNotNull);
+      expect(
+          cycle!.decision, CorrectionCycleDecision.improvedNeedsAnotherCycle);
+      expect(captured.length, _perCycleCaptures,
+          reason: 'submitAfterFourChannelFrd itself runs no pipeline steps');
+
+      final future2 = ctrl.continueWithNextCycle();
+      await _waitForApplyGateGroup16(ctrl);
+      expect(ctrl.state, isA<ProGuidedAiConfirmPending>(),
+          reason: 'cycle 2 must actually run, not just reset to Idle');
+
+      // Canonical-project immutability: the exact object a real caller read
+      // from proProjectStoreProvider for cycle 1 must still carry its
+      // original acousticState FRD data after continuation has started.
+      // tuningState/correctionCycles are deliberately not checked here — any
+      // change (or lack of one) to those on this in-memory reference is
+      // expected and irrelevant to this check.
+      final canonicalMagsAfter = {
+        for (final ch in canonicalProject.acousticState.driverChannels)
+          ch.id: ch.frdData!.points.map((p) => p.magnitudeDb).toList(),
+      };
+      expect(canonicalMagsAfter, canonicalMagsBefore,
+          reason: 'canonical project.acousticState must remain unchanged '
+              'after continuation starts');
+
+      expect(captured.length, _perCycleCaptures * 2,
+          reason: 'cycle 2 must run its own 4 measurementAnalyze calls');
+      for (final cycle2Project in captured.sublist(_perCycleCaptures)) {
+        expect(cycle2Project, isNotNull);
+        for (final ch in cycle2Project!.acousticState.driverChannels) {
+          final mags = ch.frdData!.points.map((p) => p.magnitudeDb).toList();
+          expect(mags, _improveAfterMag,
+              reason:
+                  'cycle 2 must analyze the After FRD, not the Before FRD');
+          expect(mags, isNot(_improveBeforeMag));
+        }
+        expect(cycle2Project.tuningState, deployedTuning,
+            reason: 'cycle 2 baseline must be the deployed cycle-1 tuning');
+        expect(cycle2Project.correctionCycles.length, 1,
+            reason: 'cycle 1 must be retained in history exactly once');
+        expect(cycle2Project.correctionCycles.single.cycleNumber, 1);
+      }
+
+      final pending2 = ctrl.state as ProGuidedAiConfirmPending;
+      ctrl.cancel(pending2.request.stepId);
+      await future2;
+    });
+
+    test(
+        'repeated continueWithNextCycle calls cannot start two cycle-2 runs',
+        () async {
+      final captured = <ProProject?>[];
+      final (ctrl, _) = await _driveCycle1ToAwaitingAfterFrd(captured);
+
+      final beforeProject = _withFrd(_improveBeforeMag);
+      final afterProject = _withFrd(_improveAfterMag);
+
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        previousTuningState: TuningProjectState.createDefault(),
+        deployedTuningState: TuningProjectState.createDefault(),
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor(beforeProject),
+        afterEvidenceRefs: _refsFor(afterProject),
+      );
+      expect(
+          cycle!.decision, CorrectionCycleDecision.improvedNeedsAnotherCycle);
+
+      final future1 = ctrl.continueWithNextCycle();
+      final future2 = ctrl.continueWithNextCycle();
+
+      await _waitForApplyGateGroup16(ctrl);
+      final pending2 = ctrl.state as ProGuidedAiConfirmPending;
+      ctrl.cancel(pending2.request.stepId);
+      await future1;
+      await future2;
+
+      expect(captured.length, _perCycleCaptures * 2,
+          reason:
+              'only one cycle-2 run should have started despite two calls');
+    });
+
+    Future<CorrectionCycle?> _driveToDecision({
+      required List<double> beforeMag,
+      required List<double> afterMag,
+      required int cycleNumber,
+      Map<String, String>? afterRefsOverride,
+    }) async {
+      final captured = <ProProject?>[];
+      final (ctrl, _) = await _driveCycle1ToAwaitingAfterFrd(captured);
+      final beforeProject = _withFrd(beforeMag);
+      final afterProject = _withFrd(afterMag);
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        previousTuningState: TuningProjectState.createDefault(),
+        deployedTuningState: TuningProjectState.createDefault(),
+        cycleNumber: cycleNumber,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor(beforeProject),
+        afterEvidenceRefs: afterRefsOverride ?? _refsFor(afterProject),
+      );
+      if (cycle == null) return null;
+      final before = ctrl.state;
+      await ctrl.continueWithNextCycle();
+      expect(ctrl.state, same(before),
+          reason:
+              'continueWithNextCycle must no-op for a non-continuable decision');
+      expect(captured.length, _perCycleCaptures,
+          reason: 'no cycle-2 run should have started');
+      return cycle;
+    }
+
+    test('improvedAndComplete: no continuation offered', () async {
+      final cycle = await _driveToDecision(
+        beforeMag: _improveBeforeMag,
+        afterMag: _improveAfterMag,
+        cycleNumber: 3, // maxCycles reached -> terminal even though improved
+      );
+      expect(cycle!.decision, CorrectionCycleDecision.improvedAndComplete);
+    });
+
+    test('noMeaningfulImprovement: no continuation offered', () async {
+      final cycle = await _driveToDecision(
+        beforeMag: const [-10.0, -12.0, -10.0],
+        afterMag: const [-10.1, -12.0, -10.1],
+        cycleNumber: 1,
+      );
+      expect(cycle!.decision, CorrectionCycleDecision.noMeaningfulImprovement);
+    });
+
+    test('worsened: no continuation offered', () async {
+      final cycle = await _driveToDecision(
+        beforeMag: const [-8.0, -12.0, -8.0],
+        afterMag: const [-10.0, -12.0, -10.0],
+        cycleNumber: 1,
+      );
+      expect(cycle!.decision, CorrectionCycleDecision.worsened);
+    });
+
+    test('insufficientEvidence (missing channel ref): no continuation offered',
+        () async {
+      final afterProject = _withFrd(_improveAfterMag);
+      final refs = _refsFor(afterProject)..remove('ch_wf_r');
+      final cycle = await _driveToDecision(
+        beforeMag: _improveBeforeMag,
+        afterMag: _improveAfterMag,
+        cycleNumber: 1,
+        afterRefsOverride: refs,
+      );
+      expect(cycle!.decision, CorrectionCycleDecision.insufficientEvidence);
+    });
+
+    // wrongProjectOrChannel is not a reachable FullSystemClosedLoopEvaluator
+    // decision (confirmed by reading full_system_closed_loop_evaluator.dart —
+    // it has no such branch; that decision belongs to the single-channel
+    // CorrectionCycleEvaluator only). The full-system guard instead returns
+    // null with no state change at all when project ids mismatch — the
+    // closest equivalent behavior, verified here.
+    test(
+        'mismatched project/after ids: submitAfterFourChannelFrd returns '
+        'null and offers no continuation', () async {
+      final captured = <ProProject?>[];
+      final (ctrl, _) = await _driveCycle1ToAwaitingAfterFrd(captured);
+      final beforeProject = _withFrd(const [-8.0, -12.0, -8.0]);
+      final mismatched = _withFrd(const [-10.0, -12.0, -10.0]);
+      final afterProject = ProProject(
+        id: 'other-project',
+        name: mismatched.name,
+        createdAt: mismatched.createdAt,
+        updatedAt: mismatched.updatedAt,
+        acousticState: mismatched.acousticState,
+        tuningState: mismatched.tuningState,
+      );
+
+      final before = ctrl.state;
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        previousTuningState: TuningProjectState.createDefault(),
+        deployedTuningState: TuningProjectState.createDefault(),
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor(beforeProject),
+        afterEvidenceRefs: _refsFor(afterProject),
+      );
+
+      expect(cycle, isNull);
+      expect(ctrl.state, same(before));
+
+      await ctrl.continueWithNextCycle();
+      expect(ctrl.state, same(before),
+          reason: 'no pending draft was ever created, so this must no-op');
+      expect(captured.length, _perCycleCaptures);
+    });
+  });
+}
+
+/// Captures the ProProject each invocation actually receives (via the
+/// existing, production ProToolReferenceResolver.resolveProjectSnapshot
+/// seam), then behaves exactly like _StubAdapter for the rest of the run.
+class _ProjectCapturingAdapter implements ProToolAdapter {
+  @override
+  final ProOrchestratorToolId toolId;
+  final List<ProProject?> captured;
+  _ProjectCapturingAdapter(this.toolId, this.captured);
+
+  @override
+  ProOrchestratorResult run(
+      ProToolExecutionContext ctx, ProOrchestratorStep step) {
+    captured.add(ctx.resolver.resolveProjectSnapshot(ctx.projectId));
+    ctx.store.put(
+        ctx.projectId, step.outputRef, LoopSnapshotArtifact(_snapshot(70.0)));
+    return ProOrchestratorResult(
+      resultId: 'result:${step.outputRef}',
+      toolId: toolId,
+      outputRef: step.outputRef,
+      confidence: ProConfidence.high,
+      summary: 'capturing stub ok',
+    );
+  }
 }

@@ -93,6 +93,24 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   Completer<bool>? _applyGateCompleter;
   String? _applyGateStepId;
 
+  // The next cycle's Before project — already-deployed tuning + After-FRD
+  // data as the new Before, with the just-completed cycle appended to its
+  // correctionCycles — populated only when submitAfterFourChannelFrd resolves
+  // to improvedNeedsAnotherCycle. Consumed by continueWithNextCycle(). In
+  // memory only; never written to proProjectStoreProvider.
+  ProProject? _pendingNextCycleProject;
+
+  // Remembered from the most recent start() call so continueWithNextCycle()
+  // can begin the next cycle with the same session configuration without the
+  // caller reconstructing it.
+  String? _lastUserGoal;
+  String? _lastTargetChannelId;
+  Future<void> Function(String projectId, TuningApplyResult)? _lastOnApply;
+  Future<void> Function(String projectId, HardwareWritePlan plan)?
+      _lastOnHardwareWritePlan;
+  Future<void> Function(String projectId, DspExportPackage package)?
+      _lastOnExportPackage;
+
   ProGuidedAiController({
     ProOrchestrateService? service,
     List<ProToolAdapter>? adapterOverrides,
@@ -117,6 +135,17 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
         onExportPackage,
   }) async {
     if (state is! ProGuidedAiIdle) return;
+
+    // Remember this session's configuration for a possible later
+    // continueWithNextCycle() call, and discard any stale pending draft from
+    // a previous session — this is a normal new start.
+    _lastUserGoal = userGoal;
+    _lastTargetChannelId = targetChannelId;
+    _lastOnApply = onApply;
+    _lastOnHardwareWritePlan = onHardwareWritePlan;
+    _lastOnExportPackage = onExportPackage;
+    _pendingNextCycleProject = null;
+
     state = const ProGuidedAiCloudCalling();
 
     final pid = project.id;
@@ -449,10 +478,12 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   /// Converts an asynchronous UI/callback failure into visible Guided AI
   /// state. This boundary never terminates the application or navigation root.
   void reportFailure(Object error) {
+    _pendingNextCycleProject = null;
     state = ProGuidedAiFailed('적용 처리 실패: $error');
   }
 
   void cancel(String stepId) {
+    _pendingNextCycleProject = null;
     final completer = _applyGateCompleter;
     if (completer != null && !completer.isCompleted) {
       completer.complete(false);
@@ -731,6 +762,25 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       alignmentReevaluationAllowed:
           result.nextCycle?.alignmentReevaluationAllowed ?? false,
     );
+
+    // Retain the evaluator's already-computed next-Before snapshot in memory
+    // (After-FRD-as-new-Before + deployed tuning), with this cycle appended
+    // to its history exactly once, for a possible continueWithNextCycle().
+    // Cleared for every other decision — no continuation is offered.
+    if (result.decision == CorrectionCycleDecision.improvedNeedsAnotherCycle &&
+        result.nextCycle != null) {
+      final draftProject = result.nextCycle!.beforeProject;
+      final alreadyPresent = draftProject.correctionCycles
+          .any((c) => c.cycleNumber == cycle.cycleNumber);
+      _pendingNextCycleProject = draftProject.copyWith(
+        correctionCycles: alreadyPresent
+            ? draftProject.correctionCycles
+            : [...draftProject.correctionCycles, cycle],
+      );
+    } else {
+      _pendingNextCycleProject = null;
+    }
+
     state = ProGuidedAiCompleted(
       outcome: current.outcome,
       explanation: current.explanation,
@@ -756,7 +806,38 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     _orchestrator = null;
     _sessionStore = null;
     _sessionProjectId = null;
+    _pendingNextCycleProject = null;
     state = const ProGuidedAiIdle();
+  }
+
+  /// Consumes the pending next-cycle project (populated by
+  /// [submitAfterFourChannelFrd] only when the decision was
+  /// [CorrectionCycleDecision.improvedNeedsAnotherCycle]) and starts a new
+  /// Guided AI run on it — the After-FRD-as-new-Before snapshot the evaluator
+  /// already produced, with the completed cycle appended to its history.
+  /// No-ops if no eligible draft is pending. Never touches the canonical
+  /// project store; the run operates purely on the in-memory project, exactly
+  /// like [start].
+  Future<void> continueWithNextCycle() async {
+    final project = _pendingNextCycleProject;
+    if (project == null) return;
+    _pendingNextCycleProject = null; // consumed synchronously, before any await
+
+    _applyGateCompleter = null;
+    _applyGateStepId = null;
+    _orchestrator = null;
+    _sessionStore = null;
+    _sessionProjectId = null;
+    state = const ProGuidedAiIdle();
+
+    await start(
+      project: project,
+      userGoal: _lastUserGoal ?? '',
+      targetChannelId: _lastTargetChannelId,
+      onApply: _lastOnApply,
+      onHardwareWritePlan: _lastOnHardwareWritePlan,
+      onExportPackage: _lastOnExportPackage,
+    );
   }
 
   // ── Private ──────────────────────────────────────────────────────────────────

@@ -836,6 +836,35 @@ void main() {
 
       expect(find.textContaining('개선됨'), findsAtLeastNWidgets(1));
     });
+
+    // Phase 4-C-2A: "추가 보정" now calls continueWithNextCycle() instead of
+    // bare reset(). _FakeGuidedAiController can't populate the controller's
+    // private pending-draft field (it's file-private to
+    // pro_guided_ai_controller.dart), so continueWithNextCycle() correctly
+    // no-ops here — proving the negative: unlike the old reset()-based
+    // callback, tapping "추가 보정" must NOT jump back to the bare Idle
+    // screen. (Cycle-2 Before-FRD correctness itself is proven at the
+    // controller level in pro_guided_ai_controller_test.dart group 25.)
+    testWidgets(
+        '추가 보정 tap no longer resets to the bare Idle screen (calls '
+        'continueWithNextCycle, not reset)', (tester) async {
+      await tester.pumpWidget(_aiScreen(state));
+      await tester.pump();
+
+      final continueBtn = find.text('추가 보정');
+      await tester.ensureVisible(continueBtn);
+      await tester.tap(continueBtn);
+      await tester.pump();
+
+      expect(find.text('AI 분석 시작'), findsNothing,
+          reason:
+              'a bare reset() would have shown the Idle "AI 분석 시작" screen');
+      expect(find.textContaining('개선됨'), findsAtLeastNWidgets(1),
+          reason:
+              'the cycle-decision view should remain visible (no eligible '
+              'pending draft on this fake controller, so continuation is a '
+              'safe no-op rather than a destructive reset)');
+    });
   });
 
   // ── K: Complete cycle → Factory Profile scroll ────────────────────────────

@@ -618,8 +618,16 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   _CycleDecisionCard(
                     cycle: aiState.completedCycle!,
                     cycleNumber: (project?.correctionCycles.length ?? 1),
-                    onContinue: () =>
-                        ref.read(guidedAiProvider.notifier).reset(),
+                    onContinue: () {
+                      // Defensively clear cycle 1's After-FRD input before
+                      // cycle 2 begins, so stale per-channel data can never
+                      // be read once the new re-measurement phase starts.
+                      setState(() {
+                        _afterFrdInput = null;
+                        _afterFrdError = null;
+                      });
+                      ref.read(guidedAiProvider.notifier).continueWithNextCycle();
+                    },
                     onComplete: () {
                       ref.read(deployScrollTargetProvider.notifier).state =
                           DeployScrollTarget.factoryProfile;

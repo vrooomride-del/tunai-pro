@@ -144,4 +144,66 @@ void main() {
     );
     expect(result.nextCycle!.alignmentReevaluationAllowed, isFalse);
   });
+
+  // ── Phase 4-C-2A — Test A: next-cycle draft content ─────────────────────────
+
+  test(
+      'nextCycle.beforeProject carries After FRD as new Before, deployed '
+      'tuning, and leaves inputs unmutated', () {
+    const before = [-8.0, -12.0, -8.0];
+    const after = [-10.0, -12.0, -10.0];
+    final beforeProject = _project(before);
+    final afterProject = _project(after);
+    final previousTuning = TuningProjectState(
+      channelControls: const [
+        ChannelControlState(channelId: 'ch_tw_l', gainDb: -1),
+      ],
+    );
+    final deployedTuning = TuningProjectState(
+      channelControls: const [
+        ChannelControlState(channelId: 'ch_tw_l', gainDb: -3),
+      ],
+    );
+
+    final result = FullSystemClosedLoopEvaluator.evaluate(
+      beforeProject: beforeProject,
+      afterProject: afterProject,
+      previousTuningState: previousTuning,
+      deployedTuningState: deployedTuning,
+      cycleNumber: 1,
+      safetyPassed: true,
+      beforeEvidenceRefs: _refs('before'),
+      afterEvidenceRefs: _refs('after'),
+    );
+
+    expect(result.decision, CorrectionCycleDecision.improvedNeedsAnotherCycle);
+    final draft = result.nextCycle;
+    expect(draft, isNotNull);
+
+    // Each channel's FRD in the draft's Before matches the After fixture,
+    // not the original Before fixture.
+    for (final channel in draft!.beforeProject.acousticState.driverChannels) {
+      final magnitudes =
+          channel.frdData!.points.map((p) => p.magnitudeDb).toList();
+      expect(magnitudes, after,
+          reason: 'channel ${channel.id} must carry the After FRD');
+      expect(magnitudes, isNot(before),
+          reason: 'channel ${channel.id} must not carry the original Before FRD');
+    }
+
+    // Tuning baseline is the deployed (cycle-1-corrected) tuning, not the
+    // pre-cycle-1 tuning.
+    expect(draft.beforeProject.tuningState, deployedTuning);
+    expect(draft.beforeProject.tuningState, isNot(previousTuning));
+
+    // Inputs are unmutated by the call.
+    expect(
+        beforeProject.acousticState.driverChannels
+            .map((c) => c.frdData!.points.map((p) => p.magnitudeDb).toList()),
+        everyElement(before));
+    expect(
+        afterProject.acousticState.driverChannels
+            .map((c) => c.frdData!.points.map((p) => p.magnitudeDb).toList()),
+        everyElement(after));
+  });
 }
