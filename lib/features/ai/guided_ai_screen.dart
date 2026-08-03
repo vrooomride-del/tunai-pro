@@ -28,6 +28,7 @@ import '../../core/pro_project_store.dart';
 import '../../core/pro_project.dart';
 import '../../core/spectrum_snapshot.dart';
 import '../../core/workbench_tab_provider.dart';
+import '../../shared/components/section_header.dart';
 import '../mic/mic_measurement_controller.dart';
 
 class GuidedAiScreen extends ConsumerStatefulWidget {
@@ -277,7 +278,8 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                 style: TextStyle(
                     color: Colors.white38, fontSize: 12, letterSpacing: 1),
               ),
-              const SizedBox(height: 16),
+              _GuidedAiOrientationBar(state: aiState),
+              const SizedBox(height: 2),
               _ContextRow(
                 projectName: project?.name,
                 hwTarget: project?.dspTarget,
@@ -351,9 +353,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                const Text('목표 설명',
-                    style: TextStyle(
-                        color: Colors.white60, fontSize: 12, letterSpacing: 2)),
+                const ProSectionHeader(title: 'Goal Description'),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _goalCtrl,
@@ -442,6 +442,8 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   completedRecords: aiState.completedSteps,
                   currentToolId: aiState.request.toolId,
                 ),
+                const SizedBox(height: 16),
+                const _AosSafetyNote(),
                 const SizedBox(height: 24),
                 _ConfirmationCard(
                   request: aiState.request,
@@ -652,6 +654,169 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
   }
 }
 
+// ── Orientation bar + workflow indicator ──────────────────────────────────────
+//
+// UI-only guidance layer (Phase 4-C-1). Derived entirely from the existing
+// ProGuidedAiState / ProClosedLoopPhase already read by build() — no new
+// provider/state, no controller changes. Deliberately does not claim any of
+// the audit-confirmed missing behaviors (automatic rollback, automatic
+// next-cycle prep, After-FRD persistence, impedance validation gating this
+// flow) exist.
+
+String _guidedAiOrientationText(ProGuidedAiState state) {
+  if (state is ProGuidedAiIdle) {
+    return 'Stage: Idle — describe the issue, then start AI analysis.';
+  }
+  if (state is ProGuidedAiCloudCalling) {
+    return 'Stage: Requesting Plan — the AI orchestrator is preparing a plan. No action needed.';
+  }
+  if (state is ProGuidedAiExecuting) {
+    return 'Stage: Analyzing — the system is analyzing measurements and generating candidates.';
+  }
+  if (state is ProGuidedAiConfirmPending) {
+    return 'Stage: Review Required — review the candidates below, then Continue or Cancel.';
+  }
+  if (state is ProGuidedAiCompleted) {
+    if (state.applyResult == null) {
+      return 'Stage: Completed — review why the result was blocked below.';
+    }
+    final phase = state.loopPhase;
+    if (phase == null) {
+      return 'Stage: Applied — result applied. Re-measure to evaluate improvement.';
+    }
+    if (phase == ProClosedLoopPhase.awaitingMeasurement) {
+      return 'Stage: Awaiting Re-measurement — re-measure with the mic, or import an After FRD, to evaluate the result.';
+    }
+    if (phase == ProClosedLoopPhase.awaitingAfterFrd) {
+      return 'Stage: Awaiting After FRD — import the After FRD file for each channel below.';
+    }
+    if (phase == ProClosedLoopPhase.evaluated) {
+      return 'Stage: Evaluation Complete — review the Closed Loop verdict below.';
+    }
+    return 'Stage: Cycle Decision — review the correction cycle result below.'; // cycleComplete
+  }
+  // ProGuidedAiFailed
+  return 'Stage: Failed — review the error below, then tap 처음으로 to retry.';
+}
+
+const _kGuidedAiWorkflowLabels = ['Analyze', 'Review', 'Apply', 'Re-measure', 'Evaluate'];
+
+List<bool> _guidedAiWorkflowCompletion(ProGuidedAiState state) => [
+  state is ProGuidedAiConfirmPending || state is ProGuidedAiCompleted,
+  state is ProGuidedAiCompleted,
+  state is ProGuidedAiCompleted && state.applyResult != null,
+  state is ProGuidedAiCompleted &&
+      state.loopPhase != null &&
+      state.loopPhase != ProClosedLoopPhase.awaitingMeasurement &&
+      state.loopPhase != ProClosedLoopPhase.awaitingAfterFrd,
+];
+
+// Compact, borderless two-line bar combining the orientation line (goal 1/3)
+// and the workflow breadcrumb (goal 2), kept deliberately minimal — this is
+// inserted above every existing state branch, including Idle, so it must not
+// push existing test-asserted controls (e.g. "AI 분석 시작", "완료") out of
+// the default 800x600 test viewport used by several existing widget tests.
+class _GuidedAiOrientationBar extends StatelessWidget {
+  final ProGuidedAiState state;
+  const _GuidedAiOrientationBar({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    // Failed can be reached from any stage and carries no history of how far
+    // the run got — showing a "current" step would imply progress that can't
+    // be verified, so no chip is highlighted in that case.
+    final completion = _guidedAiWorkflowCompletion(state);
+    final currentIndex = state is ProGuidedAiFailed
+        ? -1
+        : [...completion, false].indexWhere((c) => !c);
+
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.explore_outlined, color: Colors.white54, size: 9),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            _guidedAiOrientationText(state),
+            style: const TextStyle(color: Colors.white54, fontSize: 9, height: 1.0),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+      ]),
+      Row(children: [
+        for (var i = 0; i < _kGuidedAiWorkflowLabels.length; i++) ...[
+          _GuidedAiStepChip(
+            label: _kGuidedAiWorkflowLabels[i],
+            complete: i < completion.length ? completion[i] : false,
+            current: i == currentIndex,
+          ),
+          if (i < _kGuidedAiWorkflowLabels.length - 1)
+            const Text(' › ', style: TextStyle(color: Colors.white24, fontSize: 8, height: 1.0)),
+        ],
+      ]),
+    ]);
+  }
+}
+
+// Plain color-coded breadcrumb label — deliberately no box/border/padding so
+// the workflow row adds only a few pixels of height (see the compactness
+// note on _GuidedAiOrientationBar above).
+class _GuidedAiStepChip extends StatelessWidget {
+  final String label;
+  final bool complete;
+  final bool current;
+  const _GuidedAiStepChip({
+    required this.label,
+    required this.complete,
+    required this.current,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = complete
+        ? const Color(0xFF4CAF50)
+        : (current ? Colors.white70 : Colors.white24);
+    return Text(
+      complete ? '✓ $label' : label,
+      style: TextStyle(
+        color: color,
+        fontSize: 8,
+        height: 1.0,
+        fontWeight: current ? FontWeight.w600 : FontWeight.normal,
+      ),
+    );
+  }
+}
+
+class _AosSafetyNote extends StatelessWidget {
+  const _AosSafetyNote();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF141414),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: Colors.white12),
+    ),
+    child: const Row(children: [
+      Icon(Icons.shield_outlined, color: Colors.white54, size: 15),
+      SizedBox(width: 10),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('AOS Safety Check',
+              style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
+          SizedBox(height: 2),
+          Text(
+            'Candidates are validated against tuning limits and available evidence.',
+            style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
+          ),
+        ]),
+      ),
+    ]),
+  );
+}
+
 // ── Widgets ───────────────────────────────────────────────────────────────────
 
 class _StatusCard extends StatelessWidget {
@@ -712,9 +877,7 @@ class _StepList extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('STEPS',
-            style: TextStyle(
-                color: Colors.white38, fontSize: 11, letterSpacing: 2)),
+        const ProSectionHeader(title: 'Steps'),
         const SizedBox(height: 8),
         for (final step in steps)
           _StepRow(
@@ -1554,7 +1717,7 @@ class _CycleDecisionCard extends StatelessWidget {
               ),
               child: Text(
                 decision == CorrectionCycleDecision.worsened
-                    ? '이전 설정으로 롤백을 권장합니다.'
+                    ? 'Performance decreased. Restore the previous tuning manually before continuing.'
                     : '프로젝트 또는 채널을 확인하세요.',
                 style: const TextStyle(
                     color: Colors.redAccent, fontSize: 11, height: 1.4),
