@@ -632,6 +632,10 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                           DeployScrollTarget.factoryProfile;
                       ref.read(workbenchTabProvider.notifier).go(kTabDeploy);
                     },
+                    onRollback: () => ref
+                        .read(proProjectStoreProvider.notifier)
+                        .rollbackTuningState(
+                            widget.projectId, aiState.completedCycle!),
                   ),
                 ],
                 if (aiState.loopVerdict != null) ...[
@@ -1575,21 +1579,107 @@ class _ApplyResultCard extends StatelessWidget {
   }
 }
 
-class _CycleDecisionCard extends StatelessWidget {
+class _CycleDecisionCard extends StatefulWidget {
   final CorrectionCycle cycle;
   final int cycleNumber;
   final VoidCallback onContinue;
   final VoidCallback onComplete;
+  // Software-only rollback: restores cycle.rollbackTuningState via the
+  // project store. Null in contexts where rollback isn't wired up. Returns
+  // whether the store actually performed the rollback (false = no-op or
+  // failure) so this card can show the right outcome.
+  final Future<bool> Function()? onRollback;
 
   const _CycleDecisionCard({
     required this.cycle,
     required this.cycleNumber,
     required this.onContinue,
     required this.onComplete,
+    this.onRollback,
   });
 
   @override
+  State<_CycleDecisionCard> createState() => _CycleDecisionCardState();
+}
+
+class _CycleDecisionCardState extends State<_CycleDecisionCard> {
+  bool _isRollingBack = false;
+  // null = not attempted yet; true/false = last attempt's outcome.
+  bool? _rollbackSucceeded;
+
+  Future<void> _confirmAndRollback() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Colors.white12),
+        ),
+        title: const Text('이전 튜닝으로 복원',
+            style: TextStyle(color: Colors.white, fontSize: 14)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Restore the app's tuning values to before this correction was "
+              'applied. Any deploy/export packages built from the current '
+              'tuning will be marked stale and need to be rebuilt.',
+              style:
+                  TextStyle(color: Colors.white60, fontSize: 12, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.amber.withAlpha(20),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.amber.withAlpha(60)),
+              ),
+              child: const Text(
+                'Software only — the connected device is NOT written. '
+                'Redeploy manually afterward to update hardware.',
+                style:
+                    TextStyle(color: Colors.amber, fontSize: 11, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel',
+                style: TextStyle(color: Colors.white60, fontSize: 12)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restore',
+                style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || widget.onRollback == null) return;
+
+    setState(() => _isRollingBack = true);
+    bool succeeded;
+    try {
+      succeeded = await widget.onRollback!();
+    } catch (_) {
+      succeeded = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      _isRollingBack = false;
+      _rollbackSucceeded = succeeded;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final cycle = widget.cycle;
+    final cycleNumber = widget.cycleNumber;
     final decision = cycle.decision;
     final metrics = cycle.metrics;
 
@@ -1633,6 +1723,12 @@ class _CycleDecisionCard extends StatelessWidget {
         decision == CorrectionCycleDecision.improvedAndComplete ||
             decision == CorrectionCycleDecision.worsened ||
             decision == CorrectionCycleDecision.wrongProjectOrChannel;
+    // Hide the button once a rollback already succeeded on this card —
+    // nothing left to restore.
+    final canRollback = decision == CorrectionCycleDecision.worsened &&
+        widget.onRollback != null &&
+        cycle.rollbackTuningState != null &&
+        _rollbackSucceeded != true;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1724,10 +1820,38 @@ class _CycleDecisionCard extends StatelessWidget {
               ),
               child: Text(
                 decision == CorrectionCycleDecision.worsened
-                    ? 'Performance decreased. Restore the previous tuning manually before continuing.'
+                    ? 'Performance decreased. Restore the previous tuning '
+                        'below, then redeploy manually.'
                     : '프로젝트 또는 채널을 확인하세요.',
                 style: const TextStyle(
                     color: Colors.redAccent, fontSize: 11, height: 1.4),
+              ),
+            ),
+          ],
+          if (decision == CorrectionCycleDecision.worsened &&
+              _rollbackSucceeded != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: (_rollbackSucceeded!
+                        ? const Color(0xFF4CAF50)
+                        : Colors.redAccent)
+                    .withAlpha(25),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                _rollbackSucceeded!
+                    ? '복원 완료 — 튜닝이 이전 상태로 복원되었습니다. 하드웨어는 변경되지 '
+                        '않았습니다. Deploy에서 재배포하세요.'
+                    : '복원 실패 — 변경 사항이 적용되지 않았습니다.',
+                style: TextStyle(
+                  color: _rollbackSucceeded!
+                      ? const Color(0xFF4CAF50)
+                      : Colors.redAccent,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
               ),
             ),
           ],
@@ -1737,7 +1861,7 @@ class _CycleDecisionCard extends StatelessWidget {
               if (canContinue) ...[
                 Expanded(
                   child: FilledButton(
-                    onPressed: onContinue,
+                    onPressed: widget.onContinue,
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF2A2A2A),
                       shape: RoundedRectangleBorder(
@@ -1749,9 +1873,27 @@ class _CycleDecisionCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
               ],
+              if (canRollback) ...[
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _isRollingBack ? null : _confirmAndRollback,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.amber,
+                      side: const BorderSide(color: Colors.amber),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6)),
+                    ),
+                    child: Text(
+                      _isRollingBack ? '복원 중…' : '이전 튜닝으로 복원',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
               Expanded(
                 child: FilledButton(
-                  onPressed: onComplete,
+                  onPressed: widget.onComplete,
                   style: FilledButton.styleFrom(
                     backgroundColor: isTerminal
                         ? const Color(0xFF1A1A1A)

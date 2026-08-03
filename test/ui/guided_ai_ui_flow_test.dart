@@ -809,6 +809,109 @@ void main() {
 
       expect(find.text('완료'), findsAtLeastNWidgets(1));
     });
+
+    testWidgets(
+        '이전 튜닝으로 복원 button not shown when rollbackTuningState is null',
+        (tester) async {
+      // _cycle(worsened) has no rollbackTuningState — nothing to restore.
+      await tester.pumpWidget(_aiScreen(state));
+      await tester.pump();
+
+      expect(find.text('이전 튜닝으로 복원'), findsNothing);
+    });
+  });
+
+  // ── I2: Worsened cycle — software rollback (Phase 4-C-3B) ─────────────────
+
+  group('I2. Worsened cycle — Restore Previous Tuning', () {
+    final rollbackTuning = TuningProjectState(
+      peqChannels: [
+        PeqChannelState(channelId: 'ch_wf_l', bands: const [
+          PeqBand(
+              id: 'prev0',
+              type: PeqBandType.peak,
+              frequencyHz: 500,
+              gainDb: -1.5,
+              q: 1.2),
+        ]),
+      ],
+      tuningRevision: 2,
+    );
+
+    CorrectionCycle worsenedWithRollback() => CorrectionCycle(
+          projectId: 'test-proj',
+          channelId: 'ch_wf_l',
+          cycleNumber: 1,
+          beforeMeasurementRef: 'before-ref',
+          peqSnapshot: _stubChannel,
+          createdAt: DateTime.utc(2025, 1, 1),
+          decision: CorrectionCycleDecision.worsened,
+          completedAt: DateTime.utc(2025, 1, 2),
+          rollbackTuningState: rollbackTuning,
+        );
+
+    final state = ProGuidedAiCompleted(
+      outcome: _stubOutcome,
+      explanation: _stubExplanation,
+      applyResult: _stubApplyResult,
+      loopPhase: ProClosedLoopPhase.cycleComplete,
+      completedCycle: worsenedWithRollback(),
+    );
+
+    testWidgets('button shown when rollbackTuningState is present',
+        (tester) async {
+      _seedProjects([_baseProject]);
+      await tester.pumpWidget(_aiScreen(state));
+      await tester.pump();
+
+      expect(find.text('이전 튜닝으로 복원'), findsOneWidget);
+    });
+
+    testWidgets('tapping the button opens a confirmation dialog with a '
+        'hardware-untouched warning', (tester) async {
+      _seedProjects([_baseProject]);
+      await tester.pumpWidget(_aiScreen(state));
+      await tester.pump();
+
+      await tester.tap(find.text('이전 튜닝으로 복원'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('이전 튜닝으로 복원'), findsWidgets); // dialog title + button
+      expect(find.textContaining('Software only'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('Restore'), findsOneWidget);
+    });
+
+    testWidgets('Cancel in the dialog makes no store change',
+        (tester) async {
+      _seedProjects([_baseProject]);
+      await tester.pumpWidget(_aiScreen(state));
+      await tester.pump();
+
+      await tester.tap(find.text('이전 튜닝으로 복원'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('복원 완료'), findsNothing);
+      expect(find.textContaining('복원 실패'), findsNothing);
+    });
+
+    testWidgets('confirming Restore rolls back tuningState and shows the '
+        'success banner; button then disappears', (tester) async {
+      _seedProjects([_baseProject]);
+      await tester.pumpWidget(_aiScreen(state));
+      await tester.pump();
+
+      await tester.tap(find.text('이전 튜닝으로 복원'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Restore'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('복원 완료'), findsOneWidget);
+      expect(find.text('이전 튜닝으로 복원'), findsNothing,
+          reason: 'nothing left to restore after a successful rollback');
+    });
   });
 
   // ── J: Continue cycle ─────────────────────────────────────────────────────

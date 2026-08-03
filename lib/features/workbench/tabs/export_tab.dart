@@ -382,6 +382,7 @@ class _PackageSummary extends StatelessWidget {
     ExportStatus.blocked    => kProRed,
     ExportStatus.exported   => kProAccent,
     ExportStatus.notReady   => Colors.white38,
+    ExportStatus.stale      => Colors.amber,
   };
 
   @override

@@ -11,7 +11,12 @@ enum DeployPackageStatus {
   ready,
   blocked,
   archived,
-  exported;
+  exported,
+  // A package that was ready/exported when built, but the project's
+  // tuningState has since changed (e.g. a software-only rollback) — this
+  // package no longer reflects the live tuning and must be rebuilt before
+  // being trusted again. Never assigned automatically except by a rollback.
+  stale;
 
   String toJson() => name;
   static DeployPackageStatus fromJson(String s) =>
@@ -24,6 +29,7 @@ enum DeployPackageStatus {
     DeployPackageStatus.blocked  => 'Blocked',
     DeployPackageStatus.archived => 'Archived',
     DeployPackageStatus.exported => 'Exported',
+    DeployPackageStatus.stale    => 'Stale',
   };
 }
 

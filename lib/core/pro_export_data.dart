@@ -60,13 +60,19 @@ enum ExportStatus {
   notReady,
   blocked,
   draftReady,
-  exported;
+  exported,
+  // A package that was draftReady/exported when built, but the project's
+  // tuningState has since changed (e.g. a software-only rollback) — no
+  // longer reflects the live tuning. Never assigned automatically except by
+  // a rollback.
+  stale;
 
   String get label => switch (this) {
     ExportStatus.notReady   => 'Not Ready',
     ExportStatus.blocked    => 'Blocked',
     ExportStatus.draftReady => 'Draft Ready',
     ExportStatus.exported   => 'Exported',
+    ExportStatus.stale      => 'Stale',
   };
 
   String toJson() => name;
@@ -363,6 +369,8 @@ class ExportProjectState {
         return 'Exported';
       case ExportStatus.notReady:
         return 'Not ready';
+      case ExportStatus.stale:
+        return 'Stale — tuning has changed since this package was built';
     }
   }
 

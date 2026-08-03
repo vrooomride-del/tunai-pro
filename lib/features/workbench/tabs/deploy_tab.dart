@@ -1004,6 +1004,7 @@ class _StatusPill extends StatelessWidget {
       DeployPackageStatus.archived => (Colors.white24, Colors.white.withValues(alpha: 0.04)),
       DeployPackageStatus.exported => (kProAccent, kProAccent.withValues(alpha: 0.12)),
       DeployPackageStatus.draft    => (Colors.white38, Colors.white.withValues(alpha: 0.06)),
+      DeployPackageStatus.stale    => (Colors.amber, Colors.amber.withValues(alpha: 0.12)),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),

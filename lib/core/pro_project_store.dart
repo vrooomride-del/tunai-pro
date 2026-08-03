@@ -45,6 +45,14 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     _load();
   }
 
+  // Guards rollbackTuningState against a double-tap: two calls fired back to
+  // back (before the first has reached its own `await`) would otherwise both
+  // read the same pre-rollback project synchronously and each independently
+  // bump tuningRevision, double-applying the restore. Checked and set
+  // synchronously, before any await, so a second synchronous call sees its
+  // project id already in flight and no-ops immediately.
+  final Set<String> _rollbackInFlightIds = {};
+
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_kProjectsKey);
@@ -242,6 +250,86 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
         .toList();
     await updateProject(project.copyWith(
         correctionCycles: updated, updatedAt: DateTime.now()));
+  }
+
+  /// Software-only rollback of a [CorrectionCycleDecision.worsened] cycle:
+  /// restores [cycle.rollbackTuningState] as the project's live `tuningState`
+  /// and atomically updates every field that would otherwise silently go
+  /// stale, in one [updateProject] write:
+  ///  - `tuningState` is the restored (old) values, but assigned a NEW,
+  ///    forward-moving `tuningRevision` (`current + 1`) — the snapshot's own,
+  ///    older revision number is never reused, so the counter never regresses.
+  ///  - `safetyStatus` resets to [SafetyStatus.notVerified] — the restored
+  ///    tuning has not been re-verified at this point in time.
+  ///  - `profileStatus` steps back to [ProfileStatus.tuned] only if it was
+  ///    [ProfileStatus.verified] or [ProfileStatus.deployed]; otherwise
+  ///    unchanged.
+  ///  - Every `deployState`/`exportState` package currently `ready`/
+  ///    `exported` (or `draftReady`/`exported`) is marked `stale`, since none
+  ///    of them could possibly have been built from the brand-new revision.
+  ///
+  /// Deliberately NEVER touches: `deployState.appliedGainsByChannel` (the
+  /// hardware-ACK'd gain record — decoupled from software `tuningState` by
+  /// design), `correctionCycles` (the worsened cycle is preserved, unchanged,
+  /// in history), `hardwareState`, or any transport/write/deploy-execution
+  /// path — this method performs no hardware I/O whatsoever.
+  ///
+  /// No-ops (returns `false`, no store write) if [cycle.rollbackTuningState]
+  /// is null or [cycle.decision] is not [CorrectionCycleDecision.worsened] —
+  /// callers should only offer this for worsened cycles, but this guard
+  /// makes the operation fail safe regardless of caller discipline.
+  Future<bool> rollbackTuningState(String id, CorrectionCycle cycle) async {
+    final rollback = cycle.rollbackTuningState;
+    if (rollback == null ||
+        cycle.decision != CorrectionCycleDecision.worsened) {
+      return false;
+    }
+    // Synchronous check-and-set, before any await — see field doc above.
+    if (_rollbackInFlightIds.contains(id)) return false;
+    _rollbackInFlightIds.add(id);
+    try {
+      final project = state.projects.firstWhere((p) => p.id == id);
+      final newRevision = project.tuningState.tuningRevision + 1;
+      final now = DateTime.now();
+
+      final restoredTuning = rollback.copyWith(
+        tuningRevision: newRevision,
+        updatedAt: now,
+      );
+
+      final newProfileStatus = (project.profileStatus ==
+                  ProfileStatus.verified ||
+              project.profileStatus == ProfileStatus.deployed)
+          ? ProfileStatus.tuned
+          : project.profileStatus;
+
+      final staleDeployPackages = project.deployState.packages
+          .map((pkg) => (pkg.status == DeployPackageStatus.ready ||
+                  pkg.status == DeployPackageStatus.exported)
+              ? pkg.copyWith(status: DeployPackageStatus.stale, updatedAt: now)
+              : pkg)
+          .toList();
+      final staleExportPackages = project.exportState.packages
+          .map((pkg) => (pkg.status == ExportStatus.draftReady ||
+                  pkg.status == ExportStatus.exported)
+              ? pkg.copyWith(status: ExportStatus.stale)
+              : pkg)
+          .toList();
+
+      await updateProject(project.copyWith(
+        tuningState: restoredTuning,
+        safetyStatus: SafetyStatus.notVerified,
+        profileStatus: newProfileStatus,
+        deployState:
+            project.deployState.copyWith(packages: staleDeployPackages),
+        exportState:
+            project.exportState.copyWith(packages: staleExportPackages),
+        updatedAt: now,
+      ));
+      return true;
+    } finally {
+      _rollbackInFlightIds.remove(id);
+    }
   }
 
   /// Appends a new [FactorySoundProfile] to the project and persists.
