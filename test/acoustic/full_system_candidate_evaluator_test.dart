@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/acoustic/acoustic_problem_classifier.dart';
 import 'package:tunai_pro/core/acoustic/candidate_optimizer.dart';
@@ -9,6 +11,7 @@ import 'package:tunai_pro/core/acoustic/full_system_candidate_evaluator.dart';
 import 'package:tunai_pro/core/acoustic/hybrid_xo_feasibility.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/pro_target_curve.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
 
 const _ids = ['ch_tw_l', 'ch_wf_l', 'ch_tw_r', 'ch_wf_r'];
@@ -240,6 +243,72 @@ void main() {
     expect(warmResult.targetName, 'Warm');
     expect(warmResult.beforeWeightedRmsDb,
         isNot(equals(flat.beforeWeightedRmsDb)));
+  });
+
+  group('Target curve consistency (Phase 5-A-1)', () {
+    // Regression: the evaluator's internal target values must come from
+    // exactly the same ProTargetCurve.db formula the Optimizer already
+    // uses, not a separate (previously divergent) approximation. Proven via
+    // the public measure() API: each channel's raw FRD is built so the
+    // magnitude-only combination of 4 identical channels (a coherent power
+    // sum, +10*log10(4) dB) exactly equals ProTargetCurve.db(preset, f) at
+    // every fixture frequency. This can only measure as a perfect on-target
+    // result (weightedRmsDb ≈ 0) if the evaluator is truly using
+    // ProTargetCurve.db internally — any divergent formula (e.g. the old,
+    // now-removed TargetCurveState.targetDbAt step-function approximation)
+    // would show a non-zero residual for warm/studio/nearfield.
+    const freqs = [100.0, 1000.0, 10000.0];
+    final fourChannelSumOffsetDb = 10 * math.log(4) / math.ln10;
+
+    ProProject projectMatchingTarget(TargetCurvePreset preset) {
+      final now = DateTime(2026, 8, 1);
+      return ProProject(
+        id: 'p',
+        name: 'p',
+        createdAt: now,
+        updatedAt: now,
+        acousticState: MeasurementProjectState(
+          targetCurve: TargetCurveState(selectedPreset: preset),
+          driverChannels: [
+            for (var i = 0; i < _ids.length; i++)
+              DriverChannel(
+                id: _ids[i],
+                name: _ids[i],
+                role: i.isEven ? DriverRole.coaxTweeter : DriverRole.coaxWoofer,
+                side: i < 2 ? DriverSide.left : DriverSide.right,
+                frdData: ParsedMeasurementData(
+                  id: 'frd-${_ids[i]}',
+                  sourceFileName: '${_ids[i]}.frd',
+                  fileType: AcousticFileType.frd,
+                  importedAt: now,
+                  points: [
+                    for (final f in freqs)
+                      MeasurementDataPoint(
+                        frequencyHz: f,
+                        magnitudeDb: ProTargetCurve.db(preset, f) -
+                            fourChannelSumOffsetDb,
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    for (final preset in TargetCurvePreset.values) {
+      test(
+          'measure() scores a response matching ProTargetCurve.db($preset) '
+          'as perfectly on-target', () {
+        final project = projectMatchingTarget(preset);
+        final result = FullSystemCandidateEvaluator.measure(
+            project: project, applyTuning: false);
+
+        expect(result, isNotNull, reason: 'preset=$preset');
+        expect(result!.weightedRmsDb, closeTo(0.0, 1e-6),
+            reason: 'preset=$preset');
+      });
+    }
   });
 
   test('hybrid XO feasibility fails closed without phase/ZMA and preserves sides', () {

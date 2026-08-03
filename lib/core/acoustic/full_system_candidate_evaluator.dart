@@ -5,6 +5,7 @@ import '../pro_acoustic_data.dart';
 import '../pro_project.dart';
 import '../pro_response_error.dart';
 import '../pro_simulation_optimizer.dart';
+import '../pro_target_curve.dart';
 import '../pro_tuning_data.dart';
 import 'candidate_optimizer.dart';
 import 'candidate_safety.dart';
@@ -338,9 +339,13 @@ abstract final class FullSystemCandidateEvaluator {
         mode: mode, weightedRmsDb: error.weightedRmsDb);
   }
 
+  // Canonical target-curve source: ProTargetCurve.db, the same formula the
+  // Optimizer and simulation engine already use — so a given preset means
+  // the same thing everywhere, not a separate approximation here.
   static List<double> _targetDb(ProProject project, List<double> freqs) => [
         for (final frequency in freqs)
-          project.acousticState.targetCurve.targetDbAt(frequency),
+          ProTargetCurve.db(
+              project.acousticState.targetCurve.selectedPreset, frequency),
       ];
 
   static List<double> _targetWeights(

@@ -3,7 +3,6 @@
 // parsed measurement data, acoustic offset. No DSP writes. No hardware access.
 
 import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
 
@@ -675,15 +674,6 @@ class TargetCurveState {
     customName: j['customName'] as String?,
     notes: j['notes'] as String?,
   );
-
-  double targetDbAt(double frequencyHz) => switch (selectedPreset) {
-        TargetCurvePreset.flat || TargetCurvePreset.custom => 0.0,
-        TargetCurvePreset.warm => frequencyHz <= 200 ? 2.0 : 0.0,
-        TargetCurvePreset.studio => frequencyHz <= 10000
-            ? 0.0
-            : -2.0 * (math.log(frequencyHz / 10000) / math.ln2).clamp(0.0, 1.0),
-        TargetCurvePreset.nearfield => frequencyHz < 1000 ? 1.0 : 0.0,
-      };
 }
 
 // Default 2-way stereo driver layout — flexible, not hardcoded to 2-way only.
