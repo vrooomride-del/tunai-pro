@@ -68,7 +68,15 @@ import 'package:tunai_pro/core/pro_response_error.dart';
 import 'package:tunai_pro/core/pro_correction_cycle.dart'
     show CorrectionCycle, CorrectionCycleDecision;
 import 'package:tunai_pro/core/pro_tuning_data.dart'
-    show ChannelControlState, PeqBandType, PeqChannelState, TuningProjectState;
+    show
+        ChannelControlState,
+        CrossoverChannelState,
+        CrossoverFilter,
+        FilterSide,
+        PeqBand,
+        PeqBandType,
+        PeqChannelState,
+        TuningProjectState;
 import 'package:tunai_pro/core/pro_tuning_report_data.dart'
     show GuidedTuningSessionSummary;
 
@@ -3035,7 +3043,6 @@ void main() {
       final cycle = ctrl.submitAfterFourChannelFrd(
         beforeProject: beforeProject,
         afterProject: afterProject,
-        previousTuningState: TuningProjectState.createDefault(),
         deployedTuningState: deployedTuning,
         cycleNumber: 1,
         safetyPassed: true,
@@ -3103,7 +3110,6 @@ void main() {
       final cycle = ctrl.submitAfterFourChannelFrd(
         beforeProject: beforeProject,
         afterProject: afterProject,
-        previousTuningState: TuningProjectState.createDefault(),
         deployedTuningState: TuningProjectState.createDefault(),
         cycleNumber: 1,
         safetyPassed: true,
@@ -3140,7 +3146,6 @@ void main() {
       final cycle = ctrl.submitAfterFourChannelFrd(
         beforeProject: beforeProject,
         afterProject: afterProject,
-        previousTuningState: TuningProjectState.createDefault(),
         deployedTuningState: TuningProjectState.createDefault(),
         cycleNumber: cycleNumber,
         safetyPassed: true,
@@ -3224,7 +3229,6 @@ void main() {
       final cycle = ctrl.submitAfterFourChannelFrd(
         beforeProject: beforeProject,
         afterProject: afterProject,
-        previousTuningState: TuningProjectState.createDefault(),
         deployedTuningState: TuningProjectState.createDefault(),
         cycleNumber: 1,
         safetyPassed: true,
@@ -3239,6 +3243,485 @@ void main() {
       expect(ctrl.state, same(before),
           reason: 'no pending draft was ever created, so this must no-op');
       expect(captured.length, _perCycleCaptures);
+    });
+  });
+
+  // ── 26. Pre-apply rollback snapshot (Phase 4-C-3A) ────────────────────────
+  //
+  // Prior audit (Phase 4-C-3) confirmed submitAfterFourChannelFrd's only
+  // production caller passed the SAME (already-deployed) tuning for both
+  // previousTuningState and deployedTuningState, so a persisted
+  // rollbackTuningState was really just the tuning that caused the
+  // regression, not a genuine pre-cycle baseline. This group proves the
+  // controller now captures and uses its own _preApplyTuningState (set once,
+  // at the top of start(), before any apply can run) instead.
+  group('26. Pre-apply rollback snapshot', () {
+    ProProject _projectWithTuning(TuningProjectState tuning) =>
+        _projectWith4Frd().copyWith(tuningState: tuning);
+
+    ParsedMeasurementData _frd26(String channelId, List<double> mags) =>
+        ParsedMeasurementData(
+          id: 'frd26-$channelId-${mags.first}-${DateTime.now().microsecondsSinceEpoch}',
+          sourceFileName: '$channelId.frd',
+          fileType: AcousticFileType.frd,
+          importedAt: DateTime(2025, 1, 1),
+          points: [
+            MeasurementDataPoint(frequencyHz: 100, magnitudeDb: mags[0]),
+            MeasurementDataPoint(frequencyHz: 1000, magnitudeDb: mags[1]),
+            MeasurementDataPoint(frequencyHz: 10000, magnitudeDb: mags[2]),
+          ],
+        );
+
+    ProProject _withFrd26(ProProject base, List<double> mags) => base.copyWith(
+          acousticState: base.acousticState.copyWith(
+            driverChannels: base.acousticState.driverChannels
+                .map((ch) => ch.copyWith(frdData: _frd26(ch.id, mags)))
+                .toList(),
+          ),
+        );
+
+    Map<String, String> _refsFor26(ProProject project) => {
+          for (final ch in project.acousticState.driverChannels)
+            ch.id: ch.frdData!.id,
+        };
+
+    // Same empirically-confirmed magnitude pairs as group 25 (against the
+    // real 4-channel weighted-RMS combination, not simple per-channel MAR).
+    const _worsenedBeforeMag26 = [-8.0, -12.0, -8.0];
+    const _worsenedAfterMag26 = [-10.0, -12.0, -10.0]; // -> worsened
+    const _improveBeforeMag26 = [-10.0, -12.0, -10.0];
+    const _improveAfterMag26 = [-7.0, -12.0, -7.0]; // -> improvedNeedsAnotherCycle
+
+    // Three distinct, full-field tuning fixtures (PEQ + XO + gain/delay/
+    // mute/phase all differ) — A is the pre-apply baseline, B is what gets
+    // deployed for the cycle, C is a third, still-distinct value used only
+    // in the cycle-2 test so a same-value coincidence can't hide a bug.
+    TuningProjectState _tuningA() => TuningProjectState(
+          peqChannels: [
+            PeqChannelState(channelId: 'ch_tw_l', bands: const [
+              PeqBand(
+                  id: 'a0',
+                  type: PeqBandType.peak,
+                  frequencyHz: 1000,
+                  gainDb: -2.0,
+                  q: 1.0),
+            ]),
+          ],
+          crossoverChannels: [
+            const CrossoverChannelState(
+              channelId: 'ch_tw_l',
+              polarityInverted: false,
+              highPass: CrossoverFilter(
+                  side: FilterSide.highPass, frequencyHz: 2000),
+            ),
+          ],
+          channelControls: const [
+            ChannelControlState(
+              channelId: 'ch_tw_l',
+              gainDb: -1.0,
+              delayMs: 0.2,
+              phaseOffsetDeg: 0.0,
+              muted: false,
+            ),
+          ],
+          tuningRevision: 1,
+        );
+
+    TuningProjectState _tuningB() => TuningProjectState(
+          peqChannels: [
+            PeqChannelState(channelId: 'ch_tw_l', bands: const [
+              PeqBand(
+                  id: 'b0',
+                  type: PeqBandType.lowShelf,
+                  frequencyHz: 4000,
+                  gainDb: 3.0,
+                  q: 2.0),
+            ]),
+          ],
+          crossoverChannels: [
+            const CrossoverChannelState(
+              channelId: 'ch_tw_l',
+              polarityInverted: true,
+              lowPass:
+                  CrossoverFilter(side: FilterSide.lowPass, frequencyHz: 500),
+            ),
+          ],
+          channelControls: const [
+            ChannelControlState(
+              channelId: 'ch_tw_l',
+              gainDb: 4.0,
+              delayMs: 1.5,
+              phaseOffsetDeg: 180.0,
+              muted: true,
+            ),
+          ],
+          tuningRevision: 2,
+        );
+
+    TuningProjectState _tuningC() => TuningProjectState(
+          peqChannels: [
+            PeqChannelState(channelId: 'ch_tw_l', bands: const [
+              PeqBand(
+                  id: 'c0',
+                  type: PeqBandType.notch,
+                  frequencyHz: 250,
+                  gainDb: -6.0,
+                  q: 4.0),
+            ]),
+          ],
+          crossoverChannels: const [
+            CrossoverChannelState(channelId: 'ch_tw_l'),
+          ],
+          channelControls: const [
+            ChannelControlState(
+              channelId: 'ch_tw_l',
+              gainDb: 0.5,
+              delayMs: 0.0,
+              phaseOffsetDeg: 90.0,
+              muted: false,
+            ),
+          ],
+          tuningRevision: 3,
+        );
+
+    ProGuidedAiController _newCtrl26(List<ProProject?> captured) {
+      final adapters = <ProToolAdapter>[
+        _ProjectCapturingAdapter(
+            ProOrchestratorToolId.measurementAnalyze, captured),
+        const _StubAdapter(ProOrchestratorToolId.acousticClassify),
+        const _StubAdapter(ProOrchestratorToolId.acousticPlan),
+        const _StubAdapter(ProOrchestratorToolId.acousticGenerateCandidates),
+        _ScoringWithSimErrAdapter(),
+        _OptimizerWithCandidateStubAdapter(),
+        _SafetyWithCandidateStubAdapter(),
+      ];
+      return ProGuidedAiController(
+        service: ProOrchestrateService(dio: _failingDio()),
+        adapterOverrides: adapters,
+      );
+    }
+
+    Future<void> _runToAwaitingAfterFrd26(
+        ProGuidedAiController ctrl, ProProject project) async {
+      final future = ctrl.start(
+        project: project,
+        userGoal: 'pre-apply snapshot test',
+        onApply: (_, __) async {},
+        onHardwareWritePlan: (_, __) async {},
+      );
+      await _waitForApplyGateGroup16(ctrl);
+      final pending = ctrl.state as ProGuidedAiConfirmPending;
+      ctrl.confirm(pending.request.stepId);
+      await future;
+      ctrl.enterAwaitingAfterFrd();
+    }
+
+    Future<ProGuidedAiController> _driveToAwaitingAfterFrd26(
+        ProProject project, List<ProProject?> captured) async {
+      final ctrl = _newCtrl26(captured);
+      await _runToAwaitingAfterFrd26(ctrl, project);
+      return ctrl;
+    }
+
+    test(
+        'Test A: rollback snapshot equals the genuine pre-apply tuning, not '
+        'the deployed one', () async {
+      final tuningA = _tuningA();
+      final tuningB = _tuningB();
+      expect(tuningA.toJson(), isNot(tuningB.toJson()),
+          reason: 'fixture sanity check: A and B must genuinely differ');
+
+      final captured = <ProProject?>[];
+      final startProject = _projectWithTuning(tuningA);
+      final ctrl = await _driveToAwaitingAfterFrd26(startProject, captured);
+
+      final beforeProject = _withFrd26(startProject, _worsenedBeforeMag26);
+      final afterProject = _withFrd26(startProject, _worsenedAfterMag26);
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        deployedTuningState: tuningB,
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor26(beforeProject),
+        afterEvidenceRefs: _refsFor26(afterProject),
+      );
+
+      expect(cycle, isNotNull);
+      expect(cycle!.decision, CorrectionCycleDecision.worsened);
+      expect(cycle.rollbackTuningState, same(tuningA),
+          reason: 'rollback snapshot must be the tuning captured before this '
+              "cycle's apply, not the deployed one");
+      expect(cycle.rollbackTuningState, isNot(same(tuningB)));
+      // The current/deployed tuning for this cycle is exactly what was
+      // passed as deployedTuningState — untouched by rollback capture.
+      expect(cycle.deployAckRef, isNull); // sanity: no unrelated coupling
+    });
+
+    test(
+        'Test B: rollback snapshot preserves full PEQ/XO/gain/delay/mute/'
+        'phase from the pre-apply state, not the deployed one', () async {
+      final tuningA = _tuningA();
+      final tuningB = _tuningB();
+
+      final captured = <ProProject?>[];
+      final startProject = _projectWithTuning(tuningA);
+      final ctrl = await _driveToAwaitingAfterFrd26(startProject, captured);
+
+      final beforeProject = _withFrd26(startProject, _worsenedBeforeMag26);
+      final afterProject = _withFrd26(startProject, _worsenedAfterMag26);
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        deployedTuningState: tuningB,
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor26(beforeProject),
+        afterEvidenceRefs: _refsFor26(afterProject),
+      );
+
+      final rollback = cycle!.rollbackTuningState!;
+
+      // PEQ
+      expect(rollback.peqChannels.single.bands.single.toJson(),
+          tuningA.peqChannels.single.bands.single.toJson());
+      expect(rollback.peqChannels.single.bands.single.toJson(),
+          isNot(tuningB.peqChannels.single.bands.single.toJson()));
+
+      // Crossover (incl. polarity)
+      expect(rollback.crossoverChannels.single.toJson(),
+          tuningA.crossoverChannels.single.toJson());
+      expect(rollback.crossoverChannels.single.toJson(),
+          isNot(tuningB.crossoverChannels.single.toJson()));
+
+      // Channel control: gain, delay, mute, phase
+      final rb = rollback.channelControls.single;
+      final a = tuningA.channelControls.single;
+      final b = tuningB.channelControls.single;
+      expect(rb.gainDb, a.gainDb);
+      expect(rb.delayMs, a.delayMs);
+      expect(rb.muted, a.muted);
+      expect(rb.phaseOffsetDeg, a.phaseOffsetDeg);
+      expect(rb.gainDb, isNot(b.gainDb));
+      expect(rb.delayMs, isNot(b.delayMs));
+      expect(rb.muted, isNot(b.muted));
+      expect(rb.phaseOffsetDeg, isNot(b.phaseOffsetDeg));
+    });
+
+    test(
+        'Test C: cycle 2 rollback snapshot is cycle-1 deployed tuning (B), '
+        'not cycle-1 baseline (A) or cycle-2 deployed (C)', () async {
+      final tuningA = _tuningA();
+      final tuningB = _tuningB();
+      final tuningC = _tuningC();
+
+      final captured = <ProProject?>[];
+      final startProject = _projectWithTuning(tuningA);
+      final ctrl = await _driveToAwaitingAfterFrd26(startProject, captured);
+
+      // Cycle 1: A -> improved (needs another cycle); deployed tuning is B.
+      final cycle1Before = _withFrd26(startProject, _improveBeforeMag26);
+      final cycle1After = _withFrd26(startProject, _improveAfterMag26);
+      final cycle1 = ctrl.submitAfterFourChannelFrd(
+        beforeProject: cycle1Before,
+        afterProject: cycle1After,
+        deployedTuningState: tuningB,
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor26(cycle1Before),
+        afterEvidenceRefs: _refsFor26(cycle1After),
+      );
+      expect(cycle1, isNotNull);
+      expect(
+          cycle1!.decision, CorrectionCycleDecision.improvedNeedsAnotherCycle);
+
+      // continueWithNextCycle() starts cycle 2 fresh via start(), which must
+      // capture B (cycle 1's deployed tuning, now cycle 2's pre-apply
+      // baseline) as the new _preApplyTuningState — not reuse A.
+      final future2 = ctrl.continueWithNextCycle();
+      await _waitForApplyGateGroup16(ctrl);
+      final pending2 = ctrl.state as ProGuidedAiConfirmPending;
+      ctrl.confirm(pending2.request.stepId);
+      await future2;
+      ctrl.enterAwaitingAfterFrd();
+
+      // Cycle 2: worsened; deployed tuning is C.
+      final cycle2Before = _withFrd26(startProject, _worsenedBeforeMag26);
+      final cycle2After = _withFrd26(startProject, _worsenedAfterMag26);
+      final cycle2 = ctrl.submitAfterFourChannelFrd(
+        beforeProject: cycle2Before,
+        afterProject: cycle2After,
+        deployedTuningState: tuningC,
+        cycleNumber: 2,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor26(cycle2Before),
+        afterEvidenceRefs: _refsFor26(cycle2After),
+      );
+
+      expect(cycle2, isNotNull);
+      expect(cycle2!.decision, CorrectionCycleDecision.worsened);
+      expect(cycle2.rollbackTuningState!.toJson(), tuningB.toJson(),
+          reason:
+              'cycle 2 rollback baseline must be cycle-1 deployed tuning (B)');
+      expect(cycle2.rollbackTuningState!.toJson(), isNot(tuningA.toJson()),
+          reason: 'must not be the original cycle-1 baseline (A)');
+      expect(cycle2.rollbackTuningState!.toJson(), isNot(tuningC.toJson()),
+          reason: 'must not be cycle-2 deployed tuning (C)');
+    });
+
+    test(
+        'Test D1: reset() before any cycle clears the pre-apply snapshot — a '
+        "later unrelated run does not inherit the abandoned run's baseline",
+        () async {
+      final captured = <ProProject?>[];
+      final ctrl = _newCtrl26(captured);
+      final staleTuning = _tuningA();
+      final freshTuning = _tuningC();
+
+      await _runToAwaitingAfterFrd26(ctrl, _projectWithTuning(staleTuning));
+      ctrl.reset();
+      expect(ctrl.state, isA<ProGuidedAiIdle>());
+
+      final freshProject = _projectWithTuning(freshTuning);
+      await _runToAwaitingAfterFrd26(ctrl, freshProject);
+
+      final beforeProject = _withFrd26(freshProject, _worsenedBeforeMag26);
+      final afterProject = _withFrd26(freshProject, _worsenedAfterMag26);
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        deployedTuningState: _tuningB(),
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor26(beforeProject),
+        afterEvidenceRefs: _refsFor26(afterProject),
+      );
+
+      expect(cycle, isNotNull);
+      expect(cycle!.decision, CorrectionCycleDecision.worsened);
+      expect(cycle.rollbackTuningState!.toJson(), freshTuning.toJson(),
+          reason: "must reflect the second run's own baseline");
+      expect(cycle.rollbackTuningState!.toJson(), isNot(staleTuning.toJson()),
+          reason: "must not leak the abandoned first run's baseline");
+    });
+
+    test(
+        'Test D2: cancel() at the confirm gate clears the pre-apply snapshot '
+        '— a later unrelated run does not inherit the cancelled run\'s '
+        'baseline', () async {
+      final captured = <ProProject?>[];
+      final ctrl = _newCtrl26(captured);
+      final staleTuning = _tuningA();
+      final freshTuning = _tuningC();
+
+      final future1 = ctrl.start(
+        project: _projectWithTuning(staleTuning),
+        userGoal: 'lifecycle test',
+        onApply: (_, __) async {},
+        onHardwareWritePlan: (_, __) async {},
+      );
+      await _waitForApplyGateGroup16(ctrl);
+      final pending1 = ctrl.state as ProGuidedAiConfirmPending;
+      ctrl.cancel(pending1.request.stepId); // abandon before apply
+      await future1;
+      ctrl.reset(); // return to Idle, mirroring real "처음으로" after a cancel
+      expect(ctrl.state, isA<ProGuidedAiIdle>());
+
+      final freshProject = _projectWithTuning(freshTuning);
+      await _runToAwaitingAfterFrd26(ctrl, freshProject);
+
+      final beforeProject = _withFrd26(freshProject, _worsenedBeforeMag26);
+      final afterProject = _withFrd26(freshProject, _worsenedAfterMag26);
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        deployedTuningState: _tuningB(),
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor26(beforeProject),
+        afterEvidenceRefs: _refsFor26(afterProject),
+      );
+
+      expect(cycle, isNotNull);
+      expect(cycle!.decision, CorrectionCycleDecision.worsened);
+      expect(cycle.rollbackTuningState!.toJson(), freshTuning.toJson());
+      expect(
+          cycle.rollbackTuningState!.toJson(), isNot(staleTuning.toJson()));
+    });
+
+    test(
+        'Test D3: reportFailure() clears the pre-apply snapshot — a later '
+        "unrelated run does not inherit the failed run's baseline",
+        () async {
+      final captured = <ProProject?>[];
+      final ctrl = _newCtrl26(captured);
+      final staleTuning = _tuningA();
+      final freshTuning = _tuningC();
+
+      await _runToAwaitingAfterFrd26(ctrl, _projectWithTuning(staleTuning));
+      ctrl.reportFailure('simulated async apply failure');
+      expect(ctrl.state, isA<ProGuidedAiFailed>());
+      ctrl.reset(); // real UI flow: 처음으로 after a reported failure
+      expect(ctrl.state, isA<ProGuidedAiIdle>());
+
+      final freshProject = _projectWithTuning(freshTuning);
+      await _runToAwaitingAfterFrd26(ctrl, freshProject);
+
+      final beforeProject = _withFrd26(freshProject, _worsenedBeforeMag26);
+      final afterProject = _withFrd26(freshProject, _worsenedAfterMag26);
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        deployedTuningState: _tuningB(),
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor26(beforeProject),
+        afterEvidenceRefs: _refsFor26(afterProject),
+      );
+
+      expect(cycle, isNotNull);
+      expect(cycle!.decision, CorrectionCycleDecision.worsened);
+      expect(cycle.rollbackTuningState!.toJson(), freshTuning.toJson());
+      expect(
+          cycle.rollbackTuningState!.toJson(), isNot(staleTuning.toJson()));
+    });
+
+    test(
+        'Test E: missing pre-apply snapshot fails safely — no cycle (and no '
+        'fake rollback substitute) is created', () async {
+      final captured = <ProProject?>[];
+      final startProject = _projectWithTuning(_tuningA());
+      final ctrl = await _driveToAwaitingAfterFrd26(startProject, captured);
+
+      // cancel() with a stepId that has no live apply-gate completer (the
+      // run already reached awaitingAfterFrd) falls through to the spent
+      // orchestrator and does not disturb `state` — but per this phase's
+      // lifecycle rules it DOES clear _preApplyTuningState, simulating the
+      // "unexpectedly missing" case the guard below defends against.
+      ctrl.cancel('irrelevant-already-finished-step');
+      expect(ctrl.state, isA<ProGuidedAiCompleted>());
+      expect(
+          (ctrl.state as ProGuidedAiCompleted).loopPhase,
+          ProClosedLoopPhase.awaitingAfterFrd,
+          reason: 'loopPhase must be undisturbed — this proves the '
+              'missing-snapshot guard is what rejects the call below, not '
+              'the unrelated state guard');
+
+      final beforeProject = _withFrd26(startProject, _worsenedBeforeMag26);
+      final afterProject = _withFrd26(startProject, _worsenedAfterMag26);
+      final cycle = ctrl.submitAfterFourChannelFrd(
+        beforeProject: beforeProject,
+        afterProject: afterProject,
+        deployedTuningState: _tuningB(),
+        cycleNumber: 1,
+        safetyPassed: true,
+        beforeEvidenceRefs: _refsFor26(beforeProject),
+        afterEvidenceRefs: _refsFor26(afterProject),
+      );
+
+      expect(cycle, isNull,
+          reason: 'must fail safely (no cycle at all) rather than fabricate '
+              'a rollback baseline from deployedTuningState');
     });
   });
 }

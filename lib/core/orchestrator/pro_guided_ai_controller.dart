@@ -100,6 +100,15 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   // memory only; never written to proProjectStoreProvider.
   ProProject? _pendingNextCycleProject;
 
+  // The tuning state that was live immediately before the current cycle's
+  // correction was applied — captured once, at the top of start(), before any
+  // apply can occur. This is the genuine pre-cycle rollback baseline; it is
+  // never reconstructed from the applied/deployed result. In memory only,
+  // never persisted. Populated fresh by every start() call (including the
+  // internal one continueWithNextCycle() makes for cycle 2+), so it always
+  // reflects the tuning that was live right before *this* cycle's apply.
+  TuningProjectState? _preApplyTuningState;
+
   // Remembered from the most recent start() call so continueWithNextCycle()
   // can begin the next cycle with the same session configuration without the
   // caller reconstructing it.
@@ -145,6 +154,14 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     _lastOnHardwareWritePlan = onHardwareWritePlan;
     _lastOnExportPackage = onExportPackage;
     _pendingNextCycleProject = null;
+
+    // Capture this cycle's pre-apply baseline before anything below can
+    // apply/persist a new tuning. `project` here is exactly what the caller
+    // read as the live project (for cycle 1: proProjectStoreProvider; for
+    // cycle 2+: the previous cycle's deployed-tuning snapshot, passed in by
+    // continueWithNextCycle()) — so this is always the correct "before this
+    // cycle" baseline, never the just-applied/deployed one.
+    _preApplyTuningState = project.tuningState;
 
     state = const ProGuidedAiCloudCalling();
 
@@ -479,11 +496,13 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   /// state. This boundary never terminates the application or navigation root.
   void reportFailure(Object error) {
     _pendingNextCycleProject = null;
+    _preApplyTuningState = null;
     state = ProGuidedAiFailed('적용 처리 실패: $error');
   }
 
   void cancel(String stepId) {
     _pendingNextCycleProject = null;
+    _preApplyTuningState = null;
     final completer = _applyGateCompleter;
     if (completer != null && !completer.isCompleted) {
       completer.complete(false);
@@ -692,10 +711,17 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   /// Evaluates one post-Deploy four-channel FRD set. This method only creates
   /// and records the deterministic decision; it never writes hardware. A next
   /// cycle is returned as an approval-required draft by the evaluator.
+  ///
+  /// [previousTuningState] is deliberately NOT a parameter here — the caller
+  /// (the screen) cannot be trusted to supply the true pre-cycle baseline; a
+  /// prior audit confirmed the screen's own project snapshot is only
+  /// available post-apply, which previously led to `previousTuningState` and
+  /// `deployedTuningState` being passed as the same, already-deployed value.
+  /// Instead, the controller uses its own [_preApplyTuningState], captured at
+  /// the top of [start] before this cycle's apply could run.
   CorrectionCycle? submitAfterFourChannelFrd({
     required ProProject beforeProject,
     required ProProject afterProject,
-    required TuningProjectState previousTuningState,
     required TuningProjectState deployedTuningState,
     required int cycleNumber,
     required bool safetyPassed,
@@ -708,6 +734,20 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
         current.loopPhase != ProClosedLoopPhase.awaitingAfterFrd ||
         beforeProject.id != afterProject.id ||
         cycleNumber > FullSystemClosedLoopEvaluator.maxCycles) {
+      return null;
+    }
+    final previousTuningState = _preApplyTuningState;
+    if (previousTuningState == null) {
+      // Fail safely: a genuine pre-apply baseline was never captured for
+      // this cycle (should be unreachable in the normal start()-driven
+      // lifecycle — this is a defensive guard, not an expected path). Do NOT
+      // substitute deployedTuningState here — that would silently recreate
+      // the exact bug this phase fixes (rollback baseline == just-applied
+      // tuning). Report explicitly and produce no cycle at all rather than a
+      // misleading one.
+      debugPrint(
+          'GUIDED_AI_MISSING_PRE_APPLY_SNAPSHOT cycle=$cycleNumber '
+          'projectId=${beforeProject.id}');
       return null;
     }
     final result = FullSystemClosedLoopEvaluator.evaluate(
@@ -762,6 +802,14 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       alignmentReevaluationAllowed:
           result.nextCycle?.alignmentReevaluationAllowed ?? false,
     );
+
+    // This cycle is now fully recorded — its pre-apply baseline has served
+    // its purpose (attached to `cycle.rollbackTuningState` above, if
+    // applicable) and must not leak into a later, unrelated run. If this
+    // decision continues (see below), continueWithNextCycle()'s own start()
+    // call captures a fresh, correct baseline for cycle 2 — it never reuses
+    // this one.
+    _preApplyTuningState = null;
 
     // Retain the evaluator's already-computed next-Before snapshot in memory
     // (After-FRD-as-new-Before + deployed tuning), with this cycle appended

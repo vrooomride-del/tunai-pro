@@ -189,7 +189,6 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
     final cycle = ref.read(guidedAiProvider.notifier).submitAfterFourChannelFrd(
           beforeProject: beforeProject,
           afterProject: input.buildAfterProject(),
-          previousTuningState: beforeProject.tuningState,
           deployedTuningState: beforeProject.tuningState,
           cycleNumber: beforeProject.correctionCycles.length + 1,
           safetyPassed: beforeProject.safetyStatus == SafetyStatus.verified,
