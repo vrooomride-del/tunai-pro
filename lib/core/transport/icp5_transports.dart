@@ -129,16 +129,6 @@ class Icp5UsbTransport
   int _applicationGeneration = 0;
   int _activeGeneration = -1;
 
-  // [TEMP DIAGNOSTIC] ADAU1701 PEQ ACK investigation — counts every frame
-  // observed by _onBytes while an application response is outstanding for
-  // the current _exchange() call, reset at the start of each _exchange().
-  // Logging only; does not affect routing, retry, or the parser. Remove once
-  // real device evidence is captured. Note: _exchange()/_onBytes() are the
-  // shared application-exchange path used by every ICP5 write (gain, delay,
-  // filter cutoff, PEQ...), not PEQ-exclusive — the logs below fire for any
-  // in-flight write, tagged generically as "ICP5 ACK Exchange".
-  int _diagFramesWhilePending = 0;
-
   /// How long to discard incoming notifications after a command timeout before
   /// the next request is allowed. The ICP5 protocol carries no per-command
   /// sequence identifier, so this bounded fail-closed quarantine (proven in the
@@ -755,31 +745,15 @@ class Icp5UsbTransport
       }
       final application = _pendingResponse;
       final matcher = _pendingAccepts;
-      if (application != null && !application.isCompleted) {
-        // [TEMP DIAGNOSTIC] see _diagFramesWhilePending note above. `accepted`
-        // is computed once and used below in place of a second matcher(frame)
-        // call — the accept/route decision is otherwise unchanged from the
-        // original `_activeGeneration >= 0 && matcher != null && matcher(frame)`
-        // condition.
-        _diagFramesWhilePending++;
-        final accepted =
-            _activeGeneration >= 0 && matcher != null && matcher(frame);
-        debugPrint('[ICP5 ACK Exchange] RECEIVED '
-            'frame#=$_diagFramesWhilePending '
-            'bytes=[${_diagHexDump(frame)}] '
-            'activeGeneration=$_activeGeneration '
-            'matcherAccepted=$accepted');
-        if (accepted) {
-          application.complete(frame);
-        }
+      if (application != null &&
+          !application.isCompleted &&
+          _activeGeneration >= 0 &&
+          matcher != null &&
+          matcher(frame)) {
+        application.complete(frame);
       }
     }
   }
-
-  // [TEMP DIAGNOSTIC] helper for the ACK-exchange logging only — remove
-  // alongside the debugPrint calls once real evidence is captured.
-  static String _diagHexDump(List<int> bytes) =>
-      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
 
   // On a transport-level stream error or close, invalidate the active
   // generation so no in-flight frame can satisfy the pending request, and mark
@@ -849,10 +823,6 @@ class Icp5UsbTransport
     _pendingAccepts = accepts;
     final response = Completer<List<int>>();
     _pendingResponse = response;
-    // [TEMP DIAGNOSTIC] see _diagFramesWhilePending note above — reset the
-    // per-exchange received-frame counter and log the transmitted frame.
-    _diagFramesWhilePending = 0;
-    debugPrint('[ICP5 ACK Exchange] TRANSMIT bytes=[${_diagHexDump(tx)}]');
     Timer? timeoutTimer;
     try {
       final written =
@@ -872,9 +842,6 @@ class Icp5UsbTransport
       timeoutTimer.cancel();
       return frame;
     } on TimeoutException {
-      // [TEMP DIAGNOSTIC] see note above.
-      debugPrint('[ICP5 ACK Exchange] TIMEOUT '
-          'receivedFrameCount=$_diagFramesWhilePending');
       timeoutTimer?.cancel();
       // Consumer-proven fail-closed timeout handling: invalidate the generation
       // so an in-flight notification is discarded immediately, quarantine to

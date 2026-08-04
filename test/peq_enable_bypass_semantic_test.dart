@@ -243,7 +243,10 @@ void main() {
       expect(gainOp.writable, isTrue);
     });
 
-    test('10-band all-disabled channel → 10 peqGain ops all targetValue=0.0', () {
+    test(
+        '10-band all-disabled channel → 10 peqGain ops all targetValue=0.0; '
+        'bands 0-7 writable, bands 8-9 unavailable (PEQ band capability '
+        'correction)', () {
       final bands = List.generate(10, (_) => _band(enabled: false, gain: -1.0));
       final blocks = _export(bands);
       final pkg = DspExportPackage(id: 'bp10_test', parameterBlocks: blocks);
@@ -254,7 +257,9 @@ void main() {
       expect(gainOps.length, 10);
       for (final op in gainOps) {
         expect(op.targetValue, 0.0);
-        expect(op.writable, isTrue);
+        expect(op.writable, op.bandIndex! <= 7,
+            reason: 'band ${op.bandIndex}: bands 0-7 are writable, '
+                'bands 8-9 are unavailable on real hardware');
       }
     });
 

@@ -347,7 +347,11 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
               children: [
                 _header(),
                 const SizedBox(height: 16),
-                _body(),
+                // Flexible + scroll so the body (in particular the blocked
+                // list, now taller with a per-op reason line) shrinks to fit
+                // the dialog's available height and scrolls internally
+                // instead of overflowing the bottom of the dialog.
+                Flexible(child: SingleChildScrollView(child: _body())),
                 const SizedBox(height: 20),
                 _actions(),
               ],
@@ -495,43 +499,57 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       ],
       if (blocked.isNotEmpty) ...[
         if (_hasWritableOps) const SizedBox(height: 12),
-        Text('BLOCKED — no confirmed write path',
+        Text('BLOCKED (${blocked.length})',
             style: proLabel(
                 size: 9,
                 color: kProAmber.withValues(alpha: 0.7),
                 spacing: 1.5)),
         const SizedBox(height: 6),
         ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 120),
+          constraints: const BoxConstraints(maxHeight: 160),
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: blocked
                   .map((op) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 3),
-                        child: Row(children: [
-                          Expanded(
-                              flex: 3,
-                              child: Text(op.channelId,
-                                  style: proValue(
-                                      size: 11, color: Colors.white38))),
-                          Expanded(
-                              flex: 3,
-                              child: Text(_opKindLabel(op),
-                                  style: proSubtitle(
-                                      size: 10, color: Colors.white38))),
-                          Expanded(
-                              flex: 3,
-                              child: Text(_opValueLabel(op),
-                                  style: proSubtitle(
-                                      size: 10, color: Colors.white38))),
-                          Text('BLOCKED',
-                              style: TextStyle(
-                                  fontSize: 9,
-                                  color: kProAmber.withValues(alpha: 0.7),
-                                  letterSpacing: 0.8,
-                                  fontWeight: FontWeight.w600)),
-                        ]),
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Expanded(
+                                  flex: 3,
+                                  child: Text(op.channelId,
+                                      style: proValue(
+                                          size: 11, color: Colors.white38))),
+                              Expanded(
+                                  flex: 3,
+                                  child: Text(_opKindLabel(op),
+                                      style: proSubtitle(
+                                          size: 10, color: Colors.white38))),
+                              Expanded(
+                                  flex: 3,
+                                  child: Text(_opValueLabel(op),
+                                      style: proSubtitle(
+                                          size: 10, color: Colors.white38))),
+                              Text('BLOCKED',
+                                  style: TextStyle(
+                                      fontSize: 9,
+                                      color: kProAmber.withValues(alpha: 0.7),
+                                      letterSpacing: 0.8,
+                                      fontWeight: FontWeight.w600)),
+                            ]),
+                            const SizedBox(height: 2),
+                            // Actual reason from HardwareWriteOp.reason (set by
+                            // pro_hardware_write_plan.dart's _reasonFor()) —
+                            // previously only a hardcoded generic header was
+                            // shown here; this is the specific rationale for
+                            // why this exact op is blocked.
+                            Text(op.reason,
+                                style: proSubtitle(
+                                    size: 9, color: Colors.white24)),
+                          ],
+                        ),
                       ))
                   .toList(),
             ),

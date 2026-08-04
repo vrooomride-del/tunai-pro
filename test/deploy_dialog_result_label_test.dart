@@ -308,8 +308,10 @@ void main() {
       await tester.pumpAndSettle();
 
       // band_0: gain (written) + frequency (failed) + Q (written) = 2 "Written" for band_0.
-      // bands 1–9: 9 bypass gain ops (each written) = 9 more "Written" labels.
-      expect(find.text('Written'), findsNWidgets(11));
+      // bands 1–7: 7 bypass gain ops (each written) = 7 more "Written" labels.
+      // bands 8–9 are unavailable (PEQ band capability correction) — never
+      // approved, so they contribute no "Written" rows at all.
+      expect(find.text('Written'), findsNWidgets(9));
     });
   });
 
@@ -360,16 +362,28 @@ void main() {
           reason: 'raw enum name must not appear');
     });
 
-    testWidgets('Band 10 Q label is "PEQ B10 Q" in result view',
+    testWidgets(
+        'Band 10 Q is shown BLOCKED in the plan view, not executed '
+        '(PEQ band capability correction: bands 8-9 are unavailable)',
         (tester) async {
       final port = _FakePort((_) => _written());
 
       await tester.pumpWidget(_host(port, _tuningWithBand10Q()));
       await tester.pumpAndSettle();
+
+      // Band 10 (index 9) is unavailable on real hardware — it must appear
+      // in the BLOCKED list, never reach APPROVE & WRITE/the executor.
+      expect(find.textContaining('PEQ B10 Q'), findsAtLeastNWidgets(1));
+      expect(find.text('BLOCKED'), findsAtLeastNWidgets(1));
+
       await tester.tap(find.text('APPROVE & WRITE'));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('PEQ B10 Q'), findsAtLeastNWidgets(1));
+      // Blocked ops are never approved, so they never reach the executor and
+      // never appear as a result-view outcome row.
+      expect(find.textContaining('PEQ B10 Q'), findsNothing,
+          reason: 'band 9 (Band 10) must never be sent to the write port '
+              'or appear in the executed result view');
     });
 
     testWidgets('Q value in pending list is bare numeric, no unit, no sign',

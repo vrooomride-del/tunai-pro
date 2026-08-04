@@ -92,23 +92,34 @@ DspExportPackage generateDspExportDraft({required ProProject project}) {
 
   final blocks = <ExportParameterBlock>[];
 
-  // PEQ blocks
+  // PEQ blocks — band_$i MUST be the original DSP slot index (the ICP5
+  // write path's band payload byte), not a position in a filtered list.
+  // Filtering-then-reindexing (e.g. `enabledBands.asMap()`) silently
+  // relabels a later enabled band as an earlier one whenever an earlier
+  // band is disabled (e.g. Band 1 disabled + Band 9 enabled would have
+  // exported Band 9's data as band_0) — that would let unproven-band data
+  // pass the capability gate disguised as a proven band. Iterate the full,
+  // unfiltered slot list and skip disabled slots in place instead.
   for (final ch in tuning.peqChannels) {
-    final enabledBands = ch.bands.where((b) => b.enabled).toList();
-    if (enabledBands.isEmpty) continue;
-    final bandsJson = enabledBands.asMap().map((i, b) => MapEntry('band_$i', {
-      'freq_hz': b.frequencyHz,
-      'gain_db': b.gainDb,
-      'q': b.q,
-      'type': b.type.name,
-    }));
+    final bandsJson = <String, dynamic>{};
+    for (var i = 0; i < ch.bands.length; i++) {
+      final b = ch.bands[i];
+      if (!b.enabled) continue;
+      bandsJson['band_$i'] = {
+        'freq_hz': b.frequencyHz,
+        'gain_db': b.gainDb,
+        'q': b.q,
+        'type': b.type.name,
+      };
+    }
+    if (bandsJson.isEmpty) continue;
     blocks.add(ExportParameterBlock(
       id: nextId('blk'),
       type: ExportBlockType.peq,
       channelId: ch.channelId,
       title: 'PEQ — ${ch.channelId}',
-      summary: '${enabledBands.length} enabled band(s)',
-      parameters: {'bands': bandsJson, 'bandCount': enabledBands.length},
+      summary: '${bandsJson.length} enabled band(s)',
+      parameters: {'bands': bandsJson, 'bandCount': bandsJson.length},
     ));
   }
 

@@ -221,13 +221,13 @@ void _addOp(
     verification: verification,
     writable: verification.isWriteEligible && adau1701GainInRange,
     reason: adau1701GainInRange
-        ? _reasonFor(verification, profile, kind)
+        ? _reasonFor(verification, profile, kind, bandIndex)
         : 'ADAU1701 PEQ gain must be between -6.0 and +3.0 dB.',
   ));
 }
 
-String _reasonFor(
-    HardwareParamVerification v, HardwareDeviceProfile profile, HardwareParamKind kind) {
+String _reasonFor(HardwareParamVerification v, HardwareDeviceProfile profile,
+    HardwareParamKind kind, int? bandIndex) {
   // P0 forensic fix (XO Deploy Parameter Corruption): surface the specific
   // blocking reason for XO, rather than the generic "no confirmed write
   // path" message, since this is a deliberate safety block pending mapping
@@ -237,6 +237,19 @@ String _reasonFor(
           kind == HardwareParamKind.crossoverLowPass)) {
     return 'XO hardware deployment temporarily blocked — mapping '
         'validation required.';
+  }
+  // PEQ band capability correction: bands 8–9 (Band 9–10) are confirmed
+  // failing on real ADAU1701 hardware deploy — surface that specific range,
+  // rather than the generic "no confirmed write path" message, since this
+  // is a negatively-confirmed hardware limit, not an unmapped parameter.
+  if (v == HardwareParamVerification.unavailable &&
+      bandIndex != null &&
+      bandIndex >= 8 &&
+      (kind == HardwareParamKind.peqFrequency ||
+          kind == HardwareParamKind.peqGain ||
+          kind == HardwareParamKind.peqQ)) {
+    return 'ADAU1701 PEQ Band 9-10 are not hardware verified. Supported '
+        'deploy range is Band 1-8.';
   }
   switch (v) {
     case HardwareParamVerification.captureProven:

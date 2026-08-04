@@ -197,11 +197,14 @@ void main() {
       expect(band0FreqOp.targetValue, 1000.0,
           reason: 'Band 0 active: stored freq 1000 Hz');
 
-      // Bands 1–9 (disabled, bypass): gain ops have targetValue=0.0.
+      // Bands 1–7 (disabled, bypass): gain ops have targetValue=0.0. Bands
+      // 8–9 are unavailable (confirmed failing on real hardware — PEQ band
+      // capability correction) and are excluded from writableOperations.
       final bypassGainOps = plan.writableOperations.where(
           (o) => o.parameterKind == HardwareParamKind.peqGain && o.bandIndex! > 0).toList();
-      expect(bypassGainOps.length, 9,
-          reason: 'Bands 1–9 each produce a bypass gain=0.0 op');
+      expect(bypassGainOps.length, 7,
+          reason: 'Bands 1–7 each produce a bypass gain=0.0 op; bands 8–9 '
+              'are unavailable');
       for (final op in bypassGainOps) {
         expect(op.targetValue, 0.0,
             reason: 'Bypass band ${op.bandIndex}: gain must be 0.0 dB');

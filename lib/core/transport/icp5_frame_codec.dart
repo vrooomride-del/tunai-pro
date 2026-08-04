@@ -1,6 +1,5 @@
 import 'dart:convert';
-
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
 
 abstract final class Icp5FrameCodec {
   static const identificationRequest = <int>[
@@ -51,49 +50,12 @@ abstract final class Icp5FrameCodec {
       checksum(frame.take(frame.length - 1)) == frame.last;
 
   static String? parseIdentity(List<int> frame) {
-    final validEnvelope = hasValidEnvelope(frame);
-    final expectedType = frame.length >= 3 && frame[2] == 0xE0;
-    if (!validEnvelope || !expectedType || frame.length < 10) {
-      // [TEMP DIAGNOSTIC] ADAU1701 BLE handshake regression — remove after
-      // real device evidence is captured. Does not affect the accept/reject
-      // decision above; logs the same failure the caller already sees as
-      // 'ICP5 identity handshake failed.'
-      final category = !validEnvelope
-          ? 'A (fragmented/malformed frame — envelope or checksum invalid)'
-          : !expectedType
-              ? 'B (unexpected response type — frame[2] != 0xE0)'
-              : 'A (fragmented/short frame — length < 10)';
-      debugPrint('[ICP5 parseIdentity REJECT] category=$category '
-          'frameLength=${frame.length} '
-          'rawHex=${_hexDump(frame)} '
-          'asciiBestEffort=${_asciiBestEffort(frame)} '
-          'expectedProfile=$expectedProfile');
+    if (!hasValidEnvelope(frame) || frame[2] != 0xE0 || frame.length < 10) {
       return null;
     }
     final profile =
         ascii.decode(frame.sublist(8, frame.length - 1), allowInvalid: false);
-    if (profile != expectedProfile) {
-      // [TEMP DIAGNOSTIC] see note above.
-      debugPrint('[ICP5 parseIdentity REJECT] category=C (firmware profile '
-          'mismatch) frameLength=${frame.length} '
-          'rawHex=${_hexDump(frame)} decodedProfile=$profile '
-          'expectedProfile=$expectedProfile');
-      return null;
-    }
-    return profile;
-  }
-
-  // [TEMP DIAGNOSTIC] helpers for parseIdentity logging only — remove
-  // alongside the debugPrint calls above once real evidence is captured.
-  static String _hexDump(List<int> frame) =>
-      frame.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
-
-  static String _asciiBestEffort(List<int> frame) {
-    try {
-      return ascii.decode(frame, allowInvalid: true);
-    } catch (_) {
-      return '<undecodable>';
-    }
+    return profile == expectedProfile ? profile : null;
   }
 
   static bool parseMasterVolumeAck(List<int> frame) {

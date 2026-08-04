@@ -16,38 +16,69 @@ void main() {
           HardwareParamVerification.captureProven);
     });
 
-    test('peqFrequency is captureProven for all bands 0–9 (Consumer-production-proven)', () {
+    test(
+        'peqFrequency is captureProven for bands 0-7 (real-hardware deploy '
+        'confirmed); unavailable for bands 8-9 (PEQ band capability '
+        'correction)', () {
       // Band 0: explicit band-0 entry (PRO readback + Consumer evidence).
       expect(
           adau1701.verificationFor(HardwareParamKind.peqFrequency, bandIndex: 0),
           HardwareParamVerification.captureProven);
-      // Bands 1–9: band-agnostic entry (Consumer icp5_peq_command_builder evidence).
-      // Port treats bands 1–9 as ACK-only (no PRO readback for non-band-0).
-      for (final band in [1, 5, 9]) {
+      // Bands 1–7: real-hardware deploy confirmed passing.
+      // Port treats bands 1–7 as ACK-only (no PRO readback for non-band-0).
+      for (final band in [1, 5, 7]) {
         expect(
             adau1701.verificationFor(HardwareParamKind.peqFrequency,
                 bandIndex: band),
             HardwareParamVerification.captureProven,
-            reason: 'band $band: Consumer-proven encoding, ACK-only at port');
+            reason: 'band $band: real-hardware confirmed, ACK-only at port');
+      }
+      // Bands 8–9: confirmed FAILING on real hardware deploy.
+      for (final band in [8, 9]) {
+        expect(
+            adau1701.verificationFor(HardwareParamKind.peqFrequency,
+                bandIndex: band),
+            HardwareParamVerification.unavailable,
+            reason: 'band $band: confirmed failing on real hardware');
       }
     });
 
-    test('peqGain is captureProven for all bands 0–9 (Consumer-production-proven)', () {
-      for (final band in [0, 1, 5, 9]) {
+    test(
+        'peqGain is captureProven for bands 0-7 (real-hardware deploy '
+        'confirmed); unavailable for bands 8-9 (PEQ band capability '
+        'correction)', () {
+      for (final band in [0, 1, 5, 7]) {
         expect(
             adau1701.verificationFor(HardwareParamKind.peqGain, bandIndex: band),
             HardwareParamVerification.captureProven,
             reason: 'band $band');
       }
+      for (final band in [8, 9]) {
+        expect(
+            adau1701.verificationFor(HardwareParamKind.peqGain, bandIndex: band),
+            HardwareParamVerification.unavailable,
+            reason: 'band $band: confirmed failing on real hardware');
+      }
     });
 
-    test('peqQ is captureProven for all bands (Consumer-production-proven, ACK-only at port)', () {
+    test(
+        'peqQ is captureProven for bands 0-7, unavailable for bands 8-9; '
+        'band-agnostic (no bandIndex) lookup is unavailable (fallback '
+        'removed — PEQ band capability correction)', () {
       expect(adau1701.verificationFor(HardwareParamKind.peqQ, bandIndex: 0),
           HardwareParamVerification.captureProven);
       expect(adau1701.verificationFor(HardwareParamKind.peqQ, bandIndex: 4),
           HardwareParamVerification.captureProven);
+      expect(adau1701.verificationFor(HardwareParamKind.peqQ, bandIndex: 8),
+          HardwareParamVerification.unavailable);
+      expect(adau1701.verificationFor(HardwareParamKind.peqQ, bandIndex: 9),
+          HardwareParamVerification.unavailable);
+      // No bandIndex at all — the band-agnostic captureProven fallback was
+      // deliberately removed so no band silently inherits captureProven
+      // without being individually accounted for; a bandIndex-less lookup
+      // now fails closed to unavailable.
       expect(adau1701.verificationFor(HardwareParamKind.peqQ),
-          HardwareParamVerification.captureProven);
+          HardwareParamVerification.unavailable);
     });
 
     test('delay is unavailable; channelGain and XO frequency are captureProven',
@@ -69,9 +100,12 @@ void main() {
           HardwareParamVerification.captureProven);
     });
 
-    test('band-agnostic gain lookup returns captureProven (Consumer-proven for all bands)', () {
+    test(
+        'band-agnostic gain lookup (no bandIndex) is unavailable — the '
+        'captureProven-for-all-bands fallback was removed (PEQ band '
+        'capability correction)', () {
       expect(adau1701.verificationFor(HardwareParamKind.peqGain),
-          HardwareParamVerification.captureProven);
+          HardwareParamVerification.unavailable);
     });
   });
 
