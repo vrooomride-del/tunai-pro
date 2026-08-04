@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/adau1701_peq_response.dart';
+import '../../../core/channel_compare_provider.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
@@ -13,6 +14,8 @@ import '../../../shared/pro_widgets.dart';
 import '../../../shared/components/channel_selector_sidebar.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../widgets/adau1701_peq_response_graph.dart';
+import '../widgets/current_driver_header.dart';
+import '../widgets/graph_overlay_models.dart';
 import 'pro_adau1466_peq_hardware_panel.dart';
 
 class PeqTab extends ConsumerStatefulWidget {
@@ -30,8 +33,6 @@ class PeqTab extends ConsumerStatefulWidget {
 }
 
 class _PeqTabState extends ConsumerState<PeqTab> {
-  String? _selectedChannelId;
-
   TuningProjectState get _tuning => ref.read(proProjectStoreProvider)
       .projects.where((p) => p.id == widget.projectId).firstOrNull
       ?.tuningState ?? TuningProjectState.createDefault();
@@ -78,6 +79,19 @@ class _PeqTabState extends ConsumerState<PeqTab> {
     // Reset to ten disabled fixed slots (not an empty band list).
     await _savePeqChannel(PeqChannelState.fixed(channelId));
   }
+
+  /// Same mapping the graph already used pre-v3-1 (PeqBand -> PeqResponseBand,
+  /// bypass folded into `enabled`) — extracted so v3-2's compare curves use
+  /// byte-for-byte the same view-model construction as the primary curve.
+  List<PeqResponseBand> _toResponseBands(PeqChannelState ch) => [
+        for (final b in ch.bands)
+          PeqResponseBand(
+            frequencyHz: b.frequencyHz,
+            gainDb: b.gainDb,
+            q: b.q,
+            enabled: b.enabled && !ch.bypassed,
+          ),
+      ];
 
   /// Maps DriverChannel + per-channel PEQ state onto the presentation-only
   /// ChannelSelectorItem — no domain type crosses into ChannelSelectorSidebar
@@ -127,7 +141,20 @@ class _PeqTabState extends ConsumerState<PeqTab> {
       );
     }
 
-    final selectedId = _selectedChannelId ?? drivers.first.id;
+    // ── v3-3 shared channel selection (was: local _selectedChannelId) ─────
+    final compareState = ref.watch(channelCompareProvider);
+    final driverIds = [for (final d in drivers) d.id];
+    final selectedId = resolveSelectedChannelId(compareState, driverIds)!;
+    if (compareState.currentChannelId != null &&
+        !driverIds.contains(compareState.currentChannelId)) {
+      // Stored selection belongs to a different project/driver set — correct
+      // the shared provider after this frame (never mutate during build).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(channelCompareProvider.notifier).validateAgainstDrivers(driverIds);
+        }
+      });
+    }
     final selectedDriver = drivers.firstWhere((d) => d.id == selectedId, orElse: () => drivers.first);
     // Fixed 10-slot model: always present exactly Band 1 .. Band 10.
     final peqCh = tuning.peqChannels
@@ -137,13 +164,34 @@ class _PeqTabState extends ConsumerState<PeqTab> {
         )
         .normalized();
 
+    // ── v3-2 Channel Compare — role+side pairing, never DAC index ─────────
+    final pairId = pairChannelIdFor(selectedId, drivers);
+    final pairDriver =
+        pairId == null ? null : drivers.where((d) => d.id == pairId).firstOrNull;
+    final compareActive = compareState.compareEnabled &&
+        pairId != null &&
+        compareState.compareChannelIds.contains(pairId);
+
+    List<PeqGraphCurve>? overlayCurves;
+    if (compareActive) {
+      final pairPeq = tuning.peqChannels
+          .firstWhere((c) => c.channelId == pairId,
+              orElse: () => PeqChannelState.fixed(pairId))
+          .normalized();
+      overlayCurves = [
+        PeqGraphCurve(label: selectedDriver.name, bands: _toResponseBands(peqCh)),
+        PeqGraphCurve(label: pairDriver!.name, bands: _toResponseBands(pairPeq)),
+      ];
+    }
+
     return Row(children: [
       // ── Left: channel list ──────────────────────────────────────────────
       ChannelSelectorSidebar(
         title: 'CHANNELS',
         items: [for (final d in drivers) _channelItem(d, tuning)],
         selectedId: selectedId,
-        onSelected: (id) => setState(() => _selectedChannelId = id),
+        onSelected: (id) =>
+            ref.read(channelCompareProvider.notifier).setCurrentChannel(id),
       ),
       Container(width: 0.5, color: kProBorder),
 
@@ -168,28 +216,58 @@ class _PeqTabState extends ConsumerState<PeqTab> {
             hardwareAudit,
             const SizedBox(height: 16),
 
-            // Channel header + controls
+            // v3-3.5: shared driver identity header (name/role/side/DSP) —
+            // replaces the identity block _ChannelHeader used to render
+            // locally. Match readout intentionally not passed here: the
+            // existing _CompareSection/_ChannelMatchReadout below already
+            // owns that display (and its toggle/checkbox controls) — this
+            // header would otherwise duplicate the same "Excellent"/dB text.
+            CurrentDriverHeader(drivers: drivers),
+            const SizedBox(height: 14),
+
+            // Channel header controls (bypass/reset only — identity now
+            // lives in CurrentDriverHeader above).
             _ChannelHeader(
-              driver: selectedDriver,
               peqCh: peqCh,
               onBypass: () => _toggleBypass(selectedId),
               onReset: () => _resetChannel(selectedId),
             ),
             const SizedBox(height: 14),
 
+            // v3-2: Compare section — only shown when the selected channel
+            // has a same-role, opposite-side counterpart (e.g. Woofer L has
+            // Woofer R). Pure UI state (channelCompareProvider); PEQ data
+            // model and calculation are untouched.
+            if (pairDriver != null) ...[
+              _CompareSection(
+                pairLabel: pairDriver.name,
+                enabled: compareState.compareEnabled,
+                checked: compareState.compareChannelIds.contains(pairId),
+                onToggleEnabled: (v) => ref
+                    .read(channelCompareProvider.notifier)
+                    .setCompareEnabled(v),
+                onToggleChannel: () => ref
+                    .read(channelCompareProvider.notifier)
+                    .toggleCompareChannel(pairId!),
+                overlayCurves: overlayCurves,
+              ),
+              const SizedBox(height: 14),
+            ],
+
             // Live PEQ magnitude response of this channel's fixed bands.
             // Editing an enabled band's frequency/gain/Q updates the curve
             // immediately (the tab rebuilds from tuning state on every change).
+            // v3-2: when compare is active, overlayCurves/mode add a second
+            // curve + the graph's own [Single][Overlay][Difference] header
+            // (from v3-1) — the single-channel path below is otherwise
+            // unchanged.
             Adau1701PeqResponseGraph(
-              bands: [
-                for (final b in peqCh.bands)
-                  PeqResponseBand(
-                    frequencyHz: b.frequencyHz,
-                    gainDb: b.gainDb,
-                    q: b.q,
-                    enabled: b.enabled && !peqCh.bypassed,
-                  ),
-              ],
+              bands: _toResponseBands(peqCh),
+              overlayCurves: overlayCurves,
+              mode: compareActive ? compareState.mode : PeqGraphMode.single,
+              onModeChanged: compareActive
+                  ? (m) => ref.read(channelCompareProvider.notifier).setMode(m)
+                  : null,
               height: 240,
             ),
             const SizedBox(height: 14),
@@ -219,11 +297,10 @@ class _PeqTabState extends ConsumerState<PeqTab> {
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
 
 class _ChannelHeader extends StatelessWidget {
-  final DriverChannel driver;
   final PeqChannelState peqCh;
   final VoidCallback onBypass;
   final VoidCallback onReset;
-  const _ChannelHeader({required this.driver, required this.peqCh,
+  const _ChannelHeader({required this.peqCh,
       required this.onBypass, required this.onReset});
 
   @override
@@ -235,14 +312,7 @@ class _ChannelHeader extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
     ),
     child: Row(children: [
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(driver.name, style: proTitle(size: 13)),
-          Text('${driver.role.label} · ${driver.side.label} · OUT ${driver.dspOutputIndex ?? '—'}',
-              style: proSubtitle(size: 10)),
-        ]),
-      ),
-      const SizedBox(width: 12),
+      Expanded(child: Text('PEQ Controls', style: proLabel(size: 9, spacing: 1.5))),
       _ToggleBtn(
         label: peqCh.bypassed ? 'BYPASSED' : 'ACTIVE',
         active: !peqCh.bypassed,
@@ -255,6 +325,108 @@ class _ChannelHeader extends StatelessWidget {
   );
 }
 
+/// v3-2 Channel Compare — displayed only when the selected channel has a
+/// same-role, opposite-side counterpart. Analysis/display only: the
+/// Excellent/Good/Needs Tune label and dB readout never write back into any
+/// PEQ data and never trigger automatic correction.
+class _CompareSection extends StatelessWidget {
+  final String pairLabel;
+  final bool enabled;
+  final bool checked;
+  final ValueChanged<bool> onToggleEnabled;
+  final VoidCallback onToggleChannel;
+  final List<PeqGraphCurve>? overlayCurves;
+
+  const _CompareSection({
+    required this.pairLabel,
+    required this.enabled,
+    required this.checked,
+    required this.onToggleEnabled,
+    required this.onToggleChannel,
+    required this.overlayCurves,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('Compare', style: proLabel(size: 9, spacing: 1.5)),
+            const SizedBox(width: 10),
+            _ToggleBtn(
+              label: enabled ? 'ON' : 'OFF',
+              active: enabled,
+              color: enabled ? kProGreen : Colors.white38,
+              onTap: () => onToggleEnabled(!enabled),
+            ),
+          ]),
+          if (enabled) ...[
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: onToggleChannel,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(
+                  checked
+                      ? Icons.check_box_outlined
+                      : Icons.check_box_outline_blank,
+                  size: 14,
+                  color: checked ? kProAccent : Colors.white38,
+                ),
+                const SizedBox(width: 6),
+                Text(pairLabel,
+                    style: proValue(size: 11,
+                        color: checked ? Colors.white : Colors.white54)),
+              ]),
+            ),
+            if (checked && overlayCurves != null && overlayCurves!.length == 2) ...[
+              const SizedBox(height: 8),
+              _ChannelMatchReadout(curves: overlayCurves!),
+            ],
+          ],
+        ]),
+      );
+}
+
+/// Computes and shows the mean-absolute difference between exactly two
+/// compare curves + an Excellent/Good/Needs Tune label. Pure display —
+/// see PeqGraphOverlayMath.difference/meanAbsoluteDifference and
+/// PeqChannelMatch (graph_overlay_models.dart).
+class _ChannelMatchReadout extends StatelessWidget {
+  final List<PeqGraphCurve> curves;
+  const _ChannelMatchReadout({required this.curves});
+
+  @override
+  Widget build(BuildContext context) {
+    // Same sampling density the graph itself uses internally — this is a
+    // display-only readout computed the same way the graph's own difference
+    // mode would, not a new calculation.
+    final points = Adau1701PeqResponse.logFrequencyPoints(count: 220);
+    final a = curves[0].curveFor(points);
+    final b = curves[1].curveFor(points);
+    final diff = PeqGraphOverlayMath.difference(a, b);
+    if (diff == null) return const SizedBox.shrink();
+
+    final meanAbs = PeqGraphOverlayMath.meanAbsoluteDifference(diff);
+    final match = PeqChannelMatch.fromMeanAbsDiff(meanAbs);
+    final color = switch (match) {
+      PeqChannelMatch.excellent => kProGreen,
+      PeqChannelMatch.good => kProAmber,
+      PeqChannelMatch.needsTune => kProRed,
+    };
+
+    return Row(children: [
+      ProStatusPill(label: 'Channel Match · ${match.label}', color: color),
+      const SizedBox(width: 10),
+      Text('Difference: ${meanAbs.toStringAsFixed(1)}dB',
+          style: proSubtitle(size: 10, color: Colors.white54)),
+    ]);
+  }
+}
 
 class _BandCard extends ConsumerStatefulWidget {
   final int index;

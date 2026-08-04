@@ -5,6 +5,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/channel_compare_provider.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
@@ -13,6 +14,7 @@ import '../../../shared/components/channel_selector_sidebar.dart';
 import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_delay_audit_registry.dart';
 import '../../../core/pro_adau1466_operational_delay_executor.dart';
+import '../widgets/current_driver_header.dart';
 
 class DelayTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -35,8 +37,6 @@ class DelayTab extends ConsumerStatefulWidget {
 }
 
 class _DelayTabState extends ConsumerState<DelayTab> {
-  String? _selectedChannelId;
-
   TuningProjectState get _tuning =>
       ref
           .read(proProjectStoreProvider)
@@ -110,9 +110,18 @@ class _DelayTabState extends ConsumerState<DelayTab> {
           padding: const EdgeInsets.all(20), child: audit);
     }
 
-    final selectedId = _selectedChannelId ?? drivers.first.id;
-    final selectedDriver = drivers.firstWhere((d) => d.id == selectedId,
-        orElse: () => drivers.first);
+    // ── v3-3 shared channel selection (was: local _selectedChannelId) ─────
+    final compareState = ref.watch(channelCompareProvider);
+    final driverIds = [for (final d in drivers) d.id];
+    final selectedId = resolveSelectedChannelId(compareState, driverIds)!;
+    if (compareState.currentChannelId != null &&
+        !driverIds.contains(compareState.currentChannelId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(channelCompareProvider.notifier).validateAgainstDrivers(driverIds);
+        }
+      });
+    }
     final ctrl = tuning.getOrCreateControl(selectedId);
 
     return Row(children: [
@@ -121,7 +130,8 @@ class _DelayTabState extends ConsumerState<DelayTab> {
         title: 'CHANNELS',
         items: [for (final d in drivers) _channelItem(d, tuning)],
         selectedId: selectedId,
-        onSelected: (id) => setState(() => _selectedChannelId = id),
+        onSelected: (id) =>
+            ref.read(channelCompareProvider.notifier).setCurrentChannel(id),
       ),
       Container(width: 0.5, color: kProBorder),
 
@@ -149,9 +159,17 @@ class _DelayTabState extends ConsumerState<DelayTab> {
             audit,
             const SizedBox(height: 16),
 
-            // Channel header
-            _DelayChannelHeader(driver: selectedDriver, ctrl: ctrl),
+            // v3-3.5: shared driver identity header — replaces the identity
+            // block _DelayChannelHeader used to render locally.
+            CurrentDriverHeader(drivers: drivers),
             const SizedBox(height: 14),
+
+            // Delay-active status (the only thing _DelayChannelHeader added
+            // beyond identity, which now lives in CurrentDriverHeader above).
+            if (ctrl.hasDelay) ...[
+              const ProStatusPill(label: 'DELAY ACTIVE', color: kProAccent),
+              const SizedBox(height: 14),
+            ],
 
             // Delay editor
             _DelayEditor(
@@ -455,37 +473,6 @@ class _OperationalAdau1466DelayAuditState
 }
 
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
-
-class _DelayChannelHeader extends StatelessWidget {
-  final DriverChannel driver;
-  final ChannelControlState ctrl;
-  const _DelayChannelHeader({required this.driver, required this.ctrl});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        decoration: BoxDecoration(
-          color: kProSurface,
-          border: Border.all(color: kProBorder),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Row(children: [
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(driver.name, style: proTitle(size: 13)),
-              Text(
-                  '${driver.role.label} · ${driver.side.label} · OUT ${driver.dspOutputIndex ?? '—'}',
-                  style: proSubtitle(size: 10)),
-            ]),
-          ),
-          if (ctrl.hasDelay) ...[
-            const SizedBox(width: 12),
-            const ProStatusPill(label: 'DELAY ACTIVE', color: kProAccent),
-          ],
-        ]),
-      );
-}
 
 class _DelayEditor extends StatefulWidget {
   final ChannelControlState ctrl;

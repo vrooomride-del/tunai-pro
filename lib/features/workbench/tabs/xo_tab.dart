@@ -5,6 +5,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/channel_compare_provider.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
@@ -14,6 +15,7 @@ import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_xo_audit_registry.dart';
 import '../../../core/pro_adau1466_wfl_lpf2_safeload_executor.dart';
 import '../../../core/pro_phase_alignment.dart';
+import '../widgets/current_driver_header.dart';
 import '../widgets/pro_crossover_response_graph.dart';
 
 class XoTab extends ConsumerStatefulWidget {
@@ -37,8 +39,6 @@ class XoTab extends ConsumerStatefulWidget {
 }
 
 class _XoTabState extends ConsumerState<XoTab> {
-  String? _selectedChannelId;
-
   TuningProjectState get _tuning =>
       ref
           .read(proProjectStoreProvider)
@@ -133,9 +133,18 @@ class _XoTabState extends ConsumerState<XoTab> {
           padding: const EdgeInsets.all(20), child: hardwareAudit);
     }
 
-    final selectedId = _selectedChannelId ?? drivers.first.id;
-    final selectedDriver = drivers.firstWhere((d) => d.id == selectedId,
-        orElse: () => drivers.first);
+    // ── v3-3 shared channel selection (was: local _selectedChannelId) ─────
+    final compareState = ref.watch(channelCompareProvider);
+    final driverIds = [for (final d in drivers) d.id];
+    final selectedId = resolveSelectedChannelId(compareState, driverIds)!;
+    if (compareState.currentChannelId != null &&
+        !driverIds.contains(compareState.currentChannelId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(channelCompareProvider.notifier).validateAgainstDrivers(driverIds);
+        }
+      });
+    }
     final xoCh = tuning.crossoverChannels.firstWhere(
       (c) => c.channelId == selectedId,
       orElse: () => CrossoverChannelState.empty(selectedId),
@@ -147,7 +156,8 @@ class _XoTabState extends ConsumerState<XoTab> {
         title: 'CHANNELS',
         items: [for (final d in drivers) _channelItem(d, tuning)],
         selectedId: selectedId,
-        onSelected: (id) => setState(() => _selectedChannelId = id),
+        onSelected: (id) =>
+            ref.read(channelCompareProvider.notifier).setCurrentChannel(id),
       ),
       Container(width: 0.5, color: kProBorder),
 
@@ -174,9 +184,14 @@ class _XoTabState extends ConsumerState<XoTab> {
             hardwareAudit,
             const SizedBox(height: 16),
 
-            // Channel header
+            // v3-3.5: shared driver identity header — replaces the identity
+            // block _XoChannelHeader used to render locally.
+            CurrentDriverHeader(drivers: drivers),
+            const SizedBox(height: 14),
+
+            // Channel header controls (bypass/polarity only — identity now
+            // lives in CurrentDriverHeader above).
             _XoChannelHeader(
-              driver: selectedDriver,
               xoCh: xoCh,
               onBypass: () =>
                   _saveXoChannel(xoCh.copyWith(bypassed: !xoCh.bypassed)),
@@ -679,13 +694,11 @@ class _WflLpf2SafeLoadDiagnosticCardState
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
 
 class _XoChannelHeader extends StatelessWidget {
-  final DriverChannel driver;
   final CrossoverChannelState xoCh;
   final VoidCallback onBypass;
   final VoidCallback onPolarity;
   const _XoChannelHeader(
-      {required this.driver,
-      required this.xoCh,
+      {required this.xoCh,
       required this.onBypass,
       required this.onPolarity});
 
@@ -699,13 +712,8 @@ class _XoChannelHeader extends StatelessWidget {
         ),
         child: Row(children: [
           Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(driver.name, style: proTitle(size: 13)),
-              Text(
-                  '${driver.role.label} · ${driver.side.label} · OUT ${driver.dspOutputIndex ?? '—'}',
-                  style: proSubtitle(size: 10)),
-            ]),
+            child: Text('Crossover Controls',
+                style: proLabel(size: 9, spacing: 1.5)),
           ),
           _XoToggle(
             label: xoCh.bypassed ? 'BYPASSED' : 'ACTIVE',

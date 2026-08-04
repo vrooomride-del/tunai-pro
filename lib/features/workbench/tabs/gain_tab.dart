@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:math';
+import '../../../core/channel_compare_provider.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_tuning_data.dart';
@@ -16,6 +17,7 @@ import '../../../core/pro_adau1466_gain_channel_registry.dart';
 import '../../../core/pro_adau1466_operational_gain_executor.dart';
 import '../../../core/pro_adau1466_mute_channel_registry.dart';
 import '../../../core/pro_adau1466_operational_mute_executor.dart';
+import '../widgets/current_driver_header.dart';
 
 class GainTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -38,8 +40,6 @@ class GainTab extends ConsumerStatefulWidget {
 }
 
 class _GainTabState extends ConsumerState<GainTab> {
-  String? _selectedChannelId;
-
   TuningProjectState get _tuning =>
       ref
           .read(proProjectStoreProvider)
@@ -127,9 +127,18 @@ class _GainTabState extends ConsumerState<GainTab> {
       );
     }
 
-    final selectedId = _selectedChannelId ?? drivers.first.id;
-    final selectedDriver = drivers.firstWhere((d) => d.id == selectedId,
-        orElse: () => drivers.first);
+    // ── v3-3 shared channel selection (was: local _selectedChannelId) ─────
+    final compareState = ref.watch(channelCompareProvider);
+    final driverIds = [for (final d in drivers) d.id];
+    final selectedId = resolveSelectedChannelId(compareState, driverIds)!;
+    if (compareState.currentChannelId != null &&
+        !driverIds.contains(compareState.currentChannelId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ref.read(channelCompareProvider.notifier).validateAgainstDrivers(driverIds);
+        }
+      });
+    }
     final ctrl = tuning.getOrCreateControl(selectedId);
 
     return Row(children: [
@@ -138,7 +147,8 @@ class _GainTabState extends ConsumerState<GainTab> {
         title: 'CHANNELS',
         items: [for (final d in drivers) _channelItem(d, tuning)],
         selectedId: selectedId,
-        onSelected: (id) => setState(() => _selectedChannelId = id),
+        onSelected: (id) =>
+            ref.read(channelCompareProvider.notifier).setCurrentChannel(id),
       ),
       Container(width: 0.5, color: kProBorder),
 
@@ -167,9 +177,13 @@ class _GainTabState extends ConsumerState<GainTab> {
               operational,
             ],
             const SizedBox(height: 16),
-            // Channel header
+            // v3-3.5: shared driver identity header — replaces the identity
+            // block _GainChannelHeader used to render locally.
+            CurrentDriverHeader(drivers: drivers),
+            const SizedBox(height: 14),
+            // Channel header controls (mute/solo/reset only — identity now
+            // lives in CurrentDriverHeader above).
             _GainChannelHeader(
-              driver: selectedDriver,
               ctrl: ctrl,
               onMute: () => _toggleMute(selectedId),
               onSolo: () => _toggleSolo(selectedId),
@@ -215,14 +229,12 @@ class _GainTabState extends ConsumerState<GainTab> {
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
 
 class _GainChannelHeader extends StatelessWidget {
-  final DriverChannel driver;
   final ChannelControlState ctrl;
   final VoidCallback onMute;
   final VoidCallback onSolo;
   final VoidCallback onReset;
   const _GainChannelHeader(
-      {required this.driver,
-      required this.ctrl,
+      {required this.ctrl,
       required this.onMute,
       required this.onSolo,
       required this.onReset});
@@ -237,13 +249,7 @@ class _GainChannelHeader extends StatelessWidget {
         ),
         child: Row(children: [
           Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(driver.name, style: proTitle(size: 13)),
-              Text(
-                  '${driver.role.label} · ${driver.side.label} · OUT ${driver.dspOutputIndex ?? '—'}',
-                  style: proSubtitle(size: 10)),
-            ]),
+            child: Text('Gain Controls', style: proLabel(size: 9, spacing: 1.5)),
           ),
           const SizedBox(width: 12),
           _ToggleBtn(
