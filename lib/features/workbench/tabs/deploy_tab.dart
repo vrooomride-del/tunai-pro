@@ -280,7 +280,14 @@ class _DeployTabState extends ConsumerState<DeployTab> {
             exportPackage: project.exportState.activePackage!,
             profile: _hardwareProfileFor(
                 project.exportState.activePackage!.targetPlatform),
-            contextFactory: () => ref.read(adau1701Icp5UsbContextProvider),
+            // Same active-context preference as the Gain deploy dialog
+            // (deploy_dialog.dart): BLE when connected, USB otherwise. This
+            // was previously hardcoded to the USB-only provider, so a
+            // BLE-connected device always failed preflight here even though
+            // the same transport worked for Gain deploy.
+            contextFactory: () =>
+                ref.read(activeAdau1701ContextProvider) ??
+                ref.read(adau1701Icp5UsbContextProvider),
             onResult: (result) {
               if (!mounted) return;
               setState(() => _lastHardwareResult = result);
