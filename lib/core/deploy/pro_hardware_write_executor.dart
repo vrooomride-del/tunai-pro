@@ -10,6 +10,8 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../transport/adau1701_deployment_report.dart';
 import 'pro_hardware_capability.dart';
 import 'pro_hardware_write_approval.dart';
@@ -177,6 +179,15 @@ class HardwareWriteExecutor {
   /// Defaults to 10 s — enough for a BLE round-trip + readback retries.
   final Duration opTimeout;
 
+  /// BLE deploy-stability fix: a small settle delay inserted after a
+  /// successful operation, before the next write is issued. Audit found no
+  /// pacing at all between back-to-back operations across a long (e.g.
+  /// 128-op) sequential deploy — a plausible contributor to occasional
+  /// late-ACK/quarantine misses (see ADAU1701 Deploy Stability
+  /// Investigation). Does not affect operation order, retry, timeout, or
+  /// frame content — it only delays when the next write is sent.
+  static const Duration _interOpSettleDelay = Duration(milliseconds: 50);
+
   const HardwareWriteExecutor(
     this.port, {
     this.opTimeout = const Duration(seconds: 10),
@@ -284,10 +295,39 @@ class HardwareWriteExecutor {
 
       // Rule 3 — delegate to the existing safety chain via the port.
       // Apply per-operation timeout so a hung future does not block forever.
+      // [TEMP DIAGNOSTIC] ADAU1701 deploy stability investigation — one
+      // metric per operation: index, write timestamp, ACK/completion
+      // timestamp, latency ms. Times the whole port.preflightAndWrite call
+      // (preflight + wire write + ACK/readback), not just the wire ACK — a
+      // full-deploy stability picture needs per-operation elapsed time, not
+      // just the transport-level write/notify pair already logged as
+      // "[ICP5 ACK Exchange]" in icp5_transports.dart. Logging only; no
+      // change to timeout, pacing, or control flow. Remove once real
+      // long-deploy evidence is captured.
+      final opLabel = '${op.channelId}·${op.parameterKind.name}'
+          '${op.bandIndex != null ? '·band${op.bandIndex}' : ''}';
+      final writeAt = DateTime.now();
       try {
         final report = await port.preflightAndWrite(op).timeout(opTimeout);
+        final ackAt = DateTime.now();
+        debugPrint('[ICP5 Deploy Timing] index=$i/$total op=$opLabel '
+            'writeAt=${writeAt.toIso8601String()} '
+            'ackAt=${ackAt.toIso8601String()} '
+            'latencyMs=${ackAt.difference(writeAt).inMilliseconds}');
         outcomes.add(_mapReport(op, report));
+        // Settle delay after a successful ACK, before the next write — see
+        // _interOpSettleDelay doc comment. Skipped after the last operation
+        // (nothing left to protect). Operation order is unchanged: this only
+        // delays *when* the next iteration's write is issued.
+        if (outcomes.last.succeeded && i < ops.length - 1) {
+          await Future<void>.delayed(_interOpSettleDelay);
+        }
       } on TimeoutException {
+        final ackAt = DateTime.now();
+        debugPrint('[ICP5 Deploy Timing] index=$i/$total op=$opLabel '
+            'writeAt=${writeAt.toIso8601String()} '
+            'ackAt=TIMEOUT '
+            'latencyMs=${ackAt.difference(writeAt).inMilliseconds}');
         final successCount = outcomes.where((o) => o.succeeded).length;
         outcomes.add(HardwareWriteOpOutcome(
           op: op,
@@ -300,6 +340,11 @@ class HardwareWriteExecutor {
         ));
         break; // stop; do not re-attempt already-written ops
       } catch (e) {
+        final ackAt = DateTime.now();
+        debugPrint('[ICP5 Deploy Timing] index=$i/$total op=$opLabel '
+            'writeAt=${writeAt.toIso8601String()} '
+            'ackAt=ERROR($e) '
+            'latencyMs=${ackAt.difference(writeAt).inMilliseconds}');
         final successCount = outcomes.where((o) => o.succeeded).length;
         outcomes.add(HardwareWriteOpOutcome(
           op: op,

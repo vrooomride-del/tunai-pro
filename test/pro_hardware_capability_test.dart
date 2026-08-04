@@ -50,14 +50,19 @@ void main() {
           HardwareParamVerification.captureProven);
     });
 
-    test('delay is unavailable; channelGain and XO frequency are captureProven', () {
+    test('delay is unavailable; channelGain and XO frequency are captureProven',
+        () {
       expect(adau1701.verificationFor(HardwareParamKind.channelDelay),
           HardwareParamVerification.unavailable);
       // channelGain: ICP5 parameter-ID 0x14 + float32 LE + channel byte confirmed.
       expect(adau1701.verificationFor(HardwareParamKind.channelGain),
           HardwareParamVerification.captureProven);
-      // crossoverHighPass/LowPass: param-ID 0x15, band 0, capture-proven via
-      // filter cutoff TEST/RESTORE pairs for channels 0–3.
+      // crossoverHighPass/LowPass: RESTORED to captureProven — Phase 7-4A
+      // (ADAU1701 XO Deploy Restore). The P0 incident (XO Deploy Parameter
+      // Corruption) was fixed at the export-builder level: XO now has its
+      // own diff-only builder (buildAdau1701XoExportBlocks), which cannot
+      // resend an unrelated channel or leak into PEQ. The frequency-only
+      // frame/param-ID/channel-mapping evidence itself is unchanged.
       expect(adau1701.verificationFor(HardwareParamKind.crossoverHighPass),
           HardwareParamVerification.captureProven);
       expect(adau1701.verificationFor(HardwareParamKind.crossoverLowPass),

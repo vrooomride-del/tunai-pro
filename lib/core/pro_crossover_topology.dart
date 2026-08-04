@@ -122,6 +122,7 @@ enum XoSlope {
           orElse: () => XoSlope.slope24);
 
   static XoSlope fromExisting(CrossoverSlope s) => switch (s) {
+    CrossoverSlope.db6 => XoSlope.slope6,
     CrossoverSlope.db12 => XoSlope.slope12,
     CrossoverSlope.db24 => XoSlope.slope24,
     CrossoverSlope.db36 => XoSlope.slope36,

@@ -206,16 +206,41 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
 
   /// Records confirmed ACK-applied gains per channel for rollback.
   /// Merges [gains] into the existing map so previously-applied channels
-  /// that weren't part of this write are preserved.
+  /// that weren't part of this write are preserved. No-ops (fail-closed,
+  /// same as [DeployProjectState.activePackage]) if [id] no longer names a
+  /// project in the store — e.g. the project was deleted while a deploy or
+  /// restore was in flight.
   Future<void> updateDeployAppliedGains(
       String id, Map<String, double> gains) async {
-    final project = state.projects.firstWhere((p) => p.id == id);
+    final project = state.projects.where((p) => p.id == id).firstOrNull;
+    if (project == null) return;
     final merged = {
       ...project.deployState.appliedGainsByChannel,
       ...gains,
     };
     final updated = project.deployState.copyWith(
       appliedGainsByChannel: merged,
+      updatedAt: DateTime.now(),
+    );
+    await updateProject(
+        project.copyWith(deployState: updated, updatedAt: DateTime.now()));
+  }
+
+  /// Records confirmed ACK-applied crossover state per channel (Phase 7-4A).
+  /// Merges [xo] into the existing map, same pattern as
+  /// [updateDeployAppliedGains]. buildAdau1701XoExportBlocks() diffs against
+  /// this on the next deploy so only an actually-changed channel/side is
+  /// re-sent. No-ops (fail-closed) if [id] no longer names a project.
+  Future<void> updateDeployAppliedXo(
+      String id, Map<String, AppliedXoChannelState> xo) async {
+    final project = state.projects.where((p) => p.id == id).firstOrNull;
+    if (project == null) return;
+    final merged = {
+      ...project.deployState.appliedXoByChannel,
+      ...xo,
+    };
+    final updated = project.deployState.copyWith(
+      appliedXoByChannel: merged,
       updatedAt: DateTime.now(),
     );
     await updateProject(

@@ -1,14 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_adau1466_delay_audit_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_gain_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_mute_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_xo_audit_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_wfl_lpf2_safeload_executor.dart';
+import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
 import 'package:tunai_pro/features/workbench/tabs/xo_tab.dart';
 import 'package:tunai_pro/features/workbench/workbench_shell.dart';
+
+// This panel is ADAU1466-only (Phase 7-2). The harness project must declare
+// dspTarget: 'ADAU1466' or xo_tab.dart now hides it, same as it always hid
+// the ADAU1701 ICP5 deploy path from an ADAU1466 project.
+ProProject _adau1466Project() {
+  final now = DateTime(2026, 8, 1);
+  return ProProject(
+    id: 'missing',
+    name: 'ADAU1466 Bring-up',
+    createdAt: now,
+    updatedAt: now,
+    dspTarget: 'ADAU1466',
+    acousticState: MeasurementProjectState.createDefault(),
+  );
+}
 
 class _CountingRealBackend implements ProUsbiNativeBackend {
   int calls = 0;
@@ -354,7 +373,11 @@ void main() {
   testWidgets('visible diagnostic enables WFL only and does not auto-write',
       (tester) async {
     final backend = _CountingRealBackend();
-    await tester.pumpWidget(ProviderScope(
+    SharedPreferences.setMockInitialValues({});
+    final container = ProviderContainer();
+    container.read(proProjectStoreProvider.notifier).addProject(_adau1466Project());
+    await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
         child: MaterialApp(
             home: Scaffold(
       body: XoTab(

@@ -53,6 +53,48 @@ class Icp5ProtocolEvidence {
   final List<int>? peqReadRequest;
   final String? peqReadResponseFormat;
 
+  // ── Crossover filter type / slope / coefficient evidence (Phase 7-P0) ──────
+  // Deliberately ALL NULL below — no capture exists yet for any of these.
+  // See lib/core/dsp/adau1701_crossover_filter_engine.dart for the
+  // hardware-independent coefficient math prepared ahead of this evidence,
+  // and the Phase 7-5/7-P0 capture checklist for exactly what fills these in.
+  // No field here may ever be populated with a guessed/inferred value — only
+  // from a real logged ICP5 frame or SigmaStudio-exported parameter map.
+
+  /// Parameter ID for filter type (LR/Butterworth/Bessel), if runtime
+  /// case (a). Null until captured — never assume it exists near 0x15/0x18.
+  final int? filterTypeParameterId;
+  final int? filterTypePropertyByte;
+  final String? filterTypeEncoding;
+
+  /// Captured raw values per filter-type label once known, e.g.
+  /// {'LR': 0, 'BW': 1, 'Bessel': 2} — labels only, no assumed ordering.
+  final Map<String, int>? capturedFilterTypeValuesByLabel;
+
+  /// Parameter ID for slope/order (12/18/24/48 dB/oct), if runtime case (a).
+  final int? filterSlopeParameterId;
+  final int? filterSlopePropertyByte;
+  final String? filterSlopeEncoding;
+  final Map<String, int>? capturedFilterSlopeValuesByLabel;
+
+  /// Parameter ID for raw biquad coefficients (b0,b1,b2,a1,a2 per section),
+  /// if case (c) — generated/compiled coefficients rather than a type/slope
+  /// selector. [filterCoefficientOrder] describes the byte layout once known
+  /// (e.g. "b0,b1,b2,a1,a2 per section, low-frequency-pole section first").
+  final int? filterCoefficientParameterId;
+  final String? filterCoefficientOrder;
+  final String? filterCoefficientEndian;
+  final String? filterCoefficientValueEncoding;
+  final Map<int, int>? filterCoefficientChannelMapping;
+
+  /// True only once type/slope/coefficient evidence above has been
+  /// independently confirmed over that specific transport. Both default
+  /// false — matches [bluetooth] being entirely empty for every other
+  /// parameter in this registry today (gain/mute/PEQ/XO-frequency were all
+  /// captured over USB only; BLE has never been independently verified).
+  final bool filterTypeSlopeCoefficientUsbVerified;
+  final bool filterTypeSlopeCoefficientBleVerified;
+
   const Icp5ProtocolEvidence({
     this.usbVendorId,
     this.usbProductId,
@@ -107,10 +149,37 @@ class Icp5ProtocolEvidence {
     this.peqBand1GainPairsByChannel,
     this.peqReadRequest,
     this.peqReadResponseFormat,
+    this.filterTypeParameterId,
+    this.filterTypePropertyByte,
+    this.filterTypeEncoding,
+    this.capturedFilterTypeValuesByLabel,
+    this.filterSlopeParameterId,
+    this.filterSlopePropertyByte,
+    this.filterSlopeEncoding,
+    this.capturedFilterSlopeValuesByLabel,
+    this.filterCoefficientParameterId,
+    this.filterCoefficientOrder,
+    this.filterCoefficientEndian,
+    this.filterCoefficientValueEncoding,
+    this.filterCoefficientChannelMapping,
+    this.filterTypeSlopeCoefficientUsbVerified = false,
+    this.filterTypeSlopeCoefficientBleVerified = false,
   });
 
   bool get hasPeqReadEvidence =>
       peqReadRequest != null && peqReadResponseFormat != null;
+
+  /// True only once at least one of filter type/slope/coefficient has a
+  /// captured parameter ID AND has been verified over at least one
+  /// transport. False for both [Icp5ProtocolEvidenceRegistry.usb] and
+  /// [Icp5ProtocolEvidenceRegistry.bluetooth] today — this is the fail-closed
+  /// marker the deploy/capability layer should gate on before ever treating
+  /// filter type/slope/coefficient as writable.
+  bool get hasFilterTypeSlopeCoefficientEvidence =>
+      (filterTypeSlopeCoefficientUsbVerified || filterTypeSlopeCoefficientBleVerified) &&
+      (filterTypeParameterId != null ||
+          filterSlopeParameterId != null ||
+          filterCoefficientParameterId != null);
 
   bool get isProtocolProven =>
       usbVendorId != null &&

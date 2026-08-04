@@ -17,6 +17,7 @@ import '../../../core/deploy/pro_hardware_write_approval.dart';
 import '../../../core/deploy/pro_hardware_write_executor.dart';
 import '../../../core/deploy/pro_hardware_write_plan.dart';
 import '../../../core/pro_acoustic_data.dart';
+import '../../../core/pro_deploy_package_data.dart' show AppliedXoChannelState;
 import '../../../core/pro_export_data.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_tuning_data.dart';
@@ -34,6 +35,7 @@ Future<void> showDeployDialog({
   required List<DriverChannel> channels,
   required TuningProjectState tuning,
   required Map<String, double> previousAppliedGains,
+  Map<String, AppliedXoChannelState> previousAppliedXo = const {},
   Icp5PeqWritePort? overridePort,
 }) {
   return showDialog<void>(
@@ -44,6 +46,7 @@ Future<void> showDeployDialog({
       channels: channels,
       tuning: tuning,
       previousAppliedGains: previousAppliedGains,
+      previousAppliedXo: previousAppliedXo,
       overridePort: overridePort,
     ),
   );
@@ -58,6 +61,7 @@ class _DeployDialogBody extends ConsumerStatefulWidget {
   final List<DriverChannel> channels;
   final TuningProjectState tuning;
   final Map<String, double> previousAppliedGains;
+  final Map<String, AppliedXoChannelState> previousAppliedXo;
   final Icp5PeqWritePort? overridePort;
 
   const _DeployDialogBody({
@@ -65,6 +69,7 @@ class _DeployDialogBody extends ConsumerStatefulWidget {
     required this.channels,
     required this.tuning,
     required this.previousAppliedGains,
+    this.previousAppliedXo = const {},
     this.overridePort,
   });
 
@@ -94,9 +99,18 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       tuning: widget.tuning,
       previousAppliedGains: previousApplied.isEmpty ? null : previousApplied,
     );
-    final peqXoBlocks = buildAdau1701PeqXoExportBlocks(
+    // PEQ and XO are independent builders (Phase 7-4A). PEQ stays full-state
+    // (unchanged); XO is diff-only against widget.previousAppliedXo — an
+    // unchanged channel produces no XO block at all, so an XO-only edit
+    // cannot resend another channel's crossover, and never touches PEQ.
+    final peqBlocks = buildAdau1701PeqExportBlocks(
       channels: widget.channels,
       tuning: widget.tuning,
+    );
+    final xoBlocks = buildAdau1701XoExportBlocks(
+      channels: widget.channels,
+      tuning: widget.tuning,
+      previousAppliedXo: widget.previousAppliedXo,
     );
     final muteDelayBlocks = buildAdau1701MuteDelayExportBlocks(
       channels: widget.channels,
@@ -104,7 +118,8 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     );
     final allBlocks = [
       ...gainPkg.parameterBlocks,
-      ...peqXoBlocks,
+      ...peqBlocks,
+      ...xoBlocks,
       ...muteDelayBlocks
     ];
     final pkg = gainPkg.copyWith(
@@ -149,19 +164,55 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
       },
     );
 
-    // Persist the successfully-written gains for rollback.
+    // Persist the acknowledged gains for rollback. Channel gain has no
+    // readback service, so a successful write is always ackOnly, never
+    // `written` — gating on `written` here would mean this never persists
+    // anything. `succeeded` (written OR ackOnly) is the correct condition;
+    // it does not claim DSP-side verification, only that the device
+    // acknowledged the command (see HardwareWriteOpStatus docs).
     if (result.executed) {
       final written = <String, double>{};
+      final xoChangedChannels = <String>{};
       for (final o in result.outcomes) {
-        if (o.status == HardwareWriteOpStatus.written &&
-            o.op.parameterKind == HardwareParamKind.channelGain) {
+        if (!o.succeeded) continue;
+        if (o.op.parameterKind == HardwareParamKind.channelGain) {
           written[o.op.channelId] = o.op.targetValue.toDouble();
+        } else if (o.op.parameterKind == HardwareParamKind.crossoverHighPass ||
+            o.op.parameterKind == HardwareParamKind.crossoverLowPass) {
+          xoChangedChannels.add(o.op.channelId);
         }
       }
       if (written.isNotEmpty && mounted) {
         await ref
             .read(proProjectStoreProvider.notifier)
             .updateDeployAppliedGains(widget.projectId, written);
+      }
+      // Record the full current XO state (not just the changed side) for
+      // each channel with a successful write — the unchanged side, if any,
+      // already matched by definition of the diff, so this accurately
+      // reflects what hardware now holds. See buildAdau1701XoExportBlocks().
+      if (xoChangedChannels.isNotEmpty && mounted) {
+        final xoUpdates = <String, AppliedXoChannelState>{};
+        for (final channelId in xoChangedChannels) {
+          final xoCh = widget.tuning.crossoverChannels
+              .where((c) => c.channelId == channelId)
+              .firstOrNull;
+          if (xoCh == null) continue;
+          xoUpdates[channelId] = AppliedXoChannelState(
+            channelId: channelId,
+            highPassFrequency:
+                xoCh.hasHighPass ? xoCh.highPass!.frequencyHz : null,
+            lowPassFrequency:
+                xoCh.hasLowPass ? xoCh.lowPass!.frequencyHz : null,
+            filterType: xoCh.highPass?.type ?? xoCh.lowPass?.type,
+            slope: xoCh.highPass?.slope ?? xoCh.lowPass?.slope,
+          );
+        }
+        if (xoUpdates.isNotEmpty) {
+          await ref
+              .read(proProjectStoreProvider.notifier)
+              .updateDeployAppliedXo(widget.projectId, xoUpdates);
+        }
       }
     }
 
@@ -258,12 +309,11 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     final executor = HardwareWriteExecutor(ctx.writePort);
     final result = await executor.execute(approval);
 
-    // Persist restored values.
+    // Persist restored values. See the same `succeeded` note in _execute().
     if (result.executed) {
       final restored = <String, double>{};
       for (final o in result.outcomes) {
-        if (o.status == HardwareWriteOpStatus.written &&
-            o.op.parameterKind == HardwareParamKind.channelGain) {
+        if (o.succeeded && o.op.parameterKind == HardwareParamKind.channelGain) {
           restored[o.op.channelId] = o.op.targetValue.toDouble();
         }
       }
@@ -418,6 +468,31 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           style: proSubtitle(size: 10, color: Colors.white38),
         ),
       ],
+      if (blocked.any((op) =>
+          op.parameterKind == HardwareParamKind.crossoverHighPass ||
+          op.parameterKind == HardwareParamKind.crossoverLowPass)) ...[
+        if (_hasWritableOps) const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: kProAmber.withValues(alpha: 0.08),
+            border: Border.all(color: kProAmber.withValues(alpha: 0.4)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(children: [
+            Icon(Icons.block_outlined, size: 14, color: kProAmber),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'XO hardware deployment temporarily blocked — mapping '
+                'validation required.',
+                style: proValue(size: 11, color: kProAmber),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 8),
+      ],
       if (blocked.isNotEmpty) ...[
         if (_hasWritableOps) const SizedBox(height: 12),
         Text('BLOCKED — no confirmed write path',
@@ -546,8 +621,14 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     final firstFailure = failures.isEmpty ? null : failures.first;
     final firstFailureIndex =
         firstFailure == null ? null : r.outcomes.indexOf(firstFailure) + 1;
+    // ACK-only means the device acknowledged the command — not that a
+    // readback confirmed the DSP parameter actually changed. Only
+    // HardwareWriteOpStatus.written carries that confirmation. Never label
+    // an ack-only result as verified.
+    final hasAckOnly =
+        r.outcomes.any((o) => o.status == HardwareWriteOpStatus.ackOnly);
     final label = failures.isEmpty
-        ? 'PASS_ACK'
+        ? (hasAckOnly ? 'PASS_ACK (not DSP-verified)' : 'PASS_ACK (verified)')
         : 'FAIL ${failures.length}개 · '
             '$firstFailureIndex/${r.outcomes.length} · '
             'channel=${firstFailure!.op.channelId} · '

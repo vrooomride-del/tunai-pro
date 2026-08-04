@@ -221,12 +221,23 @@ void _addOp(
     verification: verification,
     writable: verification.isWriteEligible && adau1701GainInRange,
     reason: adau1701GainInRange
-        ? _reasonFor(verification, profile)
+        ? _reasonFor(verification, profile, kind)
         : 'ADAU1701 PEQ gain must be between -6.0 and +3.0 dB.',
   ));
 }
 
-String _reasonFor(HardwareParamVerification v, HardwareDeviceProfile profile) {
+String _reasonFor(
+    HardwareParamVerification v, HardwareDeviceProfile profile, HardwareParamKind kind) {
+  // P0 forensic fix (XO Deploy Parameter Corruption): surface the specific
+  // blocking reason for XO, rather than the generic "no confirmed write
+  // path" message, since this is a deliberate safety block pending mapping
+  // proof, not an unmapped/never-attempted parameter.
+  if (v == HardwareParamVerification.unavailable &&
+      (kind == HardwareParamKind.crossoverHighPass ||
+          kind == HardwareParamKind.crossoverLowPass)) {
+    return 'XO hardware deployment temporarily blocked — mapping '
+        'validation required.';
+  }
   switch (v) {
     case HardwareParamVerification.captureProven:
       return 'Capture-proven write path on ${profile.deviceName}.';

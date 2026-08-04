@@ -84,7 +84,8 @@ void main() {
     expect(plan.writableOperations, isNotEmpty);
   });
 
-  test('XO HPF/LPF are captureProven; polarity remains unavailable', () {
+  test('XO HPF/LPF are captureProven again (Phase 7-4A diff-export restore); '
+      'polarity remains unavailable', () {
     final plan = buildHardwareWritePlan(
       _pkg([
         const ExportParameterBlock(
@@ -105,7 +106,10 @@ void main() {
     final hp = _op(plan, HardwareParamKind.crossoverHighPass);
     final lp = _op(plan, HardwareParamKind.crossoverLowPass);
     final pol = _op(plan, HardwareParamKind.channelPolarity);
-    // HPF/LPF: param-ID 0x15, band 0, capture-proven via filter cutoff TEST/RESTORE.
+    // HPF/LPF: restored to captureProven — Phase 7-4A (ADAU1701 XO Deploy
+    // Restore). Safety now comes from buildAdau1701XoExportBlocks() being
+    // diff-only, not from a blanket capability block. See
+    // pro_hardware_capability.dart for the full incident/fix rationale.
     expect(hp.writable, isTrue);
     expect(hp.verification, HardwareParamVerification.captureProven);
     expect(lp.writable, isTrue);
@@ -196,7 +200,7 @@ void main() {
 
     // Band 0: gain(proven), freq(proven), q(proven).
     // Band 1: gain(proven), freq(proven), q(proven).
-    // XO high-pass: captureProven.
+    // XO high-pass: captureProven — Phase 7-4A (ADAU1701 XO Deploy Restore).
     final s = plan.summary;
     expect(s.totalOps, 7); // 3 + 3 + 1
     expect(s.captureProvenCount, 7); // all ops are captureProven

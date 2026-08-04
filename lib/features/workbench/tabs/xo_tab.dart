@@ -100,13 +100,33 @@ class _XoTabState extends ConsumerState<XoTab> {
         store.projects.where((p) => p.id == widget.projectId).firstOrNull;
     final drivers = project?.acousticState.driverChannels ?? [];
     final tuning = project?.tuningState ?? TuningProjectState.createDefault();
-    final hardwareAudit = Adau1466XoHardwareMappingPanel(
-      backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
-      isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
-      deviceOpen: widget.deviceOpen,
-      dspWritesDisabled: widget.dspWritesDisabled,
-      onDspWriteStop: widget.onDspWriteStop,
-    );
+    // ADAU1466-only diagnostic panel — irrelevant (and confusing) on ADAU1701
+    // projects, which write crossover through the ICP5 deploy path, not USBi.
+    final showAdau1466Diagnostics = project?.dspTarget == 'ADAU1466';
+    // P0: capture-proven ADAU1701 filter types are Butterworth and Bessel
+    // only (see Adau1701XoParameterRegistry.filterType — no complete
+    // captured frame exists for Linkwitz-Riley at all); capture-proven
+    // slopes are 6/12/24 dB/oct (Adau1701XoParameterRegistry.slope). These
+    // restrict what a NEW selection can be — an existing project's already-
+    // stored (possibly out-of-range) value is never hidden or silently
+    // changed, see _FilterCard below.
+    final isAdau1701 = project?.dspTarget == 'ADAU1701';
+    final allowedTypes = isAdau1701
+        ? const [CrossoverFilterType.butterworth, CrossoverFilterType.bessel]
+        : CrossoverFilterType.values;
+    final allowedSlopes = isAdau1701
+        ? const [CrossoverSlope.db6, CrossoverSlope.db12, CrossoverSlope.db24]
+        : CrossoverSlope.values;
+    final hardwareAudit = showAdau1466Diagnostics
+        ? Adau1466XoHardwareMappingPanel(
+            backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
+            isWindowsPlatform:
+                widget.isWindowsPlatform ?? () => Platform.isWindows,
+            deviceOpen: widget.deviceOpen,
+            dspWritesDisabled: widget.dspWritesDisabled,
+            onDspWriteStop: widget.onDspWriteStop,
+          )
+        : const SizedBox.shrink();
 
     if (drivers.isEmpty) {
       return SingleChildScrollView(
@@ -170,10 +190,14 @@ class _XoTabState extends ConsumerState<XoTab> {
               label: 'HPF',
               side: FilterSide.highPass,
               filter: xoCh.highPass,
+              allowedTypes: allowedTypes,
+              allowedSlopes: allowedSlopes,
               onAdd: () => _saveXoChannel(xoCh.copyWith(
-                highPass: const CrossoverFilter(
+                highPass: CrossoverFilter(
                   side: FilterSide.highPass,
-                  type: CrossoverFilterType.linkwitzRiley,
+                  type: isAdau1701
+                      ? CrossoverFilterType.butterworth
+                      : CrossoverFilterType.linkwitzRiley,
                   slope: CrossoverSlope.db24,
                   frequencyHz: 2000.0,
                 ),
@@ -189,10 +213,14 @@ class _XoTabState extends ConsumerState<XoTab> {
               label: 'LPF',
               side: FilterSide.lowPass,
               filter: xoCh.lowPass,
+              allowedTypes: allowedTypes,
+              allowedSlopes: allowedSlopes,
               onAdd: () => _saveXoChannel(xoCh.copyWith(
-                lowPass: const CrossoverFilter(
+                lowPass: CrossoverFilter(
                   side: FilterSide.lowPass,
-                  type: CrossoverFilterType.linkwitzRiley,
+                  type: isAdau1701
+                      ? CrossoverFilterType.butterworth
+                      : CrossoverFilterType.linkwitzRiley,
                   slope: CrossoverSlope.db24,
                   frequencyHz: 2000.0,
                 ),
@@ -731,6 +759,8 @@ class _FilterCard extends ConsumerStatefulWidget {
   final String label;
   final FilterSide side;
   final CrossoverFilter? filter;
+  final List<CrossoverFilterType> allowedTypes;
+  final List<CrossoverSlope> allowedSlopes;
   final VoidCallback onAdd;
   final VoidCallback onRemove;
   final ValueChanged<CrossoverFilter> onUpdate;
@@ -738,6 +768,8 @@ class _FilterCard extends ConsumerStatefulWidget {
       {required this.label,
       required this.side,
       required this.filter,
+      required this.allowedTypes,
+      required this.allowedSlopes,
       required this.onAdd,
       required this.onRemove,
       required this.onUpdate});
@@ -836,7 +868,7 @@ class _FilterCardState extends ConsumerState<_FilterCard> {
                 _FilterDropdown<CrossoverFilterType>(
                   label: 'TYPE',
                   value: f.type,
-                  items: CrossoverFilterType.values,
+                  items: {...widget.allowedTypes, f.type}.toList(),
                   labelOf: (t) => t.label,
                   onChanged: (t) => widget.onUpdate(f.copyWith(type: t)),
                 ),
@@ -845,7 +877,7 @@ class _FilterCardState extends ConsumerState<_FilterCard> {
                 _FilterDropdown<CrossoverSlope>(
                   label: 'SLOPE',
                   value: f.slope,
-                  items: CrossoverSlope.values,
+                  items: {...widget.allowedSlopes, f.slope}.toList(),
                   labelOf: (s) => s.label,
                   onChanged: (s) => widget.onUpdate(f.copyWith(slope: s)),
                 ),

@@ -7,6 +7,7 @@
 // (preflight → write → ACK) still applies.
 
 import '../pro_acoustic_data.dart';
+import '../pro_deploy_package_data.dart' show AppliedXoChannelState;
 import '../pro_export_data.dart';
 import '../pro_tuning_data.dart';
 
@@ -70,18 +71,21 @@ DspExportPackage buildAdau1701GainExportPackage({
   );
 }
 
-/// Builds [ExportParameterBlock]s for PEQ and crossover from [tuning] for
-/// the channels listed in [channels]. Channels with no bands and no configured
-/// XO filters are skipped.
+/// Builds [ExportParameterBlock]s for PEQ from [tuning] for the channels
+/// listed in [channels]. Channels with no bands are skipped.
 ///
-/// Band indices in the PEQ blocks are the original positions in [PeqChannelState.bands]
-/// so that the capability layer (band_0 = Band 1 = capture-proven) resolves
+/// Band indices are the original positions in [PeqChannelState.bands] so
+/// that the capability layer (band_0 = Band 1 = capture-proven) resolves
 /// correctly.
 ///
 /// Disabled bands use semantic bypass: gain_db=0.0 is written so the DSP
 /// nullifies that filter slot. Omitting a disabled band would leave stale DSP
 /// values in hardware from any prior write.
-List<ExportParameterBlock> buildAdau1701PeqXoExportBlocks({
+///
+/// Unchanged since Phase 7-4A (ADAU1701 XO Deploy Restore): this function is
+/// PEQ-only and always full-state, exactly as before the XO split — PEQ
+/// behavior is explicitly out of scope for that fix.
+List<ExportParameterBlock> buildAdau1701PeqExportBlocks({
   required List<DriverChannel> channels,
   required TuningProjectState tuning,
 }) {
@@ -131,20 +135,72 @@ List<ExportParameterBlock> buildAdau1701PeqXoExportBlocks({
     ));
   }
 
+  return blocks;
+}
+
+/// Builds [ExportParameterBlock]s for crossover (XO) from [tuning] for the
+/// channels listed in [channels] — Phase 7-4A (ADAU1701 XO Deploy Restore,
+/// diff-based safe apply).
+///
+/// **Diff-only.** Unlike the pre-P0-fix combined builder, this function
+/// compares each channel's current HPF/LPF frequency against
+/// [previousAppliedXo] (the last ACK-confirmed state, from
+/// `DeployProjectState.appliedXoByChannel`) and emits a block ONLY for a
+/// channel with at least one side whose frequency actually changed — and
+/// within that block, only the changed side's `freq_hz` key is included.
+/// An unchanged channel produces no block at all. This is what makes it safe
+/// to re-enable XO as a capture-proven, writable capability: a single edit
+/// can no longer resend every other channel's XO state (the root cause of
+/// the P0 "XO Deploy Parameter Corruption" incident).
+///
+/// [previousAppliedXo] absent/empty (first deploy ever, nothing previously
+/// confirmed on hardware) is treated as "no known state" — a configured side
+/// is sent, since (unlike gain's 0.0 dB hardware default) there is no
+/// unambiguous "untouched" XO value to skip.
+///
+/// Still frequency-only: `CrossoverFilter.type` / `.slope` are not — and
+/// have never been — transmitted (no capture-proven mapping exists for
+/// them; see [AppliedXoChannelState]). Frame encoding, parameter ID (0x15),
+/// and channel mapping are entirely unchanged from before the P0 fix.
+List<ExportParameterBlock> buildAdau1701XoExportBlocks({
+  required List<DriverChannel> channels,
+  required TuningProjectState tuning,
+  Map<String, AppliedXoChannelState>? previousAppliedXo,
+}) {
+  final ts = DateTime.now().millisecondsSinceEpoch;
+  int seq = 0;
+  final channelIds = {for (final ch in channels) ch.id};
+  final blocks = <ExportParameterBlock>[];
+
+  bool changed(double? current, double? previous) {
+    if (current == null) return false; // this side isn't configured at all
+    if (previous == null) return true; // never confirmed on hardware before
+    return (current - previous).abs() >= 0.001;
+  }
+
   for (final xoCh in tuning.crossoverChannels) {
     if (!channelIds.contains(xoCh.channelId)) continue;
     if (!xoCh.isConfigured) continue;
+
+    final prev = previousAppliedXo?[xoCh.channelId];
+    final currentHp = xoCh.hasHighPass ? xoCh.highPass!.frequencyHz : null;
+    final currentLp = xoCh.hasLowPass ? xoCh.lowPass!.frequencyHz : null;
+    final hpChanged = changed(currentHp, prev?.highPassFrequency);
+    final lpChanged = changed(currentLp, prev?.lowPassFrequency);
+    if (!hpChanged && !lpChanged) continue; // nothing changed on this channel
+
     final params = <String, dynamic>{};
-    if (xoCh.hasHighPass) params['highPass'] = {'freq_hz': xoCh.highPass!.frequencyHz};
-    if (xoCh.hasLowPass) params['lowPass'] = {'freq_hz': xoCh.lowPass!.frequencyHz};
+    if (hpChanged) params['highPass'] = {'freq_hz': currentHp};
+    if (lpChanged) params['lowPass'] = {'freq_hz': currentLp};
+
     blocks.add(ExportParameterBlock(
       id: 'blk_xo_${xoCh.channelId}_${ts}_${seq++}',
       type: ExportBlockType.crossover,
       channelId: xoCh.channelId,
       title: '${xoCh.channelId} XO',
       summary: [
-        if (xoCh.hasHighPass) 'HPF @ ${xoCh.highPass!.freqLabel}',
-        if (xoCh.hasLowPass) 'LPF @ ${xoCh.lowPass!.freqLabel}',
+        if (hpChanged) 'HPF @ ${xoCh.highPass!.freqLabel}',
+        if (lpChanged) 'LPF @ ${xoCh.lowPass!.freqLabel}',
       ].join(' / '),
       parameters: params,
     ));

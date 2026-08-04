@@ -31,7 +31,7 @@ class _FakeTransport implements Adau1701TuningTransport {
   final List<(int, double, int)> gainWrites = [];     // writePeqGain
   final List<(int, int, int)> peqFreqWrites = [];     // writePeqFrequency (param 0x18)
   final List<(int, double, int)> qWrites = [];        // writePeqQ
-  final List<(int, int)> filterFreqWrites = [];       // writeFilterFrequency (param 0x15)
+  final List<(int, int, bool)> filterFreqWrites = [];  // writeFilterFrequency (param 0x15): (channel, freq, isHighPass)
   final List<(int, double)> outputGainWrites = [];    // writeOutputGain
 
   bool ackSuccess = true;
@@ -75,8 +75,8 @@ class _FakeTransport implements Adau1701TuningTransport {
 
   @override
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
-      {int band = 0}) async {
-    filterFreqWrites.add((channel, frequencyHz));
+      {int band = 0, bool isHighPass = false}) async {
+    filterFreqWrites.add((channel, frequencyHz, isHighPass));
     return Adau1701WriteAck(success: ackSuccess, message: 'filterFreq');
   }
 
@@ -315,7 +315,12 @@ void main() {
   });
 
   group('XO dispatch — param 0x15 (writeFilterFrequency)', () {
-    test('crossoverHighPass: writeFilterFrequency called (NOT writePeqFrequency), ACK-only', () async {
+    test(
+        'crossoverHighPass: writeFilterFrequency called with isHighPass=true '
+        '(NOT writePeqFrequency), ACK-only', () async {
+      // Phase 7-5B regression: before this fix, isHighPass was never passed
+      // through at all, so every crossoverHighPass write silently used the
+      // LPF wire byte (0x01) instead of HPF's (0x00).
       final t = _FakeTransport();
       final report = await _port(t).preflightAndWrite(HardwareWriteOp(
         channelId: 'ch_wf_l',
@@ -327,7 +332,7 @@ void main() {
         reason: 'test',
       ));
 
-      expect(t.filterFreqWrites, [(1, 3000)]);
+      expect(t.filterFreqWrites, [(1, 3000, true)]);
       expect(t.peqFreqWrites, isEmpty, // PEQ method must NOT be called for XO
           reason: 'XO uses param 0x15, not param 0x18');
       expect(report.deploymentSucceeded, isTrue);
@@ -336,7 +341,9 @@ void main() {
       expect(report.deploymentResult!.message, contains('crossover'));
     });
 
-    test('crossoverLowPass: writeFilterFrequency called, ACK-only', () async {
+    test(
+        'crossoverLowPass: writeFilterFrequency called with isHighPass=false, '
+        'ACK-only', () async {
       final t = _FakeTransport();
       final report = await _port(t).preflightAndWrite(HardwareWriteOp(
         channelId: 'ch_tw_r',
@@ -348,7 +355,7 @@ void main() {
         reason: 'test',
       ));
 
-      expect(t.filterFreqWrites, [(2, 1500)]);
+      expect(t.filterFreqWrites, [(2, 1500, false)]);
       expect(t.peqFreqWrites, isEmpty);
       expect(report.isAckOnly, isTrue);
     });

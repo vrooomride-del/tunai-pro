@@ -40,7 +40,7 @@ class _FakeTransport implements Adau1701TuningTransport {
       const Adau1701WriteAck(success: true, message: 'ok');
   @override
   Future<Adau1701WriteAck> writeFilterFrequency(int c, int f,
-          {int band = 0}) async =>
+          {int band = 0, bool isHighPass = false}) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
   @override
   Future<Adau1701WriteAck> writePeqFrequency(int c, int f,

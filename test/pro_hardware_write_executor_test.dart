@@ -118,6 +118,30 @@ void main() {
     }
   });
 
+  test(
+      'inter-operation settle delay does not affect operation order '
+      '(BLE deploy-stability fix)', () async {
+    final port = _FakePort((_) => _written());
+    final approval = _approvedBand1();
+    final expectedOrder =
+        approval.approvedOperations.map((o) => o.parameterKind).toList();
+
+    final stopwatch = Stopwatch()..start();
+    final result = await HardwareWriteExecutor(port).execute(approval);
+    stopwatch.stop();
+
+    // Order is byte-for-byte the same as the approval's own operation order —
+    // the settle delay only changes *when* each write is issued, never which
+    // op is issued next.
+    expect(port.received.map((o) => o.parameterKind).toList(), expectedOrder);
+    expect(result.allWritten, isTrue);
+
+    // 3 successful ops -> 2 inter-op delays (none after the last op). Each
+    // delay is 50ms, so total elapsed must be at least 2 * 50ms; this proves
+    // the settle delay is actually being applied, not just present in code.
+    expect(stopwatch.elapsedMilliseconds, greaterThanOrEqualTo(95));
+  });
+
   test('rejected approval is refused — no port calls', () async {
     // channelPolarity is unavailable on ADAU1701 → selecting it is rejected.
     final plan = buildHardwareWritePlan(

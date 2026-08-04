@@ -111,7 +111,8 @@ class Adau1701Icp5PeqWritePort implements Icp5PeqWritePort {
       }
       final ack = await transport.writeFilterFrequency(
           channel, op.targetValue.round(),
-          band: 0);
+          band: 0,
+          isHighPass: op.parameterKind == HardwareParamKind.crossoverHighPass);
       final result = Icp5PhaseCResult(
         success: ack.success,
         wasActualWrite: ack.success,

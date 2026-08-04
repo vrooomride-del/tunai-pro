@@ -85,12 +85,14 @@ enum CrossoverFilterType {
 }
 
 enum CrossoverSlope {
+  db6,
   db12,
   db24,
   db36,
   db48;
 
   String get label => switch (this) {
+    CrossoverSlope.db6 => '6 dB/oct',
     CrossoverSlope.db12 => '12 dB/oct',
     CrossoverSlope.db24 => '24 dB/oct',
     CrossoverSlope.db36 => '36 dB/oct',
@@ -98,6 +100,7 @@ enum CrossoverSlope {
   };
 
   String get short => switch (this) {
+    CrossoverSlope.db6 => '6',
     CrossoverSlope.db12 => '12',
     CrossoverSlope.db24 => '24',
     CrossoverSlope.db36 => '36',

@@ -91,13 +91,19 @@ class _DelayTabState extends ConsumerState<DelayTab> {
         store.projects.where((p) => p.id == widget.projectId).firstOrNull;
     final drivers = project?.acousticState.driverChannels ?? [];
     final tuning = project?.tuningState ?? TuningProjectState.createDefault();
-    final audit = OperationalAdau1466DelayAudit(
-      backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
-      isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
-      deviceOpen: widget.deviceOpen,
-      dspWritesDisabled: widget.dspWritesDisabled,
-      onDspWriteStop: widget.onDspWriteStop,
-    );
+    // ADAU1466-only diagnostic panel — irrelevant (and confusing) on ADAU1701
+    // projects, which write delay through the ICP5 deploy path, not USBi.
+    final showAdau1466Diagnostics = project?.dspTarget == 'ADAU1466';
+    final audit = showAdau1466Diagnostics
+        ? OperationalAdau1466DelayAudit(
+            backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
+            isWindowsPlatform:
+                widget.isWindowsPlatform ?? () => Platform.isWindows,
+            deviceOpen: widget.deviceOpen,
+            dspWritesDisabled: widget.dspWritesDisabled,
+            onDspWriteStop: widget.onDspWriteStop,
+          )
+        : const SizedBox.shrink();
 
     if (drivers.isEmpty) {
       return SingleChildScrollView(

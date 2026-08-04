@@ -163,7 +163,7 @@ void main() {
       );
       final tuning = TuningProjectState.createDefault()
           .copyWith(peqChannels: [peqCh]);
-      final blocks = buildAdau1701PeqXoExportBlocks(
+      final blocks = buildAdau1701PeqExportBlocks(
         channels: [_kCh],
         tuning: tuning,
       );
@@ -194,7 +194,7 @@ void main() {
       );
       final tuning = TuningProjectState.createDefault()
           .copyWith(peqChannels: [peqCh]);
-      final blocks = buildAdau1701PeqXoExportBlocks(
+      final blocks = buildAdau1701PeqExportBlocks(
         channels: [_kCh],
         tuning: tuning,
       );
@@ -216,7 +216,7 @@ void main() {
       final peqCh = PeqChannelState(channelId: _kCh.id, bands: [disabledBand]);
       final tuning = TuningProjectState.createDefault()
           .copyWith(peqChannels: [peqCh]);
-      final blocks = buildAdau1701PeqXoExportBlocks(
+      final blocks = buildAdau1701PeqExportBlocks(
           channels: [_kCh], tuning: tuning);
       final pkg = DspExportPackage(id: 'test_bypass', parameterBlocks: blocks);
       final plan =

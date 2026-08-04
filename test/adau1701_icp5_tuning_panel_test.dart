@@ -100,7 +100,7 @@ class _FakeTuningTransport implements Adau1701TuningTransport {
 
   @override
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
-      {int band = 0}) async {
+      {int band = 0, bool isHighPass = false}) async {
     lastFreqBand = band;
     lastFreqChannel = channel;
     return Adau1701WriteAck(

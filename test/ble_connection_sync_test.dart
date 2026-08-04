@@ -40,7 +40,7 @@ class _FakeTransport implements Adau1701TuningTransport {
   @override Future<RawDspStateSnapshot> readRawDspState() async => throw UnimplementedError();
   @override Future<Adau1701WriteAck> writePeqGain(int c, double g, {int band = 0}) async => const Adau1701WriteAck(success: true, message: 'ok');
   @override Future<Adau1701WriteAck> writePeqFrequency(int c, int f, {int band = 0}) async => const Adau1701WriteAck(success: true, message: 'ok');
-  @override Future<Adau1701WriteAck> writeFilterFrequency(int c, int f, {int band = 0}) async => const Adau1701WriteAck(success: true, message: 'ok');
+  @override Future<Adau1701WriteAck> writeFilterFrequency(int c, int f, {int band = 0, bool isHighPass = false}) async => const Adau1701WriteAck(success: true, message: 'ok');
   @override Future<Adau1701WriteAck> writePeqQ(int c, double q, {int band = 0}) async => const Adau1701WriteAck(success: true, message: 'ok');
   @override Future<Adau1701WriteAck> writeOutputGain(int c, double g) async => const Adau1701WriteAck(success: true, message: 'ok');
   @override Future<Adau1701WriteAck> writeMasterMute(bool muted) async => const Adau1701WriteAck(success: true, message: 'ok');

@@ -3,6 +3,7 @@
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
 import 'pro_export_data.dart';
+import 'pro_tuning_data.dart' show CrossoverFilterType, CrossoverSlope;
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -365,6 +366,70 @@ class PresetRecord {
   );
 }
 
+// ── AppliedXoChannelState ─────────────────────────────────────────────────────
+
+/// Last ACK-confirmed crossover state for one channel, per Phase 7-4A
+/// (ADAU1701 XO Deploy Restore — diff-based safe apply).
+///
+/// [highPassFrequency] / [lowPassFrequency] are the only fields the ICP5
+/// write path can actually transmit (param 0x15, frequency-only — see
+/// buildAdau1701XoExportBlocks()); they are what buildAdau1701XoExportBlocks
+/// diffs against to decide whether a side needs to be re-sent.
+///
+/// [filterType] / [slope] are recorded for completeness/audit only — there
+/// is still no capture-proven write path for filter type or slope (that gap
+/// is unchanged from the P0 XO Deploy Parameter Corruption fix), so a
+/// type/slope-only change never by itself produces a write operation.
+class AppliedXoChannelState {
+  final String channelId;
+  final double? highPassFrequency;
+  final double? lowPassFrequency;
+  final CrossoverFilterType? filterType;
+  final CrossoverSlope? slope;
+
+  const AppliedXoChannelState({
+    required this.channelId,
+    this.highPassFrequency,
+    this.lowPassFrequency,
+    this.filterType,
+    this.slope,
+  });
+
+  AppliedXoChannelState copyWith({
+    double? highPassFrequency,
+    double? lowPassFrequency,
+    CrossoverFilterType? filterType,
+    CrossoverSlope? slope,
+  }) => AppliedXoChannelState(
+    channelId: channelId,
+    highPassFrequency: highPassFrequency ?? this.highPassFrequency,
+    lowPassFrequency: lowPassFrequency ?? this.lowPassFrequency,
+    filterType: filterType ?? this.filterType,
+    slope: slope ?? this.slope,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'channelId': channelId,
+    if (highPassFrequency != null) 'highPassFrequency': highPassFrequency,
+    if (lowPassFrequency != null) 'lowPassFrequency': lowPassFrequency,
+    if (filterType != null) 'filterType': filterType!.toJson(),
+    if (slope != null) 'slope': slope!.toJson(),
+  };
+
+  factory AppliedXoChannelState.fromJson(Map<String, dynamic> j) =>
+      AppliedXoChannelState(
+        channelId: j['channelId'] as String,
+        highPassFrequency: (j['highPassFrequency'] as num?)?.toDouble(),
+        lowPassFrequency: (j['lowPassFrequency'] as num?)?.toDouble(),
+        filterType: j['filterType'] != null
+            ? CrossoverFilterType.fromJson(j['filterType'] as String)
+            : null,
+        slope: j['slope'] != null
+            ? CrossoverSlope.fromJson(j['slope'] as String)
+            : null,
+      );
+}
+
 // ── DeployProjectState ────────────────────────────────────────────────────────
 
 class DeployProjectState {
@@ -377,6 +442,10 @@ class DeployProjectState {
   // Last successfully ACK-confirmed gain per channel (channelId → dB).
   // Written after PASS_ACK; used for rollback ("Restore previous").
   final Map<String, double> appliedGainsByChannel;
+  // Last successfully ACK-confirmed crossover state per channel (Phase
+  // 7-4A). Written after PASS_ACK; buildAdau1701XoExportBlocks() diffs
+  // against this to send only the channel(s)/side(s) that actually changed.
+  final Map<String, AppliedXoChannelState> appliedXoByChannel;
 
   DeployProjectState({
     this.packages = const [],
@@ -386,8 +455,10 @@ class DeployProjectState {
     DateTime? updatedAt,
     this.revision = 0,
     Map<String, double>? appliedGainsByChannel,
+    Map<String, AppliedXoChannelState>? appliedXoByChannel,
   }) : updatedAt = updatedAt ?? DateTime.now(),
-       appliedGainsByChannel = appliedGainsByChannel ?? const {};
+       appliedGainsByChannel = appliedGainsByChannel ?? const {},
+       appliedXoByChannel = appliedXoByChannel ?? const {};
 
   // ── Computed getters ──────────────────────────────────────────────────────
 
@@ -451,6 +522,7 @@ class DeployProjectState {
     DateTime? updatedAt,
     int? revision,
     Map<String, double>? appliedGainsByChannel,
+    Map<String, AppliedXoChannelState>? appliedXoByChannel,
   }) => DeployProjectState(
     packages: packages ?? this.packages,
     presets: presets ?? this.presets,
@@ -459,6 +531,7 @@ class DeployProjectState {
     updatedAt: updatedAt ?? this.updatedAt,
     revision: revision ?? this.revision,
     appliedGainsByChannel: appliedGainsByChannel ?? this.appliedGainsByChannel,
+    appliedXoByChannel: appliedXoByChannel ?? this.appliedXoByChannel,
   );
 
   // ── Serialisation ─────────────────────────────────────────────────────────
@@ -472,6 +545,9 @@ class DeployProjectState {
     'revision': revision,
     if (appliedGainsByChannel.isNotEmpty)
       'appliedGainsByChannel': appliedGainsByChannel,
+    if (appliedXoByChannel.isNotEmpty)
+      'appliedXoByChannel':
+          appliedXoByChannel.map((k, v) => MapEntry(k, v.toJson())),
   };
 
   factory DeployProjectState.fromJson(Map<String, dynamic> j) =>
@@ -491,6 +567,10 @@ class DeployProjectState {
         revision: j['revision'] as int? ?? 0,
         appliedGainsByChannel: (j['appliedGainsByChannel'] as Map?)
             ?.map((k, v) => MapEntry(k as String, (v as num).toDouble())) ??
+            const {},
+        appliedXoByChannel: (j['appliedXoByChannel'] as Map?)?.map((k, v) =>
+                MapEntry(k as String,
+                    AppliedXoChannelState.fromJson(Map<String, dynamic>.from(v as Map)))) ??
             const {},
       );
 

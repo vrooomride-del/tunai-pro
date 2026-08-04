@@ -94,7 +94,7 @@ void main() {
         '"No driver channels configured."', (tester) async {
       // Default tuning: all gains 0 dB, no PEQ bands enabled, no XO.
       // buildAdau1701GainExportPackage → 0 blocks (0 dB = hardware default).
-      // buildAdau1701PeqXoExportBlocks → 0 blocks.
+      // buildAdau1701PeqExportBlocks / buildAdau1701XoExportBlocks → 0 blocks each.
       // _hasWritableOps = false → planView renders the no-ops message.
       // Expected: 'No pending writes.' (not 'No driver channels configured.')
       await tester.pumpWidget(_host());

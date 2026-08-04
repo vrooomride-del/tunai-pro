@@ -129,6 +129,16 @@ class Icp5UsbTransport
   int _applicationGeneration = 0;
   int _activeGeneration = -1;
 
+  // [TEMP DIAGNOSTIC] ADAU1701 PEQ ACK investigation — counts every frame
+  // observed by _onBytes while an application response is outstanding for
+  // the current _exchange() call, reset at the start of each _exchange().
+  // Logging only; does not affect routing, retry, or the parser. Remove once
+  // real device evidence is captured. Note: _exchange()/_onBytes() are the
+  // shared application-exchange path used by every ICP5 write (gain, delay,
+  // filter cutoff, PEQ...), not PEQ-exclusive — the logs below fire for any
+  // in-flight write, tagged generically as "ICP5 ACK Exchange".
+  int _diagFramesWhilePending = 0;
+
   /// How long to discard incoming notifications after a command timeout before
   /// the next request is allowed. The ICP5 protocol carries no per-command
   /// sequence identifier, so this bounded fail-closed quarantine (proven in the
@@ -551,13 +561,13 @@ class Icp5UsbTransport
   }
 
   /// Writes an arbitrary crossover filter frequency in 20 .. 20 000 Hz for
-  /// [channel] and [band] (0 = Band 1). Uses param 0x15 (crossover path only).
+  /// [channel] and [isHighPass] side. Uses param 0x15 (crossover path only).
   @override
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
-      {int band = 0}) async {
+      {int band = 0, bool isHighPass = false}) async {
     final r = await _writePhaseC(
       Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(channel, frequencyHz,
-          band: band),
+          band: band, isHighPass: isHighPass),
       Icp5FrameCodec.parseFilterFrequencyAck,
     );
     return Adau1701WriteAck(success: r.success, message: r.message);
@@ -745,15 +755,31 @@ class Icp5UsbTransport
       }
       final application = _pendingResponse;
       final matcher = _pendingAccepts;
-      if (application != null &&
-          !application.isCompleted &&
-          _activeGeneration >= 0 &&
-          matcher != null &&
-          matcher(frame)) {
-        application.complete(frame);
+      if (application != null && !application.isCompleted) {
+        // [TEMP DIAGNOSTIC] see _diagFramesWhilePending note above. `accepted`
+        // is computed once and used below in place of a second matcher(frame)
+        // call — the accept/route decision is otherwise unchanged from the
+        // original `_activeGeneration >= 0 && matcher != null && matcher(frame)`
+        // condition.
+        _diagFramesWhilePending++;
+        final accepted =
+            _activeGeneration >= 0 && matcher != null && matcher(frame);
+        debugPrint('[ICP5 ACK Exchange] RECEIVED '
+            'frame#=$_diagFramesWhilePending '
+            'bytes=[${_diagHexDump(frame)}] '
+            'activeGeneration=$_activeGeneration '
+            'matcherAccepted=$accepted');
+        if (accepted) {
+          application.complete(frame);
+        }
       }
     }
   }
+
+  // [TEMP DIAGNOSTIC] helper for the ACK-exchange logging only — remove
+  // alongside the debugPrint calls once real evidence is captured.
+  static String _diagHexDump(List<int> bytes) =>
+      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
 
   // On a transport-level stream error or close, invalidate the active
   // generation so no in-flight frame can satisfy the pending request, and mark
@@ -786,6 +812,33 @@ class Icp5UsbTransport
   /// ConsumerBleService.sendApplicationFrameAndAwaitExchange: exactly one
   /// request may await a response at a time; the generation-guarded completer
   /// and matcher are armed BEFORE the write so a fast notify is never missed.
+  ///
+  /// P0 fix — ACK exchange race: this previously used
+  /// `response.future.timeout(readTimeout)`. `Future.timeout()` returns a
+  /// *derived* future; once its internal timer fires, that derived future
+  /// resolves with `TimeoutException` regardless of whether the underlying
+  /// `response` Completer is ever completed — `response` itself is left
+  /// live and completable. Because ICP5 PEQ ACKs are content-identical
+  /// across every band/channel/property (no per-request correlation field),
+  /// a genuinely late device ACK could still reach `_onBytes` and complete
+  /// `response` after this function had already returned `null` — silently
+  /// discarded at best, or (if a later exchange had by then reset
+  /// `_pendingResponse` to a new generation) misrouted to satisfy the
+  /// *next* request at worst. See the ACK-race investigation for the full
+  /// trace.
+  ///
+  /// Fix: replace the `Future.timeout()` wrapper with an explicit `Timer`.
+  /// The timer's callback is the ONLY place a timeout is recognized, and it
+  /// invalidates the pending request (`_clearApplicationRequest`, which nulls
+  /// `_pendingResponse`/`_pendingAccepts` and clears `_activeGeneration`) in
+  /// the same synchronous callback as failing `response` — no `await` in
+  /// between. Dart's event loop cannot interleave another callback (such as
+  /// `_onBytes` processing a late frame) inside that synchronous callback, so
+  /// by the time any later event-loop turn could deliver a late frame,
+  /// `_pendingResponse` for this generation is already null and the frame is
+  /// dropped exactly like an ordinary stale frame — it can never complete
+  /// this exchange after the fact, and it can never be misrouted to whatever
+  /// exchange comes next.
   Future<List<int>?> _exchange(
       List<int> tx, bool Function(List<int>) accepts) async {
     if (_pendingResponse != null) {
@@ -796,14 +849,33 @@ class Icp5UsbTransport
     _pendingAccepts = accepts;
     final response = Completer<List<int>>();
     _pendingResponse = response;
+    // [TEMP DIAGNOSTIC] see _diagFramesWhilePending note above — reset the
+    // per-exchange received-frame counter and log the transmitted frame.
+    _diagFramesWhilePending = 0;
+    debugPrint('[ICP5 ACK Exchange] TRANSMIT bytes=[${_diagHexDump(tx)}]');
+    Timer? timeoutTimer;
     try {
       final written =
           await _connection!.write(tx, writeTimeout).timeout(writeTimeout);
       if (written != tx.length) {
         throw StateError('Partial serial write: $written/${tx.length}.');
       }
-      return await response.future.timeout(readTimeout);
+      // Explicit timeout lifecycle (see doc comment above) — replaces
+      // `response.future.timeout(readTimeout)`.
+      timeoutTimer = Timer(readTimeout, () {
+        if (response.isCompleted) return;
+        _clearApplicationRequest(generation, response);
+        response.completeError(
+            TimeoutException('ICP5 ACK timeout', readTimeout));
+      });
+      final frame = await response.future;
+      timeoutTimer.cancel();
+      return frame;
     } on TimeoutException {
+      // [TEMP DIAGNOSTIC] see note above.
+      debugPrint('[ICP5 ACK Exchange] TIMEOUT '
+          'receivedFrameCount=$_diagFramesWhilePending');
+      timeoutTimer?.cancel();
       // Consumer-proven fail-closed timeout handling: invalidate the generation
       // so an in-flight notification is discarded immediately, quarantine to
       // absorb a delayed BLE frame, then flush any partial receive bytes.
@@ -812,6 +884,7 @@ class Icp5UsbTransport
       _buffer.reset();
       return null;
     } finally {
+      timeoutTimer?.cancel();
       _clearApplicationRequest(generation, response);
     }
   }
@@ -854,10 +927,17 @@ class Icp5UsbTransport
 }
 
 class Icp5BluetoothTransport extends Icp5UsbTransport {
+  /// BLE deploy-stability fix: previously this constructor did not expose
+  /// [staleAckQuarantine] at all, so every BLE transport silently inherited
+  /// [Icp5UsbTransport]'s USB-oriented 50ms default — too short to reliably
+  /// absorb a late-but-genuine BLE ACK during a long (e.g. 128-op) sequential
+  /// deploy (audit: ADAU1701 Deploy Stability Investigation). BLE now has its
+  /// own explicit default of 250ms; still overridable by callers/tests.
   Icp5BluetoothTransport(
       {Icp5SerialDriver? driver,
       super.readTimeout,
       super.writeTimeout,
+      super.staleAckQuarantine = const Duration(milliseconds: 250),
       super.onDspWriteStop})
       : super(driver: driver ?? Icp5BluetoothGattDriver());
 

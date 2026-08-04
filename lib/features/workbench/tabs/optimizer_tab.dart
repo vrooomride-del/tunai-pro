@@ -136,7 +136,7 @@ class _OptimizerTabState extends ConsumerState<OptimizerTab> {
             highPass: CrossoverFilter(
               frequencyHz: sug.proposedCrossoverHz!,
               side: FilterSide.highPass,
-              type: CrossoverFilterType.linkwitzRiley,
+              type: CrossoverFilterType.butterworth,
               enabled: true,
             ),
           );

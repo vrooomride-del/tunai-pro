@@ -200,10 +200,44 @@ abstract final class HardwareDeviceProfiles {
       HardwareCapabilityEntry(
           kind: HardwareParamKind.channelGain,
           verification: HardwareParamVerification.captureProven),
-      // crossoverHighPass / crossoverLowPass: parameter-ID 0x15 + band 0 +
-      // 16-bit LE Hz, capture-proven via TEST/RESTORE pairs on channels 0–3
-      // (CH0/1 at 2000/2001 Hz, CH2/3 at 20/21 Hz). Frame structure identical
-      // to buildFilterFrequencyWriteArbitrary(channel, freq, band: 0).
+      // crossoverHighPass / crossoverLowPass: RESTORED to captureProven —
+      // Phase 7-4A (ADAU1701 XO Deploy Restore, diff-based safe apply).
+      //
+      // History: P0 forensic fix ("XO Deploy Parameter Corruption") found a
+      // real-hardware incident where a single 3 kHz LR24 edit corrupted
+      // HPF/LPF and PEQ state across unrelated channels, root-caused to
+      // buildAdau1701PeqXoExportBlocks() being a full-state resend — it
+      // built an XO block for EVERY configured channel on every deploy, not
+      // a diff against what was last applied (unlike gain's
+      // appliedGainsByChannel). That function downgraded this entry to
+      // `unavailable` and was fail-closed until fixed.
+      //
+      // This entry is safe to re-enable ONLY because the export path
+      // changed, not because new hardware evidence was captured for
+      // multi-channel or type/slope writes:
+      //   - buildAdau1701PeqXoExportBlocks() no longer exists. XO now has
+      //     its own builder, buildAdau1701XoExportBlocks() (see
+      //     adau1701_engineering_export.dart), which is diff-only: it
+      //     compares each channel's current HPF/LPF frequency against
+      //     DeployProjectState.appliedXoByChannel (AppliedXoChannelState)
+      //     and emits a block ONLY for a channel with an actually-changed
+      //     side — an untouched channel produces no block, and therefore no
+      //     op, regardless of what else is in tuningState.
+      //   - PEQ is now built by the fully separate buildAdau1701PeqExportBlocks()
+      //     — an XO-only edit's export package cannot contain a PEQ block
+      //     that XO caused; the two builders share no state.
+      //   - The frequency-only frame (param 0x15, band 0, 16-bit LE Hz) and
+      //     channel mapping are UNCHANGED from the original TEST/RESTORE
+      //     capture evidence on channels 0–3 — no new mapping is claimed
+      //     proven here.
+      //   - CrossoverFilter.type / .slope (e.g. "LR24") are still never
+      //     transmitted — still no capture-proven mapping for them. This is
+      //     tracked, not silently dropped: AppliedXoChannelState records
+      //     type/slope for audit, but only a frequency change can produce a
+      //     write operation.
+      // Do NOT reintroduce a full-state XO export path (or any other caller
+      // that skips the appliedXoByChannel diff) while this entry is
+      // captureProven — that reopens the exact incident this fixes.
       HardwareCapabilityEntry(
           kind: HardwareParamKind.crossoverHighPass,
           verification: HardwareParamVerification.captureProven),

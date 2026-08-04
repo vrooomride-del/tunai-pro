@@ -16,11 +16,16 @@ abstract interface class Adau1701TuningTransport
   /// hardware-unverified.
   Future<Adau1701WriteAck> writePeqGain(int channel, double gainDb,
       {int band = 0});
-  /// Writes an arbitrary crossover filter frequency (param 0x15, property 0x02)
-  /// in 20 .. 20 000 Hz. This is the CROSSOVER path only — see [writePeqFrequency]
+  /// Writes an arbitrary crossover filter frequency (param 0x15) in
+  /// 20 .. 20 000 Hz. This is the CROSSOVER path only — see [writePeqFrequency]
   /// for the PEQ band frequency path (param 0x18 property 0x02).
+  ///
+  /// [isHighPass] selects which of the channel's two filters (HPF or LPF)
+  /// is written — capture-confirmed as a real, required distinction (Phase
+  /// 7-5B), not a cosmetic label: HPF and LPF are different filter-side
+  /// byte values on the wire (see [Icp5FrameCodec.buildFilterFrequencyWriteArbitrary]).
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
-      {int band = 0});
+      {int band = 0, bool isHighPass = false});
 
   /// Writes an arbitrary PEQ band frequency in 20 .. 20 000 Hz for [channel]
   /// and [band] (0 = Band 1). Uses Consumer-production-proven param 0x18

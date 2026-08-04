@@ -1,5 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 abstract final class Icp5FrameCodec {
   static const identificationRequest = <int>[
@@ -50,12 +51,49 @@ abstract final class Icp5FrameCodec {
       checksum(frame.take(frame.length - 1)) == frame.last;
 
   static String? parseIdentity(List<int> frame) {
-    if (!hasValidEnvelope(frame) || frame[2] != 0xE0 || frame.length < 10) {
+    final validEnvelope = hasValidEnvelope(frame);
+    final expectedType = frame.length >= 3 && frame[2] == 0xE0;
+    if (!validEnvelope || !expectedType || frame.length < 10) {
+      // [TEMP DIAGNOSTIC] ADAU1701 BLE handshake regression — remove after
+      // real device evidence is captured. Does not affect the accept/reject
+      // decision above; logs the same failure the caller already sees as
+      // 'ICP5 identity handshake failed.'
+      final category = !validEnvelope
+          ? 'A (fragmented/malformed frame — envelope or checksum invalid)'
+          : !expectedType
+              ? 'B (unexpected response type — frame[2] != 0xE0)'
+              : 'A (fragmented/short frame — length < 10)';
+      debugPrint('[ICP5 parseIdentity REJECT] category=$category '
+          'frameLength=${frame.length} '
+          'rawHex=${_hexDump(frame)} '
+          'asciiBestEffort=${_asciiBestEffort(frame)} '
+          'expectedProfile=$expectedProfile');
       return null;
     }
     final profile =
         ascii.decode(frame.sublist(8, frame.length - 1), allowInvalid: false);
-    return profile == expectedProfile ? profile : null;
+    if (profile != expectedProfile) {
+      // [TEMP DIAGNOSTIC] see note above.
+      debugPrint('[ICP5 parseIdentity REJECT] category=C (firmware profile '
+          'mismatch) frameLength=${frame.length} '
+          'rawHex=${_hexDump(frame)} decodedProfile=$profile '
+          'expectedProfile=$expectedProfile');
+      return null;
+    }
+    return profile;
+  }
+
+  // [TEMP DIAGNOSTIC] helpers for parseIdentity logging only — remove
+  // alongside the debugPrint calls above once real evidence is captured.
+  static String _hexDump(List<int> frame) =>
+      frame.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+
+  static String _asciiBestEffort(List<int> frame) {
+    try {
+      return ascii.decode(frame, allowInvalid: true);
+    } catch (_) {
+      return '<undecodable>';
+    }
   }
 
   static bool parseMasterVolumeAck(List<int> frame) {
@@ -264,15 +302,35 @@ abstract final class Icp5FrameCodec {
   static bool parsePeqFrequencyAck(List<int> frame) =>
       _parseSuccessAck(frame, peqBandGainParameterId);
 
-  /// Writes an arbitrary filter frequency for [channel] and [band] using the
-  /// confirmed ICP5 parameter-ID 0x15 encoding. [frequencyHz] in 20 .. 20000.
+  /// Phase 7-5B correction: real MiUMAX captures, device-ACK confirmed,
+  /// established that frame index 9 is the FILTER SIDE selector (not a
+  /// fixed "frequency property" as Phase 7-5A concluded from a single LPF
+  /// capture — that conclusion was correct in value but incomplete, since
+  /// there was no HPF capture yet to distinguish the two):
+  ///   LPF 3000 Hz: 55 0B 1C 00 00 00 15 03 02 01 B8 0B 5A
+  ///   HPF 3100 Hz: 55 0B 1C 00 00 00 15 03 02 00 1C 0C BE
+  ///   LPF 3100 Hz: 55 0B 1C 00 00 00 15 03 02 01 1C 0C BF
+  /// All three checksums independently re-verified byte-for-byte before this
+  /// fix. HPF = 0x00, LPF = 0x01.
+  static const int _xoSideHighPass = 0x00;
+  static const int _xoSideLowPass = 0x01;
+
+  /// Writes an arbitrary filter frequency for [channel]/[isHighPass] using
+  /// the confirmed ICP5 parameter-ID 0x15 encoding. [frequencyHz] in
+  /// 20 .. 20000.
   ///
-  /// Band index 0 (Band 1) is capture-proven and its bytes are unchanged.
-  /// Bands 1 .. 9 place the index in the confirmed band payload byte but are
-  /// NOT independently capture-proven.
+  /// [band] is accepted only for call-site/API compatibility with the PEQ
+  /// builders (param 0x18, where a band index is real) and is range-checked
+  /// the same way, but has NO effect on the emitted frame — param 0x15 has
+  /// one HPF and one LPF cutoff per channel, not 10 PEQ-style bands; see
+  /// [_xoSideHighPass]/[_xoSideLowPass] doc for the real meaning of that
+  /// payload byte. Phase 7-5A incorrectly hardcoded this byte to a fixed
+  /// 0x01 (correct for LPF only, since that was the only capture available
+  /// at the time) — every `crossoverHighPass` write before this fix was
+  /// sent with the LPF byte, i.e. to the wrong side.
   static List<int> buildFilterFrequencyWriteArbitrary(
       int channel, int frequencyHz,
-      {int band = 0}) {
+      {int band = 0, bool isHighPass = false}) {
     if (channel < 0 || channel > 3) {
       throw ArgumentError.value(channel, 'channel', 'Channel must be 0–3.');
     }
@@ -284,7 +342,7 @@ abstract final class Icp5FrameCodec {
     return _frame(0x0B, filterCutoffParameterId, [
       channel,
       0x02,
-      band,
+      isHighPass ? _xoSideHighPass : _xoSideLowPass,
       frequencyHz & 0xFF,
       (frequencyHz >> 8) & 0xFF,
     ]);

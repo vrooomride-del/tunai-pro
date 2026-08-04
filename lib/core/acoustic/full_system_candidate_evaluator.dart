@@ -524,6 +524,7 @@ abstract final class FullSystemCandidateEvaluator {
   }
 
   static double _slopeDb(CrossoverSlope slope) => switch (slope) {
+        CrossoverSlope.db6 => 6,
         CrossoverSlope.db12 => 12,
         CrossoverSlope.db24 => 24,
         CrossoverSlope.db36 => 36,

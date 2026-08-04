@@ -199,6 +199,21 @@ class Icp5BluetoothGattDriver
       await device.disconnect();
       throw StateError('Service discovery failed: FFF0 was not found.');
     }
+    // [TEMP DIAGNOSTIC] ADAU1701 BLE handshake regression — list every FFF0
+    // characteristic's UUID and raw property flags, exactly as GATT reports
+    // them, before any tx/rx matching decision is made. Remove once real
+    // device evidence is captured. Does not affect matching/accept logic.
+    debugPrint('[ICP5 BLE GATT Map] Service UUID: ${service.uuid.str}');
+    for (final characteristic in service.characteristics) {
+      final p = characteristic.properties;
+      debugPrint('[ICP5 BLE GATT Map] Characteristic UUID: '
+          '${characteristic.uuid.str}');
+      debugPrint('[ICP5 BLE GATT Map] Properties: '
+          '- write=${p.write} '
+          '- writeWithoutResponse=${p.writeWithoutResponse} '
+          '- notify=${p.notify} '
+          '- indicate=${p.indicate}');
+    }
     BluetoothCharacteristic? tx;
     BluetoothCharacteristic? rx;
     for (final characteristic in service.characteristics) {
@@ -220,6 +235,18 @@ class Icp5BluetoothGattDriver
       throw StateError(
           'Notify subscription failed: notifiable FFF1 was not found.');
     }
+    // [TEMP DIAGNOSTIC] confirm the exact property set of the matched FFF2
+    // (expected write-capable, ideally NOT notify) and FFF1 (expected
+    // notify-capable, ideally NOT write) characteristics. Logging only — the
+    // accept checks above are unchanged.
+    debugPrint('[ICP5 BLE Matched TX/FFF2] uuid=${tx.uuid.str} '
+        'write=${tx.properties.write} '
+        'writeWithoutResponse=${tx.properties.writeWithoutResponse} '
+        'notify=${tx.properties.notify} indicate=${tx.properties.indicate}');
+    debugPrint('[ICP5 BLE Matched RX/FFF1] uuid=${rx.uuid.str} '
+        'write=${rx.properties.write} '
+        'writeWithoutResponse=${rx.properties.writeWithoutResponse} '
+        'notify=${rx.properties.notify} indicate=${rx.properties.indicate}');
     try {
       _failureStage = 'notify subscription';
       await rx.setNotifyValue(true);
@@ -278,9 +305,16 @@ class _Icp5BluetoothGattConnection implements Icp5SerialConnection {
 
   _Icp5BluetoothGattConnection(
       {required this.device, required this.tx, required this.rx}) {
-    _notifySubscription = rx.onValueReceived.listen(
-        (value) => _bytes.add(List<int>.unmodifiable(value)),
-        onError: _bytes.addError);
+    _notifySubscription = rx.onValueReceived.listen((value) {
+      // [TEMP DIAGNOSTIC] ADAU1701 BLE handshake regression — log which
+      // characteristic UUID the notification actually arrived on and its raw
+      // bytes. Remove once real device evidence is captured. Does not affect
+      // routing/parsing — the same `value` is forwarded to `_bytes` below.
+      debugPrint('[ICP5 BLE] NOTIFY:\n'
+          'UUID=${rx.uuid.str}\n'
+          'bytes=[${_hexDump(value)}]');
+      _bytes.add(List<int>.unmodifiable(value));
+    }, onError: _bytes.addError);
     _stateSubscription = device.connectionState.listen((state) {
       if (!_closing && state == BluetoothConnectionState.disconnected) {
         _bytes.addError(StateError('ICP5 BLE Notify disconnected.'));
@@ -293,6 +327,15 @@ class _Icp5BluetoothGattConnection implements Icp5SerialConnection {
 
   @override
   Future<int> write(List<int> bytes, Duration timeout) async {
+    // [TEMP DIAGNOSTIC] see note above — log which characteristic UUID the
+    // write is issued to, the actual write type used, and raw bytes. Purely
+    // descriptive of the unchanged call below — `withoutResponse: false`
+    // stays hardcoded there; this line only reports that literal, it does
+    // not decide it.
+    debugPrint('[ICP5 BLE] WRITE:\n'
+        'UUID=${tx.uuid.str}\n'
+        'type=write\n' // withoutResponse: false below => GATT "Write Request"
+        'bytes=[${_hexDump(bytes)}]');
     await tx
         .write(bytes, withoutResponse: false, timeout: timeout.inSeconds)
         .timeout(timeout);
@@ -309,4 +352,9 @@ class _Icp5BluetoothGattConnection implements Icp5SerialConnection {
     await device.disconnect();
     await _bytes.close();
   }
+
+  // [TEMP DIAGNOSTIC] helper for the notify/write logging above only — remove
+  // alongside the debugPrint calls once real evidence is captured.
+  static String _hexDump(List<int> bytes) =>
+      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
 }

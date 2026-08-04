@@ -138,6 +138,19 @@ void main() {
     });
   });
 
+  test(
+      'BLE transport defaults to a 250ms stale-ACK quarantine, not the USB '
+      '50ms default (deploy-stability fix)', () {
+    final defaultTransport = Icp5BluetoothTransport();
+    expect(
+        defaultTransport.staleAckQuarantine, const Duration(milliseconds: 250));
+
+    // Still explicitly overridable — callers/tests keep full control.
+    final overridden = Icp5BluetoothTransport(
+        staleAckQuarantine: const Duration(milliseconds: 400));
+    expect(overridden.staleAckQuarantine, const Duration(milliseconds: 400));
+  });
+
   test('BLE GATT UUIDs are capture locked', () {
     expect(Icp5BluetoothGattDriver.serviceUuid, 'fff0');
     expect(Icp5BluetoothGattDriver.txCharacteristicUuid, 'fff2');

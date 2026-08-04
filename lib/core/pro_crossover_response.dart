@@ -24,6 +24,7 @@ abstract final class CrossoverResponse {
 
   /// Total filter order for a slope (6 dB/oct per order): 12→2, 24→4, 36→6, 48→8.
   static int orderFor(CrossoverSlope slope) => switch (slope) {
+        CrossoverSlope.db6 => 1,
         CrossoverSlope.db12 => 2,
         CrossoverSlope.db24 => 4,
         CrossoverSlope.db36 => 6,

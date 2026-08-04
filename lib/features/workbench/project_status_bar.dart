@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/deploy/pro_hardware_context_provider.dart';
 import '../../core/pro_project.dart';
 import '../../core/pro_project_store.dart';
 import '../../shared/pro_widgets.dart';
@@ -25,9 +26,24 @@ class ProjectStatusBar extends ConsumerWidget {
     // which requires DSP1701.100.00.01 firmware identity confirmation.
     final isConnected = project?.connection == HardwareConnection.connected;
 
+    // project.connection is PERSISTED (SharedPreferences-backed) and survives
+    // app restarts; activeAdau1701ContextProvider is a fresh, in-memory
+    // StateProvider that always starts null on a new launch and is only
+    // repopulated once hardware_tab's BLE connect flow runs again this
+    // session. Without this check, a restart (or hot-restart) leaves
+    // isConnected showing stale "connected" from the prior session while the
+    // live context is actually null — deploy_dialog.dart then falls back to
+    // a fresh, disconnected USB context and every single operation fails
+    // preflight ("ADAU1701 identity handshake is required..."), even though
+    // the button looked enabled. Requiring a live context here means the
+    // button honestly reflects "will this deploy actually reach hardware",
+    // not just the last-known persisted connection flag.
+    final hasLiveContext = ref.watch(activeAdau1701ContextProvider) != null;
+
     final canDeploy = project != null &&
         project.dspTarget == 'ADAU1701' &&
         isConnected &&
+        hasLiveContext &&
         project.acousticState.driverChannels.isNotEmpty;
 
     return Container(
@@ -48,6 +64,7 @@ class ProjectStatusBar extends ConsumerWidget {
             channels: project!.acousticState.driverChannels,
             tuning: project.tuningState,
             previousAppliedGains: project.deployState.appliedGainsByChannel,
+            previousAppliedXo: project.deployState.appliedXoByChannel,
           ),
         ),
         const Divider(height: 0.5, thickness: 0.5, color: kProBorder),

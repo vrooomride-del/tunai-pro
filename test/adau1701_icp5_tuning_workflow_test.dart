@@ -96,10 +96,13 @@ void main() {
       expect(frame[4], 0x00);
       expect(frame[5], 0x00);
       expect(frame[6], 0x15);
-      // Payload: [channel=0, 0x02, 0x00, 2000 & 0xFF, (2000 >> 8) & 0xFF]
+      // Payload: [channel=0, 0x02, 0x01, 2000 & 0xFF, (2000 >> 8) & 0xFF]
+      // Property byte (frame[9]) confirmed 0x01 by real MiUMAX capture,
+      // DAC3/LPF/3000Hz, device-ACK confirmed:
+      //   55 0B 1C 00 00 00 15 03 02 01 B8 0B 5A
       expect(frame[7], 0x00); // channel
       expect(frame[8], 0x02);
-      expect(frame[9], 0x00);
+      expect(frame[9], 0x01);
       expect(frame[10], 2000 & 0xFF);       // 0xD0
       expect(frame[11], (2000 >> 8) & 0xFF); // 0x07
     });
@@ -127,6 +130,19 @@ void main() {
       expect(frame[7], 0x02); // channel 2
       expect(frame[10], 100);
       expect(frame[11], 0);
+    });
+
+    test(
+        'isHighPass=true emits the HPF side byte (0x00); default/false '
+        'emits LPF (0x01) — Phase 7-5B, real MiUMAX HPF capture', () {
+      final lpf = Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(3, 3100);
+      final hpf = Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(3, 3100,
+          isHighPass: true);
+      expect(lpf[9], 0x01);
+      expect(hpf[9], 0x00);
+      // Only the side byte and checksum differ.
+      expect(hpf.sublist(0, 9), lpf.sublist(0, 9));
+      expect(hpf.sublist(10, 12), lpf.sublist(10, 12));
     });
 
     test('ACK parser accepts parameter ID 0x15', () {
@@ -240,14 +256,22 @@ void main() {
       }
     });
 
-    test('frequency band N sets frame index 9 to N', () {
+    test(
+        'frequency: band parameter is vestigial — frame index 9 is always '
+        'the fixed XO property byte (0x01), regardless of band', () {
+      // Corrected per real MiUMAX capture (DAC3/LPF/3000Hz, device-ACK
+      // confirmed: 55 0B 1C 00 00 00 15 03 02 01 B8 0B 5A). Unlike PEQ
+      // (param 0x18), which genuinely has 10 bands, param 0x15 XO frequency
+      // has one HPF and one LPF cutoff per channel — no band concept exists
+      // on the wire. `band` is still range-validated for call-site/API
+      // parity with the PEQ builders, but no longer affects the emitted
+      // bytes.
       final band0 = Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(0, 2000);
       final f =
           Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(0, 2000, band: 7);
       expect(validEnvelope(f), isTrue);
-      expect(f[9], 7);
-      expect(f.sublist(0, 9), band0.sublist(0, 9));
-      expect(f.sublist(10, 12), band0.sublist(10, 12)); // freq LE bytes unchanged
+      expect(f[9], 0x01);
+      expect(f, band0, reason: 'band has no effect on the XO frequency frame');
     });
 
     test('Q band N sets frame index 9 to N', () {
@@ -384,12 +408,27 @@ void main() {
       expect(arbitrary, equals(proven));
     });
 
-    test('filter frequency and capture-proven cutoff use same parameter ID', () {
+    test(
+        'filter frequency and legacy capture-proven cutoff share parameter '
+        'ID and encoding, but NOT the property byte (open discrepancy, out '
+        'of Phase 7-5A scope)', () {
       final arbitrary =
           Icp5FrameCodec.buildFilterFrequencyWriteArbitrary(0, 2000);
       final proven = Icp5FrameCodec.buildFilterCutoffWrite(0, 2000);
+      // Still true: same parameter ID, same channel byte, same freq encoding.
       expect(arbitrary.sublist(3, 7), equals(proven.sublist(3, 7)));
-      expect(arbitrary, equals(proven));
+      expect(arbitrary[7], proven[7]); // channel
+      expect(arbitrary.sublist(10, 12), proven.sublist(10, 12)); // freq LE
+      // No longer equal overall: buildFilterFrequencyWriteArbitrary's
+      // property byte was corrected to 0x01 per a real MiUMAX capture
+      // (DAC3/LPF/3000Hz — see Phase 7-5A). buildFilterCutoffWrite (a
+      // separate, older, diagnostic-only TEST/RESTORE function, not part of
+      // the production XO deploy path) still emits 0x00 at the same
+      // position, from different, earlier capture evidence. This is a real,
+      // unresolved discrepancy — see the Phase 7-5A report — deliberately
+      // NOT changed here since it's out of this fix's evidence-backed scope.
+      expect(arbitrary[9], 0x01);
+      expect(proven[9], 0x00);
     });
   });
 }

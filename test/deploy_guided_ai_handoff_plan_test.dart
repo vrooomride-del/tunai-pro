@@ -67,17 +67,24 @@ SelectedCandidate _sel(String featureId) => SelectedCandidate(
     );
 
 /// Mirrors DeployDialog._buildPlan's gain+PEQ/XO assembly (no previous
-/// applied gains — matches a first-time deploy after Guided AI apply).
+/// applied gains/XO — matches a first-time deploy after Guided AI apply).
+/// Phase 7-4A split PEQ and XO into independent builders; XO is diff-only
+/// (see buildAdau1701XoExportBlocks), but Guided AI candidates in this test
+/// are PEQ-only, so previousAppliedXo is irrelevant here.
 HardwareWritePlan _buildDeployPlan(ProProject project) {
   final gainPkg = buildAdau1701GainExportPackage(
     channels: _channels(),
     tuning: project.tuningState,
   );
-  final peqXoBlocks = buildAdau1701PeqXoExportBlocks(
+  final peqBlocks = buildAdau1701PeqExportBlocks(
     channels: _channels(),
     tuning: project.tuningState,
   );
-  final allBlocks = [...gainPkg.parameterBlocks, ...peqXoBlocks];
+  final xoBlocks = buildAdau1701XoExportBlocks(
+    channels: _channels(),
+    tuning: project.tuningState,
+  );
+  final allBlocks = [...gainPkg.parameterBlocks, ...peqBlocks, ...xoBlocks];
   final pkg = gainPkg.copyWith(
     status:
         allBlocks.isEmpty ? ExportStatus.notReady : ExportStatus.draftReady,

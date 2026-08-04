@@ -1,13 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_adau1466_delay_audit_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_gain_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_mute_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_operational_delay_executor.dart';
+import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
 import 'package:tunai_pro/features/workbench/tabs/delay_tab.dart';
 import 'package:tunai_pro/features/workbench/workbench_shell.dart';
+
+// This panel is ADAU1466-only (Phase 7-2). The harness project must declare
+// dspTarget: 'ADAU1466' or delay_tab.dart now hides it, same as it always
+// hid the ADAU1701 ICP5 deploy path from an ADAU1466 project.
+ProProject _adau1466Project() {
+  final now = DateTime(2026, 8, 1);
+  return ProProject(
+    id: 'missing',
+    name: 'ADAU1466 Bring-up',
+    createdAt: now,
+    updatedAt: now,
+    dspTarget: 'ADAU1466',
+    acousticState: MeasurementProjectState.createDefault(),
+  );
+}
 
 class _QueueRealBackend implements ProUsbiNativeBackend {
   final List<List<int>?> responses;
@@ -31,17 +50,22 @@ class _QueueRealBackend implements ProUsbiNativeBackend {
   }
 }
 
-Widget _harness(_QueueRealBackend backend, {void Function(String)? onStop}) =>
-    ProviderScope(
-        child: MaterialApp(
-            home: Scaffold(
-                body: DelayTab(
-      projectId: 'missing',
-      usbiBackend: backend,
-      isWindowsPlatform: () => true,
-      deviceOpen: true,
-      onDspWriteStop: onStop,
-    ))));
+Widget _harness(_QueueRealBackend backend, {void Function(String)? onStop}) {
+  SharedPreferences.setMockInitialValues({});
+  final container = ProviderContainer();
+  container.read(proProjectStoreProvider.notifier).addProject(_adau1466Project());
+  return UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+          home: Scaffold(
+              body: DelayTab(
+        projectId: 'missing',
+        usbiBackend: backend,
+        isWindowsPlatform: () => true,
+        deviceOpen: true,
+        onDspWriteStop: onStop,
+      ))));
+}
 
 void main() {
   const expected = <String, (String, String, int, int, int?)>{

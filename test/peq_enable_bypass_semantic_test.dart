@@ -57,7 +57,7 @@ List<ExportParameterBlock> _export(List<PeqBand> bands) {
   final peqCh = PeqChannelState(channelId: _kCh.id, bands: bands);
   final tuning = TuningProjectState.createDefault()
       .copyWith(peqChannels: [peqCh]);
-  return buildAdau1701PeqXoExportBlocks(channels: [_kCh], tuning: tuning);
+  return buildAdau1701PeqExportBlocks(channels: [_kCh], tuning: tuning);
 }
 
 // ── Fake transport for write-port tests ───────────────────────────────────────
@@ -85,7 +85,7 @@ class _FakeTransport implements Adau1701TuningTransport {
 
   @override
   Future<Adau1701WriteAck> writeFilterFrequency(int channel, int frequencyHz,
-          {int band = 0}) async =>
+          {int band = 0, bool isHighPass = false}) async =>
       const Adau1701WriteAck(success: true, message: 'ok');
 
   @override
@@ -318,7 +318,7 @@ void main() {
             id: 'ch_$ch', name: 'Ch$ch',
             role: DriverRole.tweeter, side: DriverSide.left,
             dspOutputIndex: ch);
-        final blocks = buildAdau1701PeqXoExportBlocks(
+        final blocks = buildAdau1701PeqExportBlocks(
             channels: [channel], tuning: tuning);
         expect(blocks, hasLength(1), reason: 'ch$ch: bypass block expected');
         final gainOps = buildHardwareWritePlan(

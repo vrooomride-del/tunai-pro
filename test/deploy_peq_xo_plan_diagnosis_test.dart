@@ -43,7 +43,7 @@ void main() {
       expect(twL.bands.where((b) => b.enabled).length, 0,
           reason: 'plist confirmed 0 enabled bands');
 
-      final blocks = buildAdau1701PeqXoExportBlocks(
+      final blocks = buildAdau1701PeqExportBlocks(
           channels: _kChannels, tuning: tuning);
       final peqBlocks = blocks.where((b) => b.type == ExportBlockType.peq).toList();
       expect(peqBlocks.length, 1,
@@ -61,18 +61,16 @@ void main() {
       expect(tuning.crossoverChannels, isEmpty,
           reason: 'plist confirmed no crossoverChannels key');
 
-      final blocks = buildAdau1701PeqXoExportBlocks(
+      final blocks = buildAdau1701XoExportBlocks(
           channels: _kChannels, tuning: tuning);
-      expect(blocks.where((b) => b.type == ExportBlockType.crossover).length, 0,
-          reason: 'loop never runs → 0 XO blocks');
+      expect(blocks, isEmpty, reason: 'loop never runs → 0 XO blocks');
     });
 
-    test('1c. buildAdau1701PeqXoExportBlocks() returns 1 PEQ bypass block for stored state', () {
+    test('1c. buildAdau1701PeqExportBlocks() returns 1 PEQ bypass block for stored state', () {
       final tuning = _storedTuningState();
-      final blocks = buildAdau1701PeqXoExportBlocks(
+      final blocks = buildAdau1701PeqExportBlocks(
           channels: _kChannels, tuning: tuning);
       // ch_tw_l has 10 disabled bands → 1 PEQ block with bypass entries.
-      // No crossoverChannels → 0 XO blocks.
       expect(blocks, hasLength(1));
       expect(blocks.first.type, ExportBlockType.peq);
       expect(blocks.first.channelId, 'ch_tw_l');
@@ -88,18 +86,21 @@ void main() {
 
       final gainPkg = buildAdau1701GainExportPackage(
           channels: _kChannels, tuning: tuningWithGain);
-      final peqXoBlocks = buildAdau1701PeqXoExportBlocks(
+      final peqBlocks = buildAdau1701PeqExportBlocks(
+          channels: _kChannels, tuning: tuningWithGain);
+      final xoBlocks = buildAdau1701XoExportBlocks(
           channels: _kChannels, tuning: tuningWithGain);
 
       expect(gainPkg.parameterBlocks.length, 1,
           reason: 'one gain block for ch_tw_l at -3.0 dB');
       expect(gainPkg.parameterBlocks.first.type, ExportBlockType.gain);
 
-      expect(peqXoBlocks, hasLength(1),
-          reason: 'ch_tw_l: 10 disabled bands → 1 PEQ bypass block; XO: empty');
-      expect(peqXoBlocks.first.type, ExportBlockType.peq);
+      expect(peqBlocks, hasLength(1),
+          reason: 'ch_tw_l: 10 disabled bands → 1 PEQ bypass block');
+      expect(peqBlocks.first.type, ExportBlockType.peq);
+      expect(xoBlocks, isEmpty, reason: 'no crossoverChannels configured');
 
-      final allBlocks = [...gainPkg.parameterBlocks, ...peqXoBlocks];
+      final allBlocks = [...gainPkg.parameterBlocks, ...peqBlocks, ...xoBlocks];
       expect(allBlocks.length, 2);
       expect(allBlocks.where((b) => b.type == ExportBlockType.peq).length, 1);
       expect(allBlocks.where((b) => b.type == ExportBlockType.crossover).length, 0);
@@ -121,6 +122,11 @@ void main() {
       expect(v, HardwareParamVerification.captureProven);
     });
 
+    // Phase 7-4A (ADAU1701 XO Deploy Restore): restored to captureProven now
+    // that XO export is diff-only (buildAdau1701XoExportBlocks). The P0
+    // incident's root cause — a full-state resend touching every configured
+    // channel's XO and PEQ — is fixed at the export-builder level, not by
+    // relaxing this capability check without a matching safety change.
     test('3c. crossoverHighPass is captureProven on adau1701Icp5', () {
       final v = HardwareDeviceProfiles.adau1701Icp5
           .verificationFor(HardwareParamKind.crossoverHighPass);
@@ -159,7 +165,7 @@ void main() {
         crossoverChannels: const [],
       );
 
-      final blocks = buildAdau1701PeqXoExportBlocks(
+      final blocks = buildAdau1701PeqExportBlocks(
           channels: _kChannels, tuning: tuning);
       expect(blocks.length, 1, reason: 'one PEQ block for ch_tw_l Band 1');
       expect(blocks.first.type, ExportBlockType.peq);
@@ -204,9 +210,12 @@ void main() {
       }
     });
 
-    // ── 5. End-to-end: configured XO HPF WOULD produce a captureProven op ────
+    // ── 5. End-to-end: configured XO HPF produces a captureProven op ─────────
+    // (Phase 7-4A: XO is writable again, but only via the diff-only builder.)
 
-    test('5. Configured XO HPF WOULD produce captureProven op in the plan', () {
+    test(
+        '5. First-time (no previousAppliedXo) configured XO HPF produces a '
+        'captureProven, writable op', () {
       final tuning = TuningProjectState(
         peqChannels: const [],
         crossoverChannels: [
@@ -220,7 +229,7 @@ void main() {
         ],
       );
 
-      final blocks = buildAdau1701PeqXoExportBlocks(
+      final blocks = buildAdau1701XoExportBlocks(
           channels: _kChannels, tuning: tuning);
       expect(blocks.length, 1, reason: 'one XO block for ch_wf_l');
       expect(blocks.first.type, ExportBlockType.crossover);
@@ -234,13 +243,18 @@ void main() {
       final plan = buildHardwareWritePlan(
           mergedPkg, HardwareDeviceProfiles.adau1701Icp5);
 
-      final xoOps = plan.writableOperations
+      final xoOps = plan.operations
           .where((o) => o.parameterKind == HardwareParamKind.crossoverHighPass)
           .toList();
       expect(xoOps.length, 1);
       expect(xoOps.first.writable, isTrue);
+      expect(xoOps.first.verification, HardwareParamVerification.captureProven);
       expect(xoOps.first.channelId, 'ch_wf_l');
       expect(xoOps.first.targetValue, 80.0);
+      expect(
+          plan.writableOperations.any(
+              (o) => o.parameterKind == HardwareParamKind.crossoverHighPass),
+          isTrue);
     });
   });
 }
