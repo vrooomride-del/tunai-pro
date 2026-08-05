@@ -765,15 +765,38 @@ class Icp5UsbTransport
     }
   }
 
-  // On a transport-level stream error or close, invalidate the active
-  // generation so no in-flight frame can satisfy the pending request, and mark
-  // the connection errored. The pending handshake or application operation then
-  // fails closed via its own timeout — PRO has no auto-reconnect, so (unlike the
-  // Consumer, which fails fast to trigger reconnect) it must not surface a raw
-  // stream error that races the synchronous notify path.
+  // Peripheral-initiated disconnect: synchronously reset all transport state so
+  // the next open() is not blocked by stale references. Mirrors close() field
+  // by field; driver-level teardown (setNotifyValue / device.disconnect) is
+  // fire-and-forget with errors suppressed — the peripheral already dropped
+  // the GATT link, so GATT operations may fail and that is expected.
+  //
+  // Neither _handshakeResponse nor _pendingResponse is completed here.
+  // Both are invoked from sync: true stream callbacks which means
+  // _onConnectionError may fire synchronously inside write() — before
+  // _open()/_exchange() have armed their await on the future. Completing the
+  // Completer synchronously in that window causes the error to escape the
+  // enclosing try/catch (FakeAsync zone delivers it before the await resumes).
+  // Clearing the reference (without completing) is sufficient: _onBytes can no
+  // longer route frames to either Completer, and the in-flight
+  // timeout(readTimeout) eventually fires and completes them safely via
+  // TimeoutException, which the caller already handles.
   void _onConnectionError(Object error, StackTrace stackTrace) {
     _activeGeneration = -1;
-    _state = DspConnectionState.error;
+    final sub = _subscription;
+    _subscription = null;
+    final conn = _connection;
+    _connection = null;
+    _handshakeResponse = null;
+    _pendingResponse = null;
+    _pendingAccepts = null;
+    _buffer.reset();
+    _handshakeComplete = false;
+    _profile = null;
+    _selectedPort = null;
+    _state = DspConnectionState.disconnected;
+    sub?.cancel();
+    conn?.close().ignore();
   }
 
   void _onConnectionClosed() {

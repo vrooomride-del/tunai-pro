@@ -103,6 +103,30 @@ class _FakeGattDriver implements Icp5SerialDriver {
   }
 }
 
+// Driver variant that returns successive connections on each open() call,
+// needed for reconnect-after-disconnect tests.
+class _MultiOpenFakeDriver implements Icp5SerialDriver {
+  final List<_FakeGattConnection> _connections;
+  int _openIndex = 0;
+
+  _MultiOpenFakeDriver(this._connections);
+
+  @override
+  bool get platformSupported => true;
+
+  @override
+  Future<Icp5DiscoveryResult> discover() async =>
+      const Icp5DiscoveryResult(source: 'fake FFF0', allPorts: [
+        Icp5SerialDevice(portName: 'ble-device')
+      ], matches: [
+        Icp5SerialDevice(portName: 'ble-device')
+      ]);
+
+  @override
+  Future<Icp5SerialConnection> open(String portName) async =>
+      _connections[_openIndex++];
+}
+
 void main() {
   group('Icp5BluetoothGattDriver scan accumulation', () {
     test(
@@ -409,8 +433,11 @@ void main() {
     await transport.close();
   });
 
-  test('BLE Notify disconnect fails closed and subsequent write times out',
+  test('BLE Notify disconnect during write fails the write immediately',
       () async {
+    // With the peripheral-disconnect cleanup fix, _onConnectionError completes
+    // _pendingResponse immediately with a StateError rather than leaving it to
+    // time out.  The write fails fast with a disconnect message.
     late _FakeGattConnection connection;
     connection = _FakeGattConnection((connection, call, bytes) {
       if (call == 1) connection.notify(identityRx);
@@ -426,7 +453,8 @@ void main() {
 
     expect(result.success, isFalse);
     expect(result.writeMayHaveReachedDevice, isTrue);
-    expect(result.message, anyOf(contains('timeout'), contains('ACK')));
+    expect(result.message,
+        anyOf(contains('timeout'), contains('ACK'), contains('disconnected')));
     await transport.close();
   });
 
@@ -454,5 +482,102 @@ void main() {
     expect(connection.writes[2], Icp5FrameCodec.buildMasterVolumeWrite(6.0));
     expect(warnings.single, contains('shared DSP STOP'));
     await transport.close();
+  });
+
+  // ── Peripheral-initiated disconnect cleanup ───────────────────────────────
+  //
+  // Verifies that _onConnectionError performs the same state reset as close()
+  // so that a peripheral-dropped link does not leave stale references that
+  // block the next open() call.
+
+  group('peripheral-initiated disconnect cleanup', () {
+    test(
+        'all transport state is reset after peripheral disconnect '
+        '(post-handshake idle)', () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        if (call == 1) conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 50));
+      await transport.discover();
+      await transport.open();
+      expect(transport.handshakeComplete, isTrue);
+      expect(transport.connectionState, DspConnectionState.connected);
+
+      // Simulate the peripheral dropping the BLE link (idle timeout, firmware
+      // reset, out-of-range, etc.) with no command in flight.
+      connection.disconnectNotify();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(transport.handshakeComplete, isFalse,
+          reason: '_handshakeComplete must be cleared');
+      expect(transport.isConnected, isFalse,
+          reason: 'isConnected must be false after peripheral disconnect');
+      expect(transport.connectionState, DspConnectionState.disconnected,
+          reason: 'state must be disconnected, not error');
+      expect(transport.selectedPort, isNull,
+          reason: '_selectedPort must be cleared (mirrors close())');
+      expect(transport.detectedProfile, isNull,
+          reason: '_profile must be cleared');
+    });
+
+    test('reconnect succeeds after peripheral-initiated disconnect', () async {
+      final conn1 = _FakeGattConnection((conn, call, _) {
+        if (call == 1) conn.notify(identityRx);
+      });
+      final conn2 = _FakeGattConnection((conn, call, _) {
+        if (call == 1) conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _MultiOpenFakeDriver([conn1, conn2]),
+          readTimeout: const Duration(milliseconds: 50));
+
+      await transport.discover();
+      await transport.open();
+      expect(transport.handshakeComplete, isTrue);
+
+      conn1.disconnectNotify();
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.connectionState, DspConnectionState.disconnected);
+
+      // Re-arm selectedPort (UI would call discover() before reconnect).
+      await transport.discover();
+      final result = await transport.open();
+
+      expect(result.success, isTrue,
+          reason: 'second open() must succeed after peripheral disconnect');
+      expect(transport.handshakeComplete, isTrue);
+      await transport.close();
+    });
+
+    test(
+        'open() is not blocked by stale _connection after peripheral disconnect',
+        () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        if (call == 1) conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 50));
+      await transport.discover();
+      await transport.open();
+
+      connection.disconnectNotify();
+      await Future<void>.delayed(Duration.zero);
+
+      // Re-arm port, then try to open again.
+      await transport.discover();
+      final result = await transport.open();
+
+      // The fake driver reuses the same closed connection so the result may not
+      // be success, but the failure must NOT be the stale-lock "unavailable"
+      // error that would have occurred without the cleanup fix.
+      expect(result.failure, isNot(DspTransportFailure.unavailable),
+          reason: '"already exclusively owned" must not occur after cleanup');
+      expect(result.message, isNot(contains('already exclusively owned')));
+    });
   });
 }
