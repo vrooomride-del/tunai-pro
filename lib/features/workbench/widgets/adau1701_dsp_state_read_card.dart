@@ -109,6 +109,59 @@ List<PeqResponseBand> peqReferenceToBands(List<PeqBandReference> refs) => [
         ),
     ];
 
+// ── Payload diff helpers ──────────────────────────────────────────────────────
+
+typedef PayloadDiffEntry = ({int offset, int before, int after});
+
+/// Compares two 513-byte payloads byte by byte and returns every position that
+/// differs. Empty when identical. Exported so tests can verify the logic.
+List<PayloadDiffEntry> computePayloadDiff(
+    List<int> baseline, List<int> current) {
+  final diffs = <PayloadDiffEntry>[];
+  final len = baseline.length < current.length ? baseline.length : current.length;
+  for (var i = 0; i < len; i++) {
+    if (baseline[i] != current[i]) {
+      diffs.add((offset: i, before: baseline[i], after: current[i]));
+    }
+  }
+  return diffs;
+}
+
+// Known PEQ band layout inside the 513-byte 0x2202 payload.
+// Ch0 base=19 is hardware-confirmed (MiUMAX Band1 capture-proven).
+// Ch1-3 use stride-60 candidate offsets — not yet verified by hardware capture.
+const _kDspChBases = [19, 79, 139, 199];
+const _kDspBandStride = 6;
+const _kDspBandCount = 10;
+const _kDspFieldNames = ['freq-lo', 'freq-hi', 'gain', 'pad', 'Q', 'prop08'];
+
+/// Maps a raw byte [offset] to a human-readable DSP mapping label.
+/// Exported so tests can verify the annotation logic independently.
+String dspOffsetAnnotation(int offset) {
+  for (var ch = 0; ch < _kDspChBases.length; ch++) {
+    final base = _kDspChBases[ch];
+    final rangeEnd = base + _kDspBandCount * _kDspBandStride;
+    if (offset >= base && offset < rangeEnd) {
+      final rel = offset - base;
+      final band = rel ~/ _kDspBandStride;
+      final field = rel % _kDspBandStride;
+      final fieldName = _kDspFieldNames[field];
+      final confirmed = ch == 0 && band == 0;
+      final channelConfirmed = ch == 0;
+      final confidence = confirmed
+          ? 'confirmed'
+          : channelConfirmed
+              ? 'band-cand'
+              : 'ch-cand';
+      return 'Ch${ch + 1} Band${band + 1} $fieldName [$confidence]';
+    }
+  }
+  if (offset == 154) return 'page-2 marker';
+  if (offset == 308) return 'page-3 marker';
+  if (offset == 462) return 'page-4 marker';
+  return '— (unknown)';
+}
+
 // ── JSON export builder ───────────────────────────────────────────────────────
 
 Map<String, dynamic> _buildExportJson(Adau1701StateSnapshot snap) {
@@ -167,6 +220,10 @@ class _Adau1701DspStateReadCardState
   bool _copiedJson = false;
   int _selectedOutput = 0;
   _GraphDisplayMode _graphMode = _GraphDisplayMode.readbackOnly;
+
+  // Hex diff: baseline snapshot payload + computed diff after next READ.
+  List<int>? _baselinePayload;
+  List<PayloadDiffEntry>? _payloadDiff;
 
   bool get _isReading => _result?.status == _ReadStatus.reading;
 
@@ -266,23 +323,54 @@ class _Adau1701DspStateReadCardState
       return;
     }
 
-    final rawHex = snapshot.payload.sublist(19, 25)
-        .map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}')
-        .join(' ');
-    debugPrint('[ADAU1701 READBACK] payload offsets 19-24: $rawHex');
+    // Full 4-output log with per-band verification status.
     for (var ch = 0; ch < stateSnapshot.outputs.length; ch++) {
-      final band0 = stateSnapshot.outputs[ch].peqBands[0];
+      final output = stateSnapshot.outputs[ch];
       final role = miuMaxOutputRoles[ch].shortLabel;
-      debugPrint(
-        '[ADAU1701 READBACK] Output${ch + 1} $role  '
-        'Band1  ${band0.frequencyHz}Hz  '
-        '${band0.gainDb.toStringAsFixed(1)}dB  '
-        'Q${band0.q.toStringAsFixed(2)}',
-      );
+      final layoutLabel =
+          output.isChannelLayoutProven ? 'hardware-confirmed' : 'candidate-offset';
+      debugPrint('[DSP READBACK] Output${ch + 1} ($role) [$layoutLabel]');
+      for (final band in output.peqBands) {
+        final statusLabel = switch (band.verificationStatus) {
+          PeqBandVerificationStatus.verified => 'confirmed',
+          PeqBandVerificationStatus.mappingCandidate => 'band-cand',
+          PeqBandVerificationStatus.channelLayoutCandidate => 'not-verified',
+        };
+        debugPrint(
+          '  Band${band.bandIndex + 1}'
+          '  ${band.frequencyHz}Hz'
+          '  ${band.gainDb.toStringAsFixed(1)}dB'
+          '  Q${band.q.toStringAsFixed(2)}'
+          '  [$statusLabel]',
+        );
+      }
+    }
+
+    // Compute byte diff against captured baseline (if any).
+    final diff = _baselinePayload != null
+        ? computePayloadDiff(_baselinePayload!, snapshot.payload)
+        : null;
+    if (diff != null && diff.isNotEmpty) {
+      debugPrint('[DSP READBACK] ${diff.length} byte(s) changed vs baseline:');
+      for (final e in diff) {
+        final label = dspOffsetAnnotation(e.offset);
+        debugPrint(
+          '  0x${e.offset.toRadixString(16).padLeft(3, '0')}'
+          ' (${e.offset})'
+          '  0x${e.before.toRadixString(16).padLeft(2, '0')}'
+          ' → 0x${e.after.toRadixString(16).padLeft(2, '0')}'
+          '  $label',
+        );
+      }
+    } else if (diff != null) {
+      debugPrint('[DSP READBACK] No changes vs baseline.');
     }
 
     if (mounted) {
-      setState(() => _result = _DspReadResult.success(stateSnapshot));
+      setState(() {
+        _result = _DspReadResult.success(stateSnapshot);
+        _payloadDiff = diff;
+      });
     }
   }
 
@@ -299,6 +387,22 @@ class _Adau1701DspStateReadCardState
     final json = jsonEncode(_buildExportJson(snap));
     await Clipboard.setData(ClipboardData(text: json));
     if (mounted) setState(() => _copiedJson = true);
+  }
+
+  void _captureBaseline() {
+    final snap = _result?.stateSnapshot?.rawSnapshot;
+    if (snap == null) return;
+    setState(() {
+      _baselinePayload = List<int>.from(snap.payload);
+      _payloadDiff = null; // diff is stale until next READ
+    });
+  }
+
+  void _clearBaseline() {
+    setState(() {
+      _baselinePayload = null;
+      _payloadDiff = null;
+    });
   }
 
   @override
@@ -358,6 +462,35 @@ class _Adau1701DspStateReadCardState
               _JsonCopyButton(copied: _copiedJson, onCopy: _copyJsonExport),
             ],
           ]),
+          if (_result?.status == _ReadStatus.success) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              _BaselineButton(
+                hasBaseline: _baselinePayload != null,
+                onCapture: _captureBaseline,
+              ),
+              if (_baselinePayload != null) ...[
+                const SizedBox(width: 6),
+                _ClearBaselineButton(onClear: _clearBaseline),
+              ],
+              if (_payloadDiff != null) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.compare_arrows_outlined,
+                    size: 11, color: kProAmber.withValues(alpha: 0.8)),
+                const SizedBox(width: 4),
+                Text(
+                  _payloadDiff!.isEmpty
+                      ? 'No changes'
+                      : '${_payloadDiff!.length} byte(s) changed',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: _payloadDiff!.isEmpty ? kProGreen : kProAmber,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ]),
+          ],
 
           if (!connected && !_isReading) ...[
             const SizedBox(height: 8),
@@ -379,7 +512,7 @@ class _Adau1701DspStateReadCardState
             const SizedBox(height: 14),
             const Divider(color: Color(0xFF1E2832), height: 1),
             const SizedBox(height: 12),
-            if (_result!.status == _ReadStatus.success)
+            if (_result!.status == _ReadStatus.success) ...[
               _SuccessDisplay(
                 stateSnapshot: _result!.stateSnapshot!,
                 showExport: _showExport,
@@ -390,8 +523,15 @@ class _Adau1701DspStateReadCardState
                 }),
                 graphMode: _graphMode,
                 onGraphModeChanged: (m) => setState(() => _graphMode = m),
-              )
-            else
+              ),
+              // Hex diff section — only when a baseline is captured.
+              if (_baselinePayload != null) ...[
+                const SizedBox(height: 14),
+                const Divider(color: Color(0xFF1E2832), height: 1),
+                const SizedBox(height: 10),
+                _HexDiffSection(diff: _payloadDiff),
+              ],
+            ] else
               _FailureDisplay(result: _result!),
           ],
         ],
@@ -872,7 +1012,10 @@ class _LiveGraphSection extends StatelessWidget {
       case _GraphDisplayMode.compareDifference:
         graphBands = liveBands;
         overlayCurves = refBands.isNotEmpty
-            ? [PeqGraphCurve(label: 'MiUMAX', bands: refBands, color: kProAmber)]
+            ? [
+                PeqGraphCurve(label: 'Readback', bands: liveBands, color: kProAccent),
+                PeqGraphCurve(label: 'MiUMAX', bands: refBands, color: kProAmber),
+              ]
             : null;
         graphWidgetMode = overlayCurves != null ? PeqGraphMode.difference : PeqGraphMode.single;
     }
@@ -1238,6 +1381,186 @@ class _FailureDisplay extends StatelessWidget {
         const SizedBox(height: 4),
         Text(result.failureDetail!, style: proSubtitle(size: 10)),
       ],
+    ]);
+  }
+}
+
+// ── Baseline / diff buttons ───────────────────────────────────────────────────
+
+class _BaselineButton extends StatelessWidget {
+  final bool hasBaseline;
+  final VoidCallback onCapture;
+  const _BaselineButton({required this.hasBaseline, required this.onCapture});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = hasBaseline ? kProGreen : Colors.white38;
+    return GestureDetector(
+      onTap: onCapture,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: hasBaseline ? kProGreen.withValues(alpha: 0.08) : Colors.transparent,
+          border: Border.all(
+              color: hasBaseline ? kProGreen.withValues(alpha: 0.40) : kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(
+            hasBaseline ? Icons.bookmark_outlined : Icons.bookmark_add_outlined,
+            size: 11,
+            color: color,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            hasBaseline ? 'BASELINE SET' : 'CAPTURE BASELINE',
+            style: TextStyle(
+                fontSize: 10, fontWeight: FontWeight.w600,
+                letterSpacing: 0.4, color: color),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _ClearBaselineButton extends StatelessWidget {
+  final VoidCallback onClear;
+  const _ClearBaselineButton({required this.onClear});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onClear,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Text('CLEAR',
+            style: TextStyle(
+                fontSize: 10, fontWeight: FontWeight.w600,
+                letterSpacing: 0.4, color: Colors.white30)),
+      ),
+    );
+  }
+}
+
+// ── Hex diff section ──────────────────────────────────────────────────────────
+
+class _HexDiffSection extends StatelessWidget {
+  final List<PayloadDiffEntry>? diff;
+  const _HexDiffSection({required this.diff});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(Icons.compare_arrows_outlined,
+            size: 12, color: kProAmber.withValues(alpha: 0.8)),
+        const SizedBox(width: 6),
+        Text('PAYLOAD DIFF — BASELINE vs CURRENT',
+            style: proTitle(size: 11, color: Colors.white70)),
+      ]),
+      const SizedBox(height: 6),
+      if (diff == null) ...[
+        Text(
+          'Baseline captured. Change a band on MiUMAX, '
+          'then tap READ CURRENT DSP STATE to see which bytes changed.',
+          style: proSubtitle(size: 9),
+        ),
+      ] else if (diff!.isEmpty) ...[
+        Row(children: [
+          const Icon(Icons.check_circle_outline, size: 11, color: kProGreen),
+          const SizedBox(width: 6),
+          Text('No changes detected — payload is byte-identical to baseline.',
+              style: proSubtitle(size: 9, color: kProGreen)),
+        ]),
+      ] else ...[
+        Text('${diff!.length} byte(s) changed:',
+            style: proSubtitle(size: 9, color: kProAmber)),
+        const SizedBox(height: 8),
+        _DiffTable(diff: diff!),
+      ],
+    ]);
+  }
+}
+
+class _DiffTable extends StatelessWidget {
+  final List<PayloadDiffEntry> diff;
+  const _DiffTable({required this.diff});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = proSubtitle(size: 9, color: Colors.white38);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            SizedBox(width: 88, child: Text('Offset', style: s)),
+            SizedBox(width: 52, child: Text('Before', style: s)),
+            SizedBox(width: 52, child: Text('After', style: s)),
+            SizedBox(width: 260, child: Text('DSP Mapping', style: s)),
+          ]),
+          const SizedBox(height: 4),
+          for (final entry in diff) ...[
+            _DiffRow(entry: entry),
+            const SizedBox(height: 4),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DiffRow extends StatelessWidget {
+  final PayloadDiffEntry entry;
+  const _DiffRow({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final annotation = dspOffsetAnnotation(entry.offset);
+    final isConfirmed = annotation.contains('[confirmed]');
+    final isCandidate = annotation.contains('-cand]');
+    final labelColor = isConfirmed
+        ? kProGreen
+        : isCandidate
+            ? kProAmber
+            : Colors.white38;
+
+    String hex2(int v) => '0x${v.toRadixString(16).padLeft(2, '0')}';
+    String hex3(int v) => '0x${v.toRadixString(16).padLeft(3, '0')}';
+
+    const monoStyle = TextStyle(
+      fontSize: 10,
+      color: Colors.white54,
+      fontFamily: 'monospace',
+      fontFeatures: [FontFeature.tabularFigures()],
+    );
+
+    return Row(children: [
+      SizedBox(
+        width: 88,
+        child: Text('${hex3(entry.offset)} (${entry.offset})',
+            style: monoStyle),
+      ),
+      SizedBox(
+        width: 52,
+        child: Text(hex2(entry.before), style: monoStyle),
+      ),
+      SizedBox(
+        width: 52,
+        child: Text(hex2(entry.after),
+            style: monoStyle.copyWith(color: kProAmber, fontWeight: FontWeight.w600)),
+      ),
+      SizedBox(
+        width: 260,
+        child: Text(annotation,
+            style: TextStyle(fontSize: 10, color: labelColor)),
+      ),
     ]);
   }
 }
