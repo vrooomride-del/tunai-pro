@@ -266,19 +266,18 @@ class _Adau1701DspStateReadCardState
       return;
     }
 
-    final rawBytes = snapshot.payload.sublist(19, 25);
-    final rawHex = rawBytes
+    final rawHex = snapshot.payload.sublist(19, 25)
         .map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}')
         .join(' ');
-    debugPrint('[DSP_READ] payload offsets 19-24: $rawHex');
-    for (final band in stateSnapshot.outputs[0].peqBands) {
-      final status = band.verificationStatus == PeqBandVerificationStatus.verified
-          ? 'verified'
-          : 'candidate';
+    debugPrint('[ADAU1701 READBACK] payload offsets 19-24: $rawHex');
+    for (var ch = 0; ch < stateSnapshot.outputs.length; ch++) {
+      final band0 = stateSnapshot.outputs[ch].peqBands[0];
+      final role = miuMaxOutputRoles[ch].shortLabel;
       debugPrint(
-        '[DSP_READ] Band${band.bandIndex + 1} '
-        'freq=${band.frequencyHz}Hz gain=${band.gainDb}dB '
-        'Q=${band.q.toStringAsFixed(2)} p08=${band.property08} [$status]',
+        '[ADAU1701 READBACK] Output${ch + 1} $role  '
+        'Band1  ${band0.frequencyHz}Hz  '
+        '${band0.gainDb.toStringAsFixed(1)}dB  '
+        'Q${band0.q.toStringAsFixed(2)}',
       );
     }
 
@@ -622,6 +621,7 @@ class _SuccessDisplay extends StatelessWidget {
 
       // Graph
       _LiveGraphSection(
+        outputIndex: selectedOutput,
         peqBands: selectedOutputData.peqBands,
         referenceBands: refs,
         hasComparableReference: selectedComparison.hasComparableReference,
@@ -832,6 +832,7 @@ class _OutputTab extends StatelessWidget {
 // ── Live graph section ────────────────────────────────────────────────────────
 
 class _LiveGraphSection extends StatelessWidget {
+  final int outputIndex;
   final List<PeqBandState> peqBands;
   final List<PeqBandReference>? referenceBands;
   final bool hasComparableReference;
@@ -839,6 +840,7 @@ class _LiveGraphSection extends StatelessWidget {
   final ValueChanged<_GraphDisplayMode> onModeChanged;
 
   const _LiveGraphSection({
+    required this.outputIndex,
     required this.peqBands,
     required this.referenceBands,
     required this.hasComparableReference,
@@ -895,8 +897,7 @@ class _LiveGraphSection extends StatelessWidget {
         ),
       const SizedBox(height: 8),
       Adau1701PeqResponseGraph(
-        key: ValueKey('live_graph_ch${ /* output index from peqBands first band */
-            peqBands.isNotEmpty ? peqBands.first.bandIndex : 0}'),
+        key: ValueKey('live_graph_ch$outputIndex'),
         bands: graphBands,
         height: 200,
         autoScale: true,
