@@ -128,6 +128,10 @@ void main() {
           Adau1701HardwareContext.fromTransport(_FakeTransport(connected: false)),
     )));
 
+    // V3-6A: DeployStepLadder adds extra content above the gate buttons,
+    // pushing them below the fixed test viewport's fold — scroll into view.
+    await tester.ensureVisible(_btn('APPROVE VERIFIED WRITE'));
+    await tester.pump();
     await tester.tap(_btn('APPROVE VERIFIED WRITE'));
     await tester.pump();
 
@@ -147,12 +151,16 @@ void main() {
       contextFactory: () => Adau1701HardwareContext.fromTransport(transport),
     )));
 
+    await tester.ensureVisible(_btn('APPROVE VERIFIED WRITE'));
+    await tester.pump();
     await tester.tap(_btn('APPROVE VERIFIED WRITE'));
     await tester.pump();
     // Apply now enabled.
     expect(tester.widget<OutlinedButton>(_btn('APPLY VERIFIED SETTINGS')).onPressed,
         isNotNull);
 
+    await tester.ensureVisible(_btn('APPLY VERIFIED SETTINGS'));
+    await tester.pump();
     await tester.tap(_btn('APPLY VERIFIED SETTINGS'));
     await tester.pumpAndSettle();
 

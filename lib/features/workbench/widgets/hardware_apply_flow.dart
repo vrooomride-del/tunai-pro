@@ -7,6 +7,8 @@ import '../../../core/deploy/pro_hardware_write_executor.dart';
 import '../../../core/deploy/pro_hardware_write_plan.dart';
 import '../../../core/pro_export_data.dart';
 import '../../../shared/pro_widgets.dart';
+import 'deploy_result_summary.dart';
+import 'deploy_step_ladder.dart';
 import 'hardware_apply_preview.dart';
 
 /// Gated hardware-apply workflow for the Deploy tab.
@@ -105,6 +107,53 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
     }
   }
 
+  /// V3-6A: the shared five-step ladder, computed entirely from state this
+  /// flow already tracks (_context, _plan, _approval, _applying, _progress,
+  /// _result) — no new state, no new persistence. This flow has no restore
+  /// concept of its own (unlike deploy_dialog.dart), so BACKUP/RESTORE is
+  /// reported honestly as unavailable here rather than invented.
+  List<DeployStepInfo> _deploySteps() {
+    final approved = _approval?.isApproved ?? false;
+    final ready = _context.isReady;
+    final r = _result;
+
+    return [
+      DeployStepInfo(
+        kind: DeployStepKind.projectCheck,
+        status: ready ? DeployStepStatus.complete : DeployStepStatus.blocked,
+        detail: ready ? 'Hardware connected' : 'Hardware disconnected',
+      ),
+      DeployStepInfo(
+        kind: DeployStepKind.writePlan,
+        status: approved ? DeployStepStatus.complete : DeployStepStatus.active,
+        detail: '${_plan.summary.writableOps} operation(s)'
+            '${_plan.summary.totalOps - _plan.summary.writableOps > 0 ? ' · ${_plan.summary.totalOps - _plan.summary.writableOps} blocked' : ''}',
+      ),
+      const DeployStepInfo(
+        kind: DeployStepKind.backupRestore,
+        status: DeployStepStatus.pending,
+        detail: 'Restore not available in this flow',
+      ),
+      DeployStepInfo(
+        kind: DeployStepKind.apply,
+        status: r != null
+            ? DeployStepStatus.complete
+            : (_applying ? DeployStepStatus.active : DeployStepStatus.pending),
+        detail: _applying && _progress != null
+            ? '${_progress!.completed} / ${_progress!.total}'
+            : null,
+      ),
+      DeployStepInfo(
+        kind: DeployStepKind.result,
+        status: r == null
+            ? DeployStepStatus.pending
+            : (r.failures.isEmpty
+                ? DeployStepStatus.complete
+                : DeployStepStatus.blocked),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final approved = _approval?.isApproved ?? false;
@@ -118,6 +167,8 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
     final canApply = approved && ready && !_applying;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      DeployStepLadder(steps: _deploySteps()),
+      const SizedBox(height: 12),
       HardwareApplyPreview(plan: _plan),
       const SizedBox(height: 12),
 
@@ -168,6 +219,11 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
             const SizedBox(width: 8),
             Text('${p.completed + 1} / ${p.total}',
                 style: proSubtitle(size: 10, color: Colors.white38)),
+            if (p.total > 0) ...[
+              const SizedBox(width: 6),
+              Text('(${(p.completed / p.total * 100).round()}%)',
+                  style: proSubtitle(size: 9, color: Colors.white24)),
+            ],
           ],
         ]),
         if (_progress case final p?) ...[
@@ -282,6 +338,17 @@ class _ResultsView extends StatelessWidget {
             style: proSubtitle(size: 10, color: kProAmber)),
       );
     }
+    // V3-6B: result.failedCount (HardwareWriteExecutionResult, kept
+    // unchanged) counts failed + timedOut + blockedByPreflight together — so
+    // it double-counts the same ops already shown in the BLOCKED chip below.
+    // This UI-local count excludes blockedByPreflight so the two chips never
+    // overlap; the shared getter itself is untouched.
+    final failedOnlyCount = result.outcomes
+        .where((o) =>
+            o.status == HardwareWriteOpStatus.failed ||
+            o.status == HardwareWriteOpStatus.timedOut)
+        .length;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -293,35 +360,57 @@ class _ResultsView extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('APPLY RESULTS', style: proLabel(size: 9, spacing: 1.5)),
         const SizedBox(height: 8),
+        // V3-6A: this flow previously had no aggregate summary sentence at
+        // all — only the per-op WRITTEN/BLOCKED/FAILED/UNSUPPORTED chips and
+        // per-row status labels below. Shares the same wording/rule as
+        // deploy_dialog.dart/deploy_tab.dart: an ack-only result is never
+        // labeled "Verified".
+        DeployResultSummary(result: result),
+        const SizedBox(height: 10),
         Wrap(spacing: 10, runSpacing: 8, children: [
           _CountChip(label: 'WRITTEN', value: '${result.writtenCount}',
               color: result.writtenCount > 0 ? kProGreen : null),
           _CountChip(label: 'BLOCKED', value: '${result.blockedCount}',
               color: result.blockedCount > 0 ? kProAmber : null),
-          _CountChip(label: 'FAILED', value: '${result.failedCount}',
-              color: result.failedCount > 0 ? kProRed : null),
+          _CountChip(
+              label: 'FAILED',
+              value: '$failedOnlyCount',
+              color: failedOnlyCount > 0 ? kProRed : null),
           _CountChip(label: 'UNSUPPORTED', value: '${result.unsupportedCount}',
               color: result.unsupportedCount > 0 ? Colors.white38 : null),
         ]),
         const SizedBox(height: 10),
         ...result.outcomes.map((o) => Padding(
               padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(children: [
-                SizedBox(
-                  width: 70,
-                  child: Text(o.op.channelId,
-                      style: proValue(size: 10, color: Colors.white54),
-                      overflow: TextOverflow.ellipsis),
-                ),
-                Expanded(
-                  child: Text(
-                      '${HardwareApplyPreview.paramLabel(o.op.parameterKind)} · '
-                      '${HardwareApplyPreview.bandLabel(o.op.bandIndex)}',
-                      style: proLabel(size: 10, spacing: 0.2)),
-                ),
-                Text(o.status.label,
-                    style: proValue(size: 10, color: _statusColor(o.status))),
-              ]),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    SizedBox(
+                      width: 70,
+                      child: Text(o.op.channelId,
+                          style: proValue(size: 10, color: Colors.white54),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    Expanded(
+                      child: Text(
+                          '${HardwareApplyPreview.paramLabel(o.op.parameterKind)} · '
+                          '${HardwareApplyPreview.bandLabel(o.op.bandIndex)}',
+                          style: proLabel(size: 10, spacing: 0.2)),
+                    ),
+                    Text(o.status.label,
+                        style:
+                            proValue(size: 10, color: _statusColor(o.status))),
+                  ]),
+                  // V3-6B: surfaces the failure/blocked reason that was
+                  // previously only visible in deploy_dialog.dart, never here.
+                  if (o.isFailure && o.message.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(o.message,
+                        style: proSubtitle(size: 9, color: _statusColor(o.status))),
+                  ],
+                ],
+              ),
             )),
       ]),
     );

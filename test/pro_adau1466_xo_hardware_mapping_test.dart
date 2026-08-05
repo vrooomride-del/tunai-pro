@@ -386,6 +386,10 @@ void main() {
           isWindowsPlatform: () => true,
           deviceOpen: true),
     ))));
+    // Panel is collapsed by default — expand to verify content
+    expect(find.text('ADVANCED HARDWARE DIAGNOSTICS'), findsOneWidget);
+    await tester.tap(find.text('ADVANCED HARDWARE DIAGNOSTICS'));
+    await tester.pumpAndSettle();
     expect(find.text('ADAU1466 XO Hardware Mapping'), findsOneWidget);
     expect(find.textContaining('WFL LPF_2 WRITE ENABLED'), findsOneWidget);
     expect(

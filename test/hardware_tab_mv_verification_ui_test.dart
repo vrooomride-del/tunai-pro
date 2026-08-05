@@ -80,6 +80,11 @@ void main() {
     );
     await tester.pump();
 
+    // V3-5A: HardwareDeviceStatusCard added extra content above this
+    // selector, pushing it below the fixed test viewport's fold — scroll it
+    // into view before tapping (same pattern used elsewhere in this suite).
+    await tester.ensureVisible(find.text('USBi — Windows Temporary Engineering'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
 
@@ -159,12 +164,19 @@ void main() {
       ),
     );
     await tester.pump();
+    // V3-5A: HardwareDeviceStatusCard added extra content above this
+    // selector, pushing it below the fixed test viewport's fold — scroll it
+    // into view before tapping (same pattern used elsewhere in this suite).
+    await tester.ensureVisible(find.text('USBi — Windows Temporary Engineering'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
 
     expect(find.text('wasActualWrite status: false'), findsNWidgets(4));
     expect(backend.callCount, 0);
 
+    await tester.ensureVisible(find.byKey(const Key('smoke-test-0067')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('smoke-test-0067')));
     await tester.pumpAndSettle();
 
@@ -206,6 +218,11 @@ void main() {
       ),
     );
     await tester.pump();
+    // V3-5A: HardwareDeviceStatusCard added extra content above this
+    // selector, pushing it below the fixed test viewport's fold — scroll it
+    // into view before tapping (same pattern used elsewhere in this suite).
+    await tester.ensureVisible(find.text('USBi — Windows Temporary Engineering'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
 
@@ -261,6 +278,11 @@ void main() {
       ),
     );
     await tester.pump();
+    // V3-5A: HardwareDeviceStatusCard added extra content above this
+    // selector, pushing it below the fixed test viewport's fold — scroll it
+    // into view before tapping (same pattern used elsewhere in this suite).
+    await tester.ensureVisible(find.text('USBi — Windows Temporary Engineering'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
 
@@ -303,6 +325,11 @@ void main() {
       ),
     );
     await tester.pump();
+    // V3-5A: HardwareDeviceStatusCard added extra content above this
+    // selector, pushing it below the fixed test viewport's fold — scroll it
+    // into view before tapping (same pattern used elsewhere in this suite).
+    await tester.ensureVisible(find.text('USBi — Windows Temporary Engineering'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
 
@@ -377,6 +404,11 @@ void main() {
       ),
     );
     await tester.pump();
+    // V3-5A: HardwareDeviceStatusCard added extra content above this
+    // selector, pushing it below the fixed test viewport's fold — scroll it
+    // into view before tapping (same pattern used elsewhere in this suite).
+    await tester.ensureVisible(find.text('USBi — Windows Temporary Engineering'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('USBi — Windows Temporary Engineering'));
     await tester.pumpAndSettle();
     final button = find.byKey(const Key('run-one-shot-gain-diagnostic-WFL'));

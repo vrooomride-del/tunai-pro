@@ -646,11 +646,18 @@ void main() {
         ),
       ));
 
+      // V3-6A: DeployStepLadder adds extra content above the gate buttons,
+      // pushing them below the default (800x600) test viewport's fold —
+      // scroll each into view before tapping.
+      await tester.ensureVisible(find.text('APPROVE VERIFIED WRITE'));
+      await tester.pump();
       await tester.tap(find.ancestor(
           of: find.text('APPROVE VERIFIED WRITE'),
           matching: find.bySubtype<OutlinedButton>()));
       await tester.pump();
 
+      await tester.ensureVisible(find.text('APPLY VERIFIED SETTINGS'));
+      await tester.pump();
       await tester.tap(find.ancestor(
           of: find.text('APPLY VERIFIED SETTINGS'),
           matching: find.bySubtype<OutlinedButton>()));
@@ -658,6 +665,7 @@ void main() {
 
       expect(captured, isNotNull);
       // allWritten is true when all outcomes succeeded
+      await tester.ensureVisible(find.text('APPLY RESULTS'));
       expect(find.text('APPLY RESULTS'), findsOneWidget);
     });
 
@@ -677,15 +685,20 @@ void main() {
         ),
       ));
 
+      await tester.ensureVisible(find.text('APPROVE VERIFIED WRITE'));
+      await tester.pump();
       await tester.tap(find.ancestor(
           of: find.text('APPROVE VERIFIED WRITE'),
           matching: find.bySubtype<OutlinedButton>()));
+      await tester.pump();
+      await tester.ensureVisible(find.text('APPLY VERIFIED SETTINGS'));
       await tester.pump();
       await tester.tap(find.ancestor(
           of: find.text('APPLY VERIFIED SETTINGS'),
           matching: find.bySubtype<OutlinedButton>()));
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('APPLY RESULTS'));
       expect(find.text('APPLY RESULTS'), findsOneWidget);
       expect(find.text('WRITTEN'), findsOneWidget);
     });
@@ -709,11 +722,15 @@ void main() {
         ),
       ));
 
+      await tester.ensureVisible(find.text('APPROVE VERIFIED WRITE'));
+      await tester.pump();
       await tester.tap(find.ancestor(
           of: find.text('APPROVE VERIFIED WRITE'),
           matching: find.bySubtype<OutlinedButton>()));
       await tester.pump();
 
+      await tester.ensureVisible(find.text('APPLY VERIFIED SETTINGS'));
+      await tester.pump();
       final applyBtn = tester.widget<OutlinedButton>(find.ancestor(
           of: find.text('APPLY VERIFIED SETTINGS'),
           matching: find.bySubtype<OutlinedButton>()));
@@ -735,11 +752,14 @@ void main() {
         ),
       ));
 
+      await tester.ensureVisible(find.text('APPROVE VERIFIED WRITE'));
+      await tester.pump();
       await tester.tap(find.ancestor(
           of: find.text('APPROVE VERIFIED WRITE'),
           matching: find.bySubtype<OutlinedButton>()));
       await tester.pump();
 
+      await tester.ensureVisible(find.textContaining('Hardware not ready'));
       expect(find.textContaining('Hardware not ready'), findsOneWidget);
     });
   });

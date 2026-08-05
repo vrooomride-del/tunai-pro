@@ -127,9 +127,25 @@ class HardwareWriteExecutionResult {
       .where((o) => o.status == HardwareWriteOpStatus.unsupported)
       .length;
 
-  /// True when every op was written with readback verification.
+  /// True when every op succeeded — written OR ack-only. Despite the name,
+  /// this does NOT mean every op was readback-verified: an ack-only outcome
+  /// (ACK received, no readback available for that operation) satisfies
+  /// [HardwareWriteOpOutcome.succeeded] too. Kept as-is (not renamed/removed)
+  /// for existing callers — use [allReadbackVerified] when the distinction
+  /// between "ACK received" and "DSP readback confirmed" matters for what a
+  /// UI says to the user (see V3-5B).
   bool get allWritten =>
       executed && outcomes.isNotEmpty && outcomes.every((o) => o.succeeded);
+
+  /// True only when every op reached [HardwareWriteOpStatus.written] — i.e.
+  /// DSP readback actually confirmed every value, none were ack-only. This
+  /// is the correctly-scoped aggregate for UI wording that claims
+  /// "DSP-verified"/"Verified"; [allWritten] alone cannot answer that
+  /// question because it also returns true for an all-ack-only result.
+  bool get allReadbackVerified =>
+      executed &&
+      outcomes.isNotEmpty &&
+      outcomes.every((o) => o.status == HardwareWriteOpStatus.written);
 
   /// True when every op succeeded (written OR ack-only). Use for UI PASS_ACK.
   bool get allPassed => executed && outcomes.isNotEmpty && failedCount == 0;

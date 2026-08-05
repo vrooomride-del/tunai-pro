@@ -43,6 +43,7 @@ import '../widgets/hardware_controlled_write_card.dart';
 import '../widgets/hardware_validation_manager_card.dart';
 import '../widgets/hardware_transport_readiness_card.dart';
 import '../widgets/hardware_transport_command_preview_card.dart';
+import '../widgets/hardware_device_status_card.dart';
 import 'sigma_verification_console.dart';
 import 'operational_master_volume_control.dart';
 import 'transport_connection_panel.dart';
@@ -534,6 +535,12 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           style: proSubtitle(),
         ),
         const SizedBox(height: 24),
+
+        // V3-5A: single read-only summary separating transport / DSP
+        // identity / parameter readback / physical output — does not
+        // replace or remove any control below; purely additive.
+        HardwareDeviceStatusCard(projectId: widget.projectId),
+        const SizedBox(height: 20),
 
         const ProSectionHeader(title: 'TRANSPORT ARCHITECTURE — ICP5 PHASE A', icon: Icons.alt_route_outlined),
         const SizedBox(height: 8),

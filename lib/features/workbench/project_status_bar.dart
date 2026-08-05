@@ -16,7 +16,6 @@ class ProjectStatusBar extends ConsumerWidget {
     final project = store.projects.where((p) => p.id == projectId).firstOrNull;
 
     final name = project?.name ?? 'No Project';
-    final device = project?.connection.label ?? HardwareConnection.disconnected.label;
     final sampleRate = project?.sampleRateLabel ?? '—';
     final dspTarget = project?.dspTarget ?? '—';
     final profileLabel = project?.profileStatus.label ?? '—';
@@ -39,6 +38,22 @@ class ProjectStatusBar extends ConsumerWidget {
     // button honestly reflects "will this deploy actually reach hardware",
     // not just the last-known persisted connection flag.
     final hasLiveContext = ref.watch(activeAdau1701ContextProvider) != null;
+
+    // Hardware connection state UX fix: the top status bar previously showed
+    // the raw persisted `project.connection.label` ("Connected") whenever
+    // isConnected was true, with no live-transport check — after an app
+    // restart this showed a stale "DEVICE Connected" even though
+    // activeAdau1701ContextProvider was null (no real transport open) and
+    // every deploy write would fail preflight. isLiveConnected mirrors the
+    // same live-vs-persisted gate canDeploy already uses below, so the
+    // status bar and the Deploy button never disagree about whether hardware
+    // is actually reachable. "Transport Connected" (not "Device Connected")
+    // is also deliberately not the same claim as PASS_ACK/DSP-verified
+    // wording elsewhere (see deploy_dialog.dart) — this label only means the
+    // transport link + identity handshake are live right now.
+    final isLiveConnected = isConnected && hasLiveContext;
+    final transportStatusLabel =
+        isLiveConnected ? 'Transport Connected' : 'Disconnected';
 
     final canDeploy = project != null &&
         project.dspTarget == 'ADAU1701' &&
@@ -78,9 +93,9 @@ class ProjectStatusBar extends ConsumerWidget {
                 child: Row(children: [
                   const SizedBox(width: 16),
                   _StatusItem(
-                    label: 'DEVICE',
-                    value: device,
-                    valueColor: isConnected ? kProGreen : const Color(0xFF6B7280),
+                    label: 'TRANSPORT',
+                    value: transportStatusLabel,
+                    valueColor: isLiveConnected ? kProGreen : const Color(0xFF6B7280),
                   ),
                   const _Div(),
                   _StatusItem(label: 'SAMPLE RATE', value: sampleRate),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_crossover_response.dart';
+import '../../../core/pro_phase_alignment.dart';
 import '../../../core/pro_phase_response.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../shared/pro_widgets.dart';
@@ -37,18 +38,28 @@ class XoGraphChannel {
 }
 
 /// Crossover response graph: per-driver magnitude curves + power-summed curve
-/// on a log 20 Hz–20 kHz axis, with a phase-preview placeholder strip.
+/// on a log 20 Hz–20 kHz axis, with a phase-alignment strip below it.
 ///
 /// Visualisation only — magnitudes come from [CrossoverResponse] (analog
-/// approximation). No DSP write, address mapping, or phase model.
+/// approximation), phase from [CrossoverPhase]. No DSP write, address
+/// mapping, or algorithm changes here.
 class ProCrossoverResponseGraph extends StatelessWidget {
   final List<XoGraphChannel> channels;
   final double height;
+
+  /// Optional, already-computed crossover pairs (e.g. from
+  /// `XoPhaseAlignment.analyze(...)`, as xo_tab.dart's phase-alignment card
+  /// already does) — when supplied, each pair's `crossoverHz` is drawn as a
+  /// vertical marker on both panels. This widget never computes crossoverHz
+  /// itself (no duplicated math): it only reads the already-public
+  /// [XoAlignmentPair.crossoverHz] field the caller passes in.
+  final List<XoAlignmentPair>? alignmentPairs;
 
   const ProCrossoverResponseGraph({
     super.key,
     required this.channels,
     this.height = 300,
+    this.alignmentPairs,
   });
 
   @override
@@ -70,16 +81,18 @@ class ProCrossoverResponseGraph extends StatelessWidget {
             flex: 3,
             child: CustomPaint(
               size: Size.infinite,
-              painter: _XoResponsePainter(channels: channels),
+              painter: _XoResponsePainter(
+                  channels: channels, alignmentPairs: alignmentPairs),
             ),
           ),
           const SizedBox(height: 6),
-          Text('PHASE (°) — simulation preview', style: proSubtitle(size: 8)),
+          Text('PHASE ALIGNMENT (°)', style: proSubtitle(size: 8)),
           Expanded(
             flex: 2,
             child: CustomPaint(
               size: Size.infinite,
-              painter: _XoPhasePainter(channels: channels),
+              painter: _XoPhasePainter(
+                  channels: channels, alignmentPairs: alignmentPairs),
             ),
           ),
         ],
@@ -87,6 +100,12 @@ class ProCrossoverResponseGraph extends StatelessWidget {
     );
   }
 }
+
+Color _alignmentStatusColor(XoAlignmentStatus status) => switch (status) {
+      XoAlignmentStatus.good => kProGreen,
+      XoAlignmentStatus.check => kProAmber,
+      XoAlignmentStatus.misalign => kProRed,
+    };
 
 Color _roleColor(DriverRole role) => switch (role) {
       DriverRole.tweeter || DriverRole.coaxTweeter => kProAmber,
@@ -97,6 +116,7 @@ Color _roleColor(DriverRole role) => switch (role) {
 
 class _XoResponsePainter extends CustomPainter {
   final List<XoGraphChannel> channels;
+  final List<XoAlignmentPair>? alignmentPairs;
 
   static const double _dbMin = -24;
   static const double _dbMax = 6;
@@ -107,7 +127,7 @@ class _XoResponsePainter extends CustomPainter {
   static const double _leftPad = 28;
   static const double _bottomPad = 14;
 
-  _XoResponsePainter({required this.channels});
+  _XoResponsePainter({required this.channels, this.alignmentPairs});
 
   double _x(double freq, Size size) {
     final plotW = size.width - _leftPad;
@@ -129,15 +149,25 @@ class _XoResponsePainter extends CustomPainter {
     final points = CrossoverResponse.logFrequencyPoints(count: 200);
     final curves = <List<double>>[];
 
-    // Per-driver curves.
+    // Per-driver curves. Selected drivers get a soft halo behind the line
+    // (a wider, low-alpha pass of the same curve) so the active channel
+    // reads clearly even with several overlapping curves — visual-only,
+    // the curve data itself is identical to the non-selected case.
     for (final ch in channels) {
       final curve = CrossoverResponse.channelCurve(ch.channel, points);
       curves.add(curve);
-      _drawCurve(canvas, size, points, curve, _roleColor(ch.role),
-          strokeWidth: ch.selected ? 2.2 : 1.3);
+      final color = _roleColor(ch.role);
+      if (ch.selected) {
+        _drawCurve(canvas, size, points, curve, color.withValues(alpha: 0.28),
+            strokeWidth: 5.5);
+      }
+      _drawCurve(canvas, size, points, curve, color,
+          strokeWidth: ch.selected ? 2.4 : 1.3);
     }
 
-    // Power-summed curve on top.
+    // Power-summed curve on top — the answer to "what does the listener
+    // actually hear" — emphasized with a heavier stroke than any single
+    // driver curve so it reads as the primary curve, not just another line.
     if (curves.isNotEmpty) {
       _drawCurve(
         canvas,
@@ -145,11 +175,44 @@ class _XoResponsePainter extends CustomPainter {
         points,
         CrossoverResponse.summedCurve(curves),
         Colors.white,
-        strokeWidth: 1.8,
+        strokeWidth: 2.6,
       );
     }
 
+    _drawCrossoverMarkers(canvas, size);
     _drawLegend(canvas, size);
+  }
+
+  /// Vertical marker + frequency label at each already-computed
+  /// [XoAlignmentPair.crossoverHz] — no crossover-point math happens here,
+  /// this only reads the field the caller (xo_tab.dart) already computed via
+  /// XoPhaseAlignment.analyze(...).
+  void _drawCrossoverMarkers(Canvas canvas, Size size) {
+    final pairs = alignmentPairs;
+    if (pairs == null || pairs.isEmpty) return;
+    for (final pair in pairs) {
+      final x = _x(pair.crossoverHz, size);
+      final color = _alignmentStatusColor(pair.status);
+      final linePaint = Paint()
+        ..color = color.withValues(alpha: 0.55)
+        ..strokeWidth = 1.0;
+      _drawDashedVertical(
+          canvas, Offset(x, 0), size.height - _bottomPad, linePaint);
+      _label(canvas, _freqLabel(pair.crossoverHz), Offset(x, 2),
+          align: TextAlign.center, color: color);
+    }
+  }
+
+  void _drawDashedVertical(
+      Canvas canvas, Offset top, double bottom, Paint paint) {
+    const dash = 4.0;
+    const gap = 3.0;
+    var y = top.dy;
+    while (y < bottom) {
+      final segEnd = (y + dash).clamp(0.0, bottom);
+      canvas.drawLine(Offset(top.dx, y), Offset(top.dx, segEnd), paint);
+      y += dash + gap;
+    }
   }
 
   void _drawGrid(Canvas canvas, Size size) {
@@ -197,17 +260,20 @@ class _XoResponsePainter extends CustomPainter {
   }
 
   void _drawLegend(Canvas canvas, Size size) {
-    final entries = <(Color, String)>[
-      for (final ch in channels) (_roleColor(ch.role), ch.label),
-      (Colors.white, 'summed'),
+    final entries = <(Color, String, bool)>[
+      for (final ch in channels) (_roleColor(ch.role), ch.label, false),
+      (Colors.white, 'SUMMED RESPONSE', true),
     ];
     var y = 2.0;
-    for (final (color, label) in entries) {
-      const swatchW = 12.0;
+    for (final (color, label, emphasize) in entries) {
+      final swatchW = emphasize ? 16.0 : 12.0;
       final tp = TextPainter(
         text: TextSpan(
             text: label,
-            style: const TextStyle(color: Colors.white54, fontSize: 8)),
+            style: TextStyle(
+                color: emphasize ? Colors.white : Colors.white54,
+                fontSize: 8,
+                fontWeight: emphasize ? FontWeight.w700 : FontWeight.w400)),
         textDirection: TextDirection.ltr,
       )..layout();
       final right = size.width - 2;
@@ -218,7 +284,7 @@ class _XoResponsePainter extends CustomPainter {
         Offset(swatchRight, y + tp.height / 2),
         Paint()
           ..color = color
-          ..strokeWidth = 2,
+          ..strokeWidth = emphasize ? 3 : 2,
       );
       tp.paint(canvas, Offset(textLeft, y));
       y += tp.height + 2;
@@ -226,11 +292,11 @@ class _XoResponsePainter extends CustomPainter {
   }
 
   void _label(Canvas canvas, String text, Offset at,
-      {TextAlign align = TextAlign.left}) {
+      {TextAlign align = TextAlign.left, Color color = Colors.white38}) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,
-        style: const TextStyle(color: Colors.white38, fontSize: 8),
+        style: TextStyle(color: color, fontSize: 8),
       ),
       textAlign: align,
       textDirection: TextDirection.ltr,
@@ -251,6 +317,7 @@ class _XoResponsePainter extends CustomPainter {
 /// wrapped −180..+180°, on the same log 20 Hz–20 kHz axis.
 class _XoPhasePainter extends CustomPainter {
   final List<XoGraphChannel> channels;
+  final List<XoAlignmentPair>? alignmentPairs;
 
   static const double _degMax = 180;
   static const double _degMin = -180;
@@ -259,7 +326,7 @@ class _XoPhasePainter extends CustomPainter {
   static const double _leftPad = 28;
   static const double _bottomPad = 12;
 
-  _XoPhasePainter({required this.channels});
+  _XoPhasePainter({required this.channels, this.alignmentPairs});
 
   double _x(double freq, Size size) {
     final plotW = size.width - _leftPad;
@@ -297,7 +364,8 @@ class _XoPhasePainter extends CustomPainter {
     final points = CrossoverResponse.logFrequencyPoints(count: 200);
 
     // Per-driver phase (wrapped) — split into segments to avoid drawing the
-    // vertical line across a −180/+180 wrap.
+    // vertical line across a −180/+180 wrap. Selected drivers get the same
+    // soft-halo treatment as the magnitude panel for consistent emphasis.
     for (final ch in channels) {
       final curve = CrossoverPhase.driverPhaseCurve(
         channel: ch.channel,
@@ -305,16 +373,40 @@ class _XoPhasePainter extends CustomPainter {
         phaseOffsetDeg: ch.phaseOffsetDeg,
         freqs: points,
       );
-      _drawWrapped(canvas, size, points, curve, _roleColor(ch.role),
+      final color = _roleColor(ch.role);
+      if (ch.selected) {
+        _drawWrapped(canvas, size, points, curve, color.withValues(alpha: 0.28),
+            strokeWidth: 4.5);
+      }
+      _drawWrapped(canvas, size, points, curve, color,
           strokeWidth: ch.selected ? 1.8 : 1.1);
     }
 
-    // Complex-summed phase.
+    // Complex-summed phase — the same emphasis treatment as the magnitude
+    // panel's summed curve.
     final summed = CrossoverPhase.summedPhaseCurve(
       drivers: [for (final ch in channels) ch.phaseDriver],
       freqs: points,
     );
-    _drawWrapped(canvas, size, points, summed, Colors.white, strokeWidth: 1.6);
+    _drawWrapped(canvas, size, points, summed, Colors.white, strokeWidth: 2.2);
+
+    _drawCrossoverMarkers(canvas, size);
+  }
+
+  /// Same already-computed crossoverHz markers as the magnitude panel — no
+  /// duplicated crossover-point math, just reads [XoAlignmentPair.crossoverHz].
+  void _drawCrossoverMarkers(Canvas canvas, Size size) {
+    final pairs = alignmentPairs;
+    if (pairs == null || pairs.isEmpty) return;
+    for (final pair in pairs) {
+      final x = _x(pair.crossoverHz, size);
+      final color = _alignmentStatusColor(pair.status);
+      final linePaint = Paint()
+        ..color = color.withValues(alpha: 0.45)
+        ..strokeWidth = 1.0;
+      canvas.drawLine(
+          Offset(x, 0), Offset(x, size.height - _bottomPad), linePaint);
+    }
   }
 
   void _drawWrapped(Canvas canvas, Size size, List<double> freqs,

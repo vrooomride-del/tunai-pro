@@ -40,7 +40,7 @@ void main() {
     expect(find.byType(ProCrossoverResponseGraph), findsOneWidget);
     // Magnitude + phase panels both present.
     expect(find.text('MAGNITUDE (dB)'), findsOneWidget);
-    expect(find.textContaining('PHASE (°)'), findsOneWidget);
+    expect(find.textContaining('PHASE ALIGNMENT'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -50,7 +50,7 @@ void main() {
         ProCrossoverResponseGraph(channels: [_woofer(), _tweeter()])));
     expect(find.byType(ProCrossoverResponseGraph), findsOneWidget);
     expect(find.byType(CustomPaint), findsWidgets);
-    expect(find.textContaining('PHASE (°)'), findsOneWidget);
+    expect(find.textContaining('PHASE ALIGNMENT'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

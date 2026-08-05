@@ -16,6 +16,7 @@ import '../../../core/pro_deploy_package_engine.dart';
 import '../../../core/pro_export_data.dart';
 import '../../../core/deploy/pro_hardware_capability.dart';
 import '../../../core/deploy/pro_hardware_context_provider.dart';
+import '../widgets/deploy_result_summary.dart';
 import '../widgets/hardware_apply_flow.dart';
 import '../../../core/deploy/pro_hardware_write_executor.dart';
 import '../../../core/workbench_tab_provider.dart';
@@ -236,7 +237,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
         ]),
         const SizedBox(height: 4),
         Text(
-          'Versioned review packages for preset deployment. Hardware write remains disabled.',
+          'Versioned packages for preset deployment and hardware apply.',
           style: proSubtitle(),
         ),
         const SizedBox(height: 24),
@@ -308,15 +309,24 @@ class _DeployTabState extends ConsumerState<DeployTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Row(
+                    Row(
                       children: [
-                        Icon(Icons.check_circle_outline,
+                        const Icon(Icons.check_circle_outline,
                             color: Color(0xFF4CAF50), size: 14),
-                        SizedBox(width: 8),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'PASS_ACK 수신 — DSP 쓰기 완료.',
-                            style: TextStyle(
+                            // V3-5B: allWritten (the branch gate above, kept
+                            // unchanged) is true for both fully readback-
+                            // verified and ack-only-only results — this text
+                            // must not claim "verified" for an ack-only
+                            // write. V3-6A: the English clause now comes from
+                            // DeployResultSummary.labelFor, the same shared
+                            // wording deploy_dialog.dart/hardware_apply_flow
+                            // .dart use — byte-identical resulting text.
+                            '${DeployResultSummary.labelFor(_lastHardwareResult!)}'
+                            ' — ${_lastHardwareResult!.allReadbackVerified ? "DSP write complete." : "Write accepted."}',
+                            style: const TextStyle(
                                 color: Color(0xFF4CAF50),
                                 fontSize: 11,
                                 fontWeight: FontWeight.w500),
@@ -327,7 +337,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
                     const SizedBox(height: 10),
                     OutlinedButton.icon(
                       icon: const Icon(Icons.mic_outlined, size: 13),
-                      label: const Text('After 측정 FRD 불러오기'),
+                      label: const Text('Load After-Measurement FRD'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: const Color(0xFF4CAF50),
                         side: const BorderSide(
@@ -359,7 +369,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'After 측정 차단: ${_lastHardwareResult!.executed ? '일부 쓰기 실패 (${_lastHardwareResult!.failedCount}개)' : _lastHardwareResult!.rejectionReason ?? '쓰기 미실행'}',
+                        'After-measurement unavailable: ${_lastHardwareResult!.executed ? '${_lastHardwareResult!.failedCount} operation(s) failed' : _lastHardwareResult!.rejectionReason ?? 'Not executed'}',
                         style: const TextStyle(
                             color: kProAmber, fontSize: 11, height: 1.4),
                       ),
@@ -381,7 +391,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              'Export 탭에서 패키지를 내보내면 Hardware Apply를 실행할 수 있습니다.',
+              'Export a package from the Export tab to enable Hardware Apply.',
               style: proSubtitle(size: 11),
             ),
           ),

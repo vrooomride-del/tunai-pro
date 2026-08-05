@@ -21,7 +21,10 @@ import '../../../core/pro_deploy_package_data.dart' show AppliedXoChannelState;
 import '../../../core/pro_export_data.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_tuning_data.dart';
+import '../../../shared/components/info_row.dart';
 import '../../../shared/pro_widgets.dart';
+import 'deploy_result_summary.dart';
+import 'deploy_step_ladder.dart';
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
@@ -375,12 +378,75 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
           ),
       ]);
 
+  /// V3-6A: the shared five-step ladder, computed entirely from state this
+  /// dialog already tracks (_phase, _plan, _blockedOps, previousApplied*,
+  /// _progress, _result) — no new state, no new persistence.
+  List<DeployStepInfo> _deploySteps() {
+    final blocked = _blockedOps;
+    final hasPrevious =
+        widget.previousAppliedGains.isNotEmpty || widget.previousAppliedXo.isNotEmpty;
+    final r = _result;
+
+    return [
+      // This dialog only opens via the top-bar DEPLOY button, which is
+      // itself gated on a live, handshake-verified connection — so by the
+      // time this dialog is visible, project check has already passed.
+      const DeployStepInfo(
+        kind: DeployStepKind.projectCheck,
+        status: DeployStepStatus.complete,
+        detail: 'Hardware connected',
+      ),
+      DeployStepInfo(
+        kind: DeployStepKind.writePlan,
+        status: _phase == _Phase.plan
+            ? DeployStepStatus.active
+            : DeployStepStatus.complete,
+        detail: '${_plan.writableOperations.length} operation(s)'
+            '${blocked.isEmpty ? '' : ' · ${blocked.length} blocked'}',
+      ),
+      DeployStepInfo(
+        kind: DeployStepKind.backupRestore,
+        status: hasPrevious ? DeployStepStatus.complete : DeployStepStatus.pending,
+        detail: hasPrevious
+            ? 'Previous applied state available for restore'
+            : 'No previous applied state to restore',
+      ),
+      DeployStepInfo(
+        kind: DeployStepKind.apply,
+        status: switch (_phase) {
+          _Phase.plan => DeployStepStatus.pending,
+          _Phase.executing => DeployStepStatus.active,
+          _Phase.result => DeployStepStatus.complete,
+        },
+        detail: _phase == _Phase.executing && _progress != null
+            ? '${_progress!.completed} / ${_progress!.total}'
+            : null,
+      ),
+      DeployStepInfo(
+        kind: DeployStepKind.result,
+        status: r == null
+            ? DeployStepStatus.pending
+            : (r.failures.isEmpty
+                ? DeployStepStatus.complete
+                : DeployStepStatus.blocked),
+      ),
+    ];
+  }
+
   Widget _body() {
-    return switch (_phase) {
-      _Phase.plan => _planView(),
-      _Phase.executing => _executingView(),
-      _Phase.result => _resultView(),
-    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DeployStepLadder(steps: _deploySteps()),
+        const SizedBox(height: 14),
+        switch (_phase) {
+          _Phase.plan => _planView(),
+          _Phase.executing => _executingView(),
+          _Phase.result => _resultView(),
+        },
+      ],
+    );
   }
 
   Widget _planView() {
@@ -604,6 +670,13 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
               '${p.completed + 1} / ${p.total}',
               style: const TextStyle(color: Colors.white38, fontSize: 11),
             ),
+            if (p.total > 0) ...[
+              const SizedBox(width: 6),
+              Text(
+                '(${(p.completed / p.total * 100).round()}%)',
+                style: const TextStyle(color: Colors.white24, fontSize: 10),
+              ),
+            ],
           ],
         ]),
         if (p != null) ...[
@@ -633,46 +706,51 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     final r = _result;
     if (r == null) return const SizedBox.shrink();
 
-    final allPassed = r.allPassed;
-    final color = allPassed ? kProGreen : kProAmber;
     final failures = r.failures;
     final firstFailure = failures.isEmpty ? null : failures.first;
     final firstFailureIndex =
         firstFailure == null ? null : r.outcomes.indexOf(firstFailure) + 1;
-    // ACK-only means the device acknowledged the command — not that a
-    // readback confirmed the DSP parameter actually changed. Only
-    // HardwareWriteOpStatus.written carries that confirmation. Never label
-    // an ack-only result as verified.
-    final hasAckOnly =
-        r.outcomes.any((o) => o.status == HardwareWriteOpStatus.ackOnly);
-    final label = failures.isEmpty
-        ? (hasAckOnly ? 'PASS_ACK (not DSP-verified)' : 'PASS_ACK (verified)')
-        : 'FAIL ${failures.length}개 · '
-            '$firstFailureIndex/${r.outcomes.length} · '
-            'channel=${firstFailure!.op.channelId} · '
-            'band=${firstFailure.op.bandIndex == null ? "-" : firstFailure.op.bandIndex! + 1} · '
-            'kind=${firstFailure.op.parameterKind.name} · '
-            'message=${firstFailure.message}';
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
-          border: Border.all(color: color.withValues(alpha: 0.4)),
-          borderRadius: BorderRadius.circular(4),
+      // V3-6A: shared result wording ("Verified" / "PASS_ACK (not
+      // DSP-verified)") — never labels an ack-only result as verified (see
+      // DeployResultSummary.labelFor). V3-6B: the FAIL branch is now a
+      // structured, scannable card (operation index/total, channel,
+      // parameter, band, reason) instead of one dense inline string — same
+      // underlying failure data, no change to how it's computed.
+      DeployResultSummary(
+        result: r,
+        failureBuilder: (_) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: kProAmber.withValues(alpha: 0.08),
+            border: Border.all(color: kProAmber.withValues(alpha: 0.4)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.block_outlined, color: kProAmber, size: 14),
+              const SizedBox(width: 8),
+              Text('FAIL ${failures.length}개',
+                  style: proValue(size: 11, color: kProAmber)),
+            ]),
+            if (firstFailure != null) ...[
+              const SizedBox(height: 8),
+              ProInfoRow(
+                  label: 'Operation',
+                  value: '$firstFailureIndex / ${r.outcomes.length}'),
+              ProInfoRow(label: 'Channel', value: firstFailure.op.channelId),
+              ProInfoRow(
+                  label: 'Parameter', value: _opKindLabel(firstFailure.op)),
+              ProInfoRow(
+                  label: 'Band',
+                  value: firstFailure.op.bandIndex == null
+                      ? '-'
+                      : '${firstFailure.op.bandIndex! + 1}'),
+              ProInfoRow(label: 'Reason', value: firstFailure.message),
+            ],
+          ]),
         ),
-        child: Row(children: [
-          Icon(
-            allPassed ? Icons.check_circle_outline : Icons.block_outlined,
-            color: color,
-            size: 14,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(label, style: proValue(size: 11, color: color)),
-          ),
-        ]),
       ),
       if (r.outcomes.isNotEmpty) ...[
         const SizedBox(height: 10),
@@ -684,11 +762,18 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
               children: r.outcomes.asMap().entries.map((entry) {
                 final index = entry.key;
                 final o = entry.value;
+                // V3-6B: blockedByPreflight (never truly attempted — the
+                // existing preflight chain refused it) reads as amber, the
+                // same as ackOnly, distinct from a genuine execution error
+                // (failed/timedOut, red) — matches hardware_apply_flow.dart's
+                // existing _statusColor mapping.
                 final c = switch (o.status) {
                   HardwareWriteOpStatus.written => kProGreen,
                   HardwareWriteOpStatus.ackOnly => kProAmber,
-                  _ when o.isFailure => kProRed,
-                  _ => kProRed,
+                  HardwareWriteOpStatus.blockedByPreflight => kProAmber,
+                  HardwareWriteOpStatus.failed => kProRed,
+                  HardwareWriteOpStatus.timedOut => kProRed,
+                  HardwareWriteOpStatus.unsupported => Colors.white38,
                 };
                 final statusText = switch (o.status) {
                   HardwareWriteOpStatus.written => o.status.label,

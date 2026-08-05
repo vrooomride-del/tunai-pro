@@ -15,6 +15,8 @@ import '../../../core/pro_usbi_native_backend.dart';
 import '../../../core/pro_adau1466_xo_audit_registry.dart';
 import '../../../core/pro_adau1466_wfl_lpf2_safeload_executor.dart';
 import '../../../core/pro_phase_alignment.dart';
+import '../../../shared/components/section_header.dart';
+import '../../../shared/components/stat_chip.dart';
 import '../widgets/current_driver_header.dart';
 import '../widgets/pro_crossover_response_graph.dart';
 
@@ -118,13 +120,36 @@ class _XoTabState extends ConsumerState<XoTab> {
         ? const [CrossoverSlope.db6, CrossoverSlope.db12, CrossoverSlope.db24]
         : CrossoverSlope.values;
     final hardwareAudit = showAdau1466Diagnostics
-        ? Adau1466XoHardwareMappingPanel(
-            backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
-            isWindowsPlatform:
-                widget.isWindowsPlatform ?? () => Platform.isWindows,
-            deviceOpen: widget.deviceOpen,
-            dspWritesDisabled: widget.dspWritesDisabled,
-            onDspWriteStop: widget.onDspWriteStop,
+        ? Container(
+            decoration: BoxDecoration(
+              color: kProSurface,
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: const Key('adau1466-xo-diagnostics-section'),
+                tilePadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                title: Text('ADVANCED HARDWARE DIAGNOSTICS',
+                    style: proLabel(size: 9, spacing: 1.5)),
+                iconColor: Colors.white38,
+                collapsedIconColor: Colors.white24,
+                initiallyExpanded: false,
+                children: [
+                  Adau1466XoHardwareMappingPanel(
+                    backend: widget.usbiBackend ??
+                        const ProUsbiNativeBackendDisabled(),
+                    isWindowsPlatform:
+                        widget.isWindowsPlatform ?? () => Platform.isWindows,
+                    deviceOpen: widget.deviceOpen,
+                    dspWritesDisabled: widget.dspWritesDisabled,
+                    onDspWriteStop: widget.onDspWriteStop,
+                  ),
+                ],
+              ),
+            ),
           )
         : const SizedBox.shrink();
 
@@ -150,6 +175,29 @@ class _XoTabState extends ConsumerState<XoTab> {
       orElse: () => CrossoverChannelState.empty(selectedId),
     );
 
+    // v3-4: computed once and shared by the graph's crossover markers, the
+    // new alignment-quality card, and the existing phase-alignment card —
+    // XoPhaseAlignment.analyze itself is untouched, this just avoids
+    // recomputing the same analysis three times.
+    final alignmentPairs = XoPhaseAlignment.analyze([
+      for (final d in drivers)
+        () {
+          final ctrl = tuning.channelControls.firstWhere(
+            (c) => c.channelId == d.id,
+            orElse: () => ChannelControlState(channelId: d.id),
+          );
+          return XoAlignmentInput(
+            label: d.name,
+            channel: tuning.crossoverChannels.firstWhere(
+              (c) => c.channelId == d.id,
+              orElse: () => CrossoverChannelState.empty(d.id),
+            ),
+            delayMs: ctrl.delayMs,
+            phaseOffsetDeg: ctrl.phaseOffsetDeg,
+          );
+        }(),
+    ]);
+
     return Row(children: [
       // ── Left: channel list ──────────────────────────────────────────────
       ChannelSelectorSidebar(
@@ -172,13 +220,11 @@ class _XoTabState extends ConsumerState<XoTab> {
                   color: kProAccent.withValues(alpha: 0.6), size: 16),
               const SizedBox(width: 8),
               Text('Crossover Editor', style: proTitle(size: 15)),
-              const Spacer(),
-              Text('Rev ${tuning.tuningRevision}',
-                  style: proLabel(size: 9, color: Colors.white24, spacing: 1)),
             ]),
             const SizedBox(height: 3),
             Text(
-                'High-pass and low-pass structure per channel. DSP export draft is available after protection verification.',
+                'High-pass and low-pass structure per channel. '
+                'Apply to hardware via the Deploy tab.',
                 style: proSubtitle()),
             const SizedBox(height: 16),
             hardwareAudit,
@@ -187,6 +233,14 @@ class _XoTabState extends ConsumerState<XoTab> {
             // v3-3.5: shared driver identity header — replaces the identity
             // block _XoChannelHeader used to render locally.
             CurrentDriverHeader(drivers: drivers),
+            const SizedBox(height: 14),
+
+            // v3-4: CROSSOVER summary card (per-filter role/side/freq/type/
+            // slope) + alignment-quality readout — display only, reusing
+            // XoPhaseAlignment's existing computation verbatim.
+            _XoSummaryCard(drivers: drivers, tuning: tuning),
+            const SizedBox(height: 10),
+            _XoAlignmentQualityCard(pairs: alignmentPairs),
             const SizedBox(height: 14),
 
             // Channel header controls (bypass/polarity only — identity now
@@ -269,33 +323,13 @@ class _XoTabState extends ConsumerState<XoTab> {
                     );
                   }(),
               ],
+              alignmentPairs: alignmentPairs,
             ),
             const SizedBox(height: 12),
 
             // ── Phase alignment summary (electrical simulation) ─────────────
-            _PhaseAlignmentCard(
-              pairs: XoPhaseAlignment.analyze([
-                for (final d in drivers)
-                  () {
-                    final ctrl = tuning.channelControls.firstWhere(
-                      (c) => c.channelId == d.id,
-                      orElse: () => ChannelControlState(channelId: d.id),
-                    );
-                    return XoAlignmentInput(
-                      label: d.name,
-                      channel: tuning.crossoverChannels.firstWhere(
-                        (c) => c.channelId == d.id,
-                        orElse: () => CrossoverChannelState.empty(d.id),
-                      ),
-                      delayMs: ctrl.delayMs,
-                      phaseOffsetDeg: ctrl.phaseOffsetDeg,
-                    );
-                  }(),
-              ]),
-            ),
+            _PhaseAlignmentCard(pairs: alignmentPairs),
 
-            // Export/deploy status (Phase 5-C-2A: corrects the prior wording,
-            // which implied DSP export/deployment itself was unimplemented).
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -311,9 +345,7 @@ class _XoTabState extends ConsumerState<XoTab> {
                 Expanded(
                   child: Text(
                     'Phase-aware simulation is available in the Simulation tab. '
-                    'These crossover settings already deploy through the existing '
-                    'ADAU1701 hardware path in Deploy. A separate SigmaStudio-format '
-                    'project export is not yet available.',
+                    'Crossover settings deploy via the Deploy tab.',
                     style: proSubtitle(size: 10),
                   ),
                 ),
@@ -326,6 +358,136 @@ class _XoTabState extends ConsumerState<XoTab> {
   }
 }
 
+/// v3-4: "CROSSOVER" summary card — one compact row per configured filter
+/// (role/side, frequency, filter type + slope). Reads CrossoverFilter's own
+/// existing label getters only; no new formatting/calculation logic.
+class _XoSummaryCard extends StatelessWidget {
+  final List<DriverChannel> drivers;
+  final TuningProjectState tuning;
+  const _XoSummaryCard({required this.drivers, required this.tuning});
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    for (final d in drivers) {
+      final xo = tuning.crossoverChannels.firstWhere(
+        (c) => c.channelId == d.id,
+        orElse: () => CrossoverChannelState.empty(d.id),
+      );
+      if (xo.hasHighPass) {
+        rows.add(_XoSummaryRow(driverRoleLabel: d.role.label, filter: xo.highPass!));
+      }
+      if (xo.hasLowPass) {
+        rows.add(_XoSummaryRow(driverRoleLabel: d.role.label, filter: xo.lowPass!));
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const ProSectionHeader(
+            title: 'CROSSOVER', icon: Icons.device_hub_outlined),
+        const SizedBox(height: 10),
+        if (rows.isEmpty)
+          Text('No filters configured yet.', style: proSubtitle(size: 10))
+        else
+          Wrap(spacing: 10, runSpacing: 10, children: rows),
+      ]),
+    );
+  }
+}
+
+class _XoSummaryRow extends StatelessWidget {
+  final String driverRoleLabel;
+  final CrossoverFilter filter;
+  const _XoSummaryRow({required this.driverRoleLabel, required this.filter});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: kProPanel,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('$driverRoleLabel ${filter.side.label}',
+                style: proTitle(size: 11)),
+            const SizedBox(height: 6),
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              ProStatChip(label: 'FREQ', value: filter.freqLabel),
+              ProStatChip(
+                  label: 'FILTER',
+                  value: '${filter.type.label}${filter.slope.short}'),
+            ]),
+          ],
+        ),
+      );
+}
+
+/// v3-4: alignment-quality readout, reusing XoAlignmentStatus's existing
+/// classification verbatim — display only, no automatic tuning. When more
+/// than one crossover pair exists, the worst-scoring pair is surfaced (the
+/// one that most needs attention).
+class _XoAlignmentQualityCard extends StatelessWidget {
+  final List<XoAlignmentPair> pairs;
+  const _XoAlignmentQualityCard({required this.pairs});
+
+  static String _friendlyLabel(XoAlignmentStatus status) => switch (status) {
+        XoAlignmentStatus.good => 'Excellent',
+        XoAlignmentStatus.check => 'Good',
+        XoAlignmentStatus.misalign => 'Needs Tune',
+      };
+
+  static Color _color(XoAlignmentStatus status) => switch (status) {
+        XoAlignmentStatus.good => kProGreen,
+        XoAlignmentStatus.check => kProAmber,
+        XoAlignmentStatus.misalign => kProRed,
+      };
+
+  static int _severity(XoAlignmentStatus status) => switch (status) {
+        XoAlignmentStatus.good => 0,
+        XoAlignmentStatus.check => 1,
+        XoAlignmentStatus.misalign => 2,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final content = pairs.isEmpty
+        ? Text('No overlapping crossover to analyze',
+            style: proSubtitle(size: 10),
+            overflow: TextOverflow.ellipsis)
+        : Builder(builder: (context) {
+            final worst =
+                pairs.reduce((a, b) => _severity(b.status) > _severity(a.status) ? b : a);
+            return ProStatusPill(
+                label: _friendlyLabel(worst.status), color: _color(worst.status));
+          });
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(children: [
+        Text('Crossover Alignment', style: proLabel(size: 9, spacing: 1.5)),
+        const SizedBox(width: 10),
+        Flexible(child: content),
+      ]),
+    );
+  }
+}
+
 class _PhaseAlignmentCard extends StatelessWidget {
   final List<XoAlignmentPair> pairs;
   const _PhaseAlignmentCard({required this.pairs});
@@ -334,6 +496,12 @@ class _PhaseAlignmentCard extends StatelessWidget {
         XoAlignmentStatus.good => kProGreen,
         XoAlignmentStatus.check => kProAmber,
         XoAlignmentStatus.misalign => kProRed,
+      };
+
+  static String _statusLabel(XoAlignmentStatus s) => switch (s) {
+        XoAlignmentStatus.good => 'Excellent',
+        XoAlignmentStatus.check => 'Good',
+        XoAlignmentStatus.misalign => 'Needs Tune',
       };
 
   static String _freqLabel(double f) => f >= 1000
@@ -372,12 +540,16 @@ class _PhaseAlignmentCard extends StatelessWidget {
               style: proSubtitle(size: 9))
         else
           for (final p in pairs) ...[
-            _AlignmentRow(pair: p, statusColor: _statusColor(p.status)),
+            _AlignmentRow(
+              pair: p,
+              statusLabel: _statusLabel(p.status),
+              statusColor: _statusColor(p.status),
+            ),
             if (p != pairs.last) const SizedBox(height: 10),
           ],
         const SizedBox(height: 8),
         Text('Alignment scored on |Δphase| at the crossover: '
-            'GOOD < 30°, CHECK 30–60°, MISALIGN > 60°.',
+            'Excellent < 30°, Good 30–60°, Needs Tune > 60°.',
             style: proSubtitle(size: 8)),
       ]),
     );
@@ -386,8 +558,9 @@ class _PhaseAlignmentCard extends StatelessWidget {
 
 class _AlignmentRow extends StatelessWidget {
   final XoAlignmentPair pair;
+  final String statusLabel;
   final Color statusColor;
-  const _AlignmentRow({required this.pair, required this.statusColor});
+  const _AlignmentRow({required this.pair, required this.statusLabel, required this.statusColor});
 
   @override
   Widget build(BuildContext context) {
@@ -397,7 +570,7 @@ class _AlignmentRow extends StatelessWidget {
           child: Text('${pair.lowLabel}  ×  ${pair.highLabel}',
               style: const TextStyle(color: Colors.white, fontSize: 12)),
         ),
-        ProStatusPill(label: pair.status.label, color: statusColor),
+        ProStatusPill(label: statusLabel, color: statusColor),
       ]),
       const SizedBox(height: 6),
       Wrap(spacing: 16, runSpacing: 4, children: [

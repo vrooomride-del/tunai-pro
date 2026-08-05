@@ -95,13 +95,36 @@ class _DelayTabState extends ConsumerState<DelayTab> {
     // projects, which write delay through the ICP5 deploy path, not USBi.
     final showAdau1466Diagnostics = project?.dspTarget == 'ADAU1466';
     final audit = showAdau1466Diagnostics
-        ? OperationalAdau1466DelayAudit(
-            backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
-            isWindowsPlatform:
-                widget.isWindowsPlatform ?? () => Platform.isWindows,
-            deviceOpen: widget.deviceOpen,
-            dspWritesDisabled: widget.dspWritesDisabled,
-            onDspWriteStop: widget.onDspWriteStop,
+        ? Container(
+            decoration: BoxDecoration(
+              color: kProSurface,
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: const Key('adau1466-delay-diagnostics-section'),
+                tilePadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                title: Text('ADVANCED HARDWARE DIAGNOSTICS',
+                    style: proLabel(size: 9, spacing: 1.5)),
+                iconColor: Colors.white38,
+                collapsedIconColor: Colors.white24,
+                initiallyExpanded: false,
+                children: [
+                  OperationalAdau1466DelayAudit(
+                    backend: widget.usbiBackend ??
+                        const ProUsbiNativeBackendDisabled(),
+                    isWindowsPlatform:
+                        widget.isWindowsPlatform ?? () => Platform.isWindows,
+                    deviceOpen: widget.deviceOpen,
+                    dspWritesDisabled: widget.dspWritesDisabled,
+                    onDspWriteStop: widget.onDspWriteStop,
+                  ),
+                ],
+              ),
+            ),
           )
         : const SizedBox.shrink();
 
@@ -146,9 +169,6 @@ class _DelayTabState extends ConsumerState<DelayTab> {
                   color: kProAccent.withValues(alpha: 0.6), size: 16),
               const SizedBox(width: 8),
               Text('Delay / Alignment', style: proTitle(size: 15)),
-              const Spacer(),
-              Text('Rev ${tuning.tuningRevision}',
-                  style: proLabel(size: 9, color: Colors.white24, spacing: 1)),
             ]),
             const SizedBox(height: 3),
             Text(

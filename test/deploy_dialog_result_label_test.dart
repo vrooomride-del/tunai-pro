@@ -20,6 +20,7 @@ import 'package:tunai_pro/core/transport/adau1701_tuning_transport.dart';
 import 'package:tunai_pro/core/transport/icp5_raw_state_read.dart';
 import 'package:tunai_pro/core/transport/icp5_transports.dart';
 import 'package:tunai_pro/features/workbench/widgets/deploy_dialog.dart';
+import 'package:tunai_pro/shared/components/info_row.dart';
 
 // ── Fake port ─────────────────────────────────────────────────────────────────
 
@@ -285,11 +286,34 @@ void main() {
                 .startsWith('deploy-failure-row-'),
       );
       expect(failureRows, findsOneWidget);
+      // V3-6B: the dense single-line summary was replaced with a structured
+      // card (ProInfoRow per field) — same underlying values, different
+      // presentation.
       expect(find.textContaining('FAIL 1개'), findsOneWidget);
-      expect(find.textContaining('channel=ch_tw_l'), findsOneWidget);
-      expect(find.textContaining('band=1'), findsOneWidget);
-      expect(find.textContaining('kind=peqFrequency'), findsOneWidget);
-      expect(find.textContaining('message=$failMsg'), findsOneWidget);
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is ProInfoRow &&
+              w.label == 'Operation' &&
+              RegExp(r'^\d+ / 10$').hasMatch(w.value)),
+          findsOneWidget);
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is ProInfoRow && w.label == 'Channel' && w.value == 'ch_tw_l'),
+          findsOneWidget);
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is ProInfoRow && w.label == 'Band' && w.value == '1'),
+          findsOneWidget);
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is ProInfoRow &&
+              w.label == 'Parameter' &&
+              w.value == 'PEQ B1 Freq'),
+          findsOneWidget);
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is ProInfoRow && w.label == 'Reason' && w.value == failMsg),
+          findsOneWidget);
     });
 
     testWidgets(

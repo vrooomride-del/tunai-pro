@@ -1,13 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tunai_pro/core/pro_adau1466_gain_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_master_volume_executor.dart';
 import 'package:tunai_pro/core/pro_adau1466_mute_validation_executor.dart';
 import 'package:tunai_pro/core/pro_adau1466_operational_gain_executor.dart';
 import 'package:tunai_pro/core/pro_adau1466_sigma_executor.dart';
+import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
 import 'package:tunai_pro/features/workbench/tabs/gain_tab.dart';
+
+const _kProjectsKey = 'tunai_pro_projects';
+
+ProProject _gainAdau1466Project() => ProProject(
+      id: 'gain-visible-test',
+      name: 'Gain ADAU1466 test',
+      createdAt: DateTime.utc(2026, 8, 5),
+      updatedAt: DateTime.utc(2026, 8, 5),
+      dspTarget: 'ADAU1466',
+    );
 
 class _Backend implements ProUsbiNativeBackend {
   final List<List<int>> outcomes;
@@ -100,6 +112,9 @@ void main() {
 
   testWidgets('actual GainTab contains all six operational sliders',
       (tester) async {
+    SharedPreferences.setMockInitialValues({
+      _kProjectsKey: ProProject.encodeList([_gainAdau1466Project()]),
+    });
     final backend = _Backend();
     await tester.pumpWidget(ProviderScope(
         child: MaterialApp(
@@ -110,6 +125,11 @@ void main() {
           isWindowsPlatform: () => true,
           deviceOpen: true),
     ))));
+    await tester.pumpAndSettle();
+    // Diagnostics section is collapsed by default — expand to reach sliders
+    expect(find.text('ADVANCED HARDWARE DIAGNOSTICS'), findsOneWidget);
+    await tester.tap(find.text('ADVANCED HARDWARE DIAGNOSTICS'));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('operational-adau1466-gain-controls')),
         findsOneWidget);
     for (final channel in ['WFL', 'MID_L', 'TWL', 'WFR', 'MID_R', 'TWR']) {

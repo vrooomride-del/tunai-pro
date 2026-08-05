@@ -261,7 +261,13 @@ void main() {
     // Restore writes back the original -10.0 dB (the value captured in
     // widget.previousAppliedGains when the dialog was opened) and must
     // persist it via the same ack-only-aware path.
-    await tester.tap(find.textContaining('RESTORE'));
+    // V3-6A: the shared DeployStepLadder also renders a "BACKUP/RESTORE"
+    // step label, so a bare textContaining('RESTORE') is now ambiguous —
+    // target the actual RESTORE button specifically.
+    await tester.tap(find.ancestor(
+      of: find.text('RESTORE (GAIN)'),
+      matching: find.byWidgetPredicate((w) => w is OutlinedButton),
+    ));
     await tester.pumpAndSettle();
 
     applied = container

@@ -191,6 +191,9 @@ void main() {
       [0x01]
     ]);
     await tester.pumpWidget(_harness(backend));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ADVANCED HARDWARE DIAGNOSTICS'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const Key('delay-slider-WFL')));
     var slider =
         tester.widget<Slider>(find.byKey(const Key('delay-slider-WFL')));
@@ -211,6 +214,9 @@ void main() {
       (tester) async {
     final backend = _QueueRealBackend([]);
     await tester.pumpWidget(_harness(backend));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ADVANCED HARDWARE DIAGNOSTICS'));
+    await tester.pumpAndSettle();
     for (final name in ['MID_L', 'TWL', 'WFR', 'MID_R', 'TWR']) {
       expect(
           tester
@@ -231,6 +237,9 @@ void main() {
   testWidgets('visible operational Delay tab reports safety status',
       (tester) async {
     await tester.pumpWidget(_harness(_QueueRealBackend([])));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ADVANCED HARDWARE DIAGNOSTICS'));
+    await tester.pumpAndSettle();
     expect(find.text('ADAU1466 Operational Delay'), findsOneWidget);
     expect(
         find.textContaining('Direct 6-byte parameter write'), findsOneWidget);

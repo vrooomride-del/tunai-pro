@@ -112,18 +112,44 @@ class _GainTabState extends ConsumerState<GainTab> {
     final tuning = project?.tuningState ?? TuningProjectState.createDefault();
     // ADAU1466 operational controls are only relevant for ADAU1466 projects.
     // ADAU1701 projects write gains through the ICP5 deploy path, not USBi.
-    final showAdau1466Controls = (project?.dspTarget ?? '') != 'ADAU1701';
-    final operational = OperationalAdau1466GainControls(
-      backend: widget.usbiBackend ?? const ProUsbiNativeBackendDisabled(),
-      isWindowsPlatform: widget.isWindowsPlatform ?? () => Platform.isWindows,
-      deviceOpen: widget.deviceOpen,
-      dspWritesDisabled: widget.dspWritesDisabled,
-      onDspWriteStop: widget.onDspWriteStop,
-    );
+    final showAdau1466Controls = project?.dspTarget == 'ADAU1466';
+    final operational = showAdau1466Controls
+        ? Container(
+            decoration: BoxDecoration(
+              color: kProSurface,
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: const Key('adau1466-gain-diagnostics-section'),
+                tilePadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                title: Text('ADVANCED HARDWARE DIAGNOSTICS',
+                    style: proLabel(size: 9, spacing: 1.5)),
+                iconColor: Colors.white38,
+                collapsedIconColor: Colors.white24,
+                initiallyExpanded: false,
+                children: [
+                  OperationalAdau1466GainControls(
+                    backend: widget.usbiBackend ??
+                        const ProUsbiNativeBackendDisabled(),
+                    isWindowsPlatform:
+                        widget.isWindowsPlatform ?? () => Platform.isWindows,
+                    deviceOpen: widget.deviceOpen,
+                    dspWritesDisabled: widget.dspWritesDisabled,
+                    onDspWriteStop: widget.onDspWriteStop,
+                  ),
+                ],
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
     if (drivers.isEmpty) {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(20),
-        child: showAdau1466Controls ? operational : const SizedBox.shrink(),
+        child: operational,
       );
     }
 
@@ -163,14 +189,11 @@ class _GainTabState extends ConsumerState<GainTab> {
                   color: kProAccent.withValues(alpha: 0.6), size: 16),
               const SizedBox(width: 8),
               Text('Gain / Trim', style: proTitle(size: 15)),
-              const Spacer(),
-              Text('Rev ${tuning.tuningRevision}',
-                  style: proLabel(size: 9, color: Colors.white24, spacing: 1)),
             ]),
             const SizedBox(height: 3),
             Text(
                 'Channel level matching and output trim. '
-                'Hardware write remains disabled. Use the Hardware tab for dry-run planning.',
+                'Apply to hardware via the Deploy tab.',
                 style: proSubtitle()),
             if (showAdau1466Controls) ...[
               const SizedBox(height: 16),
