@@ -40,6 +40,7 @@ const volumeAck = <int>[0x55, 0x07, 0xE1, 0, 0, 0, 0x10, 0, 0x4D];
 
 class _FakeGattConnection implements Icp5SerialConnection {
   final _controller = StreamController<List<int>>.broadcast(sync: true);
+  bool _closed = false;
   final writes = <List<int>>[];
   final void Function(_FakeGattConnection connection, int call, List<int> bytes)
       onWrite;
@@ -49,9 +50,16 @@ class _FakeGattConnection implements Icp5SerialConnection {
   @override
   Stream<List<int>> get bytes => _controller.stream;
 
-  void notify(List<int> bytes) => _controller.add(bytes);
-  void disconnectNotify() =>
-      _controller.addError(StateError('ICP5 BLE Notify disconnected.'));
+  // Guard against Future.delayed callbacks that fire after close() — a
+  // delayed notification in a timeout-failure test should be a no-op, not a
+  // "test failed after it already completed" error.
+  void notify(List<int> bytes) {
+    if (!_closed) _controller.add(bytes);
+  }
+
+  void disconnectNotify() {
+    if (!_closed) _controller.addError(StateError('ICP5 BLE Notify disconnected.'));
+  }
 
   @override
   Future<int> write(List<int> bytes, Duration timeout) async {
@@ -61,7 +69,10 @@ class _FakeGattConnection implements Icp5SerialConnection {
   }
 
   @override
-  Future<void> close() => _controller.close();
+  Future<void> close() async {
+    _closed = true;
+    return _controller.close();
+  }
 }
 
 class _FakeGattDriver implements Icp5SerialDriver {
@@ -149,6 +160,64 @@ void main() {
     final overridden = Icp5BluetoothTransport(
         staleAckQuarantine: const Duration(milliseconds: 400));
     expect(overridden.staleAckQuarantine, const Duration(milliseconds: 400));
+  });
+
+  test(
+      'BLE transport defaults to a 3s read timeout, not the USB 1s default '
+      '(first-connect stability fix)', () {
+    final defaultTransport = Icp5BluetoothTransport();
+    expect(defaultTransport.readTimeout, const Duration(seconds: 3));
+
+    // Still explicitly overridable — callers/tests keep full control.
+    final overridden =
+        Icp5BluetoothTransport(readTimeout: const Duration(seconds: 5));
+    expect(overridden.readTimeout, const Duration(seconds: 5));
+  });
+
+  test(
+      'BLE handshake succeeds when device response arrives after >1 s '
+      '(USB 1s timeout would fail; BLE 3s default accommodates first-connect '
+      'connection-interval latency)', () async {
+    // Simulate a slow first-connect: identity response arrives 1.2 s after
+    // the write — just beyond the USB 1 s default, but well within BLE's 3 s.
+    late _FakeGattConnection connection;
+    connection = _FakeGattConnection((conn, call, bytes) {
+      if (call == 1) {
+        Future.delayed(const Duration(milliseconds: 1200),
+            () => conn.notify(identityRx));
+      }
+    });
+    final transport = Icp5BluetoothTransport(
+        driver: _FakeGattDriver(connection)); // uses 3s BLE default
+
+    await transport.discover();
+    final result = await transport.open();
+
+    expect(result.success, isTrue);
+    expect(transport.handshakeComplete, isTrue);
+    expect(transport.detectedProfile, Icp5FrameCodec.expectedProfile);
+    await transport.close();
+  });
+
+  test(
+      'explicit USB-like 1s read timeout fails when response arrives after '
+      '1.2 s (confirms 3s BLE default is necessary)', () async {
+    late _FakeGattConnection connection;
+    connection = _FakeGattConnection((conn, call, bytes) {
+      if (call == 1) {
+        Future.delayed(const Duration(milliseconds: 1200),
+            () => conn.notify(identityRx));
+      }
+    });
+    final transport = Icp5BluetoothTransport(
+        driver: _FakeGattDriver(connection),
+        readTimeout: const Duration(seconds: 1)); // USB-like override
+
+    await transport.discover();
+    final result = await transport.open();
+
+    expect(result.success, isFalse);
+    expect(transport.handshakeComplete, isFalse);
   });
 
   test('BLE GATT UUIDs are capture locked', () {

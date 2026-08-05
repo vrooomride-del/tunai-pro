@@ -341,16 +341,26 @@ class Icp5UsbTransport
     try {
       // Flush partial bytes from any prior cycle.
       _buffer.reset();
+      debugPrint('[${_icp5LifecycleTag()}] READ_STATE_START');
       final reader = Icp5RawStateReader(exchange: (request) async {
+        final txId = (request[6] << 8) | request[7];
+        debugPrint(
+            '[${_icp5LifecycleTag()}] READ_STATE_TX 0x${txId.toRadixString(16).padLeft(4, '0')}');
         final response = await _exchange(
           request,
           (frame) => frame.length >= 3 && frame[0] == 0x55 && frame[2] == 0xE0,
         );
         if (response == null) throw StateError('No ICP5 read response.');
+        final rxId = (response[6] << 8) | response[7];
+        debugPrint(
+            '[${_icp5LifecycleTag()}] READ_STATE_RX blockId=0x${rxId.toRadixString(16).padLeft(4, '0')} declaredLen=0x${response[1].toRadixString(16).padLeft(2, '0')}');
         return response;
       });
       // Use validated firmware identity, not the COM/BLE transport identifier.
-      return await reader.read(deviceId: _profile!);
+      final snapshot = await reader.read(deviceId: _profile!);
+      debugPrint(
+          '[${_icp5LifecycleTag()}] READ_STATE_COMPLETE payload=${snapshot.payload.length}');
+      return snapshot;
     } finally {
       _busy = false;
     }
@@ -894,15 +904,24 @@ class Icp5UsbTransport
 }
 
 class Icp5BluetoothTransport extends Icp5UsbTransport {
-  /// BLE deploy-stability fix: previously this constructor did not expose
-  /// [staleAckQuarantine] at all, so every BLE transport silently inherited
-  /// [Icp5UsbTransport]'s USB-oriented 50ms default — too short to reliably
-  /// absorb a late-but-genuine BLE ACK during a long (e.g. 128-op) sequential
-  /// deploy (audit: ADAU1701 Deploy Stability Investigation). BLE now has its
-  /// own explicit default of 250ms; still overridable by callers/tests.
+  /// BLE-specific defaults: both readTimeout and staleAckQuarantine are larger
+  /// than the USB-serial equivalents because BLE connection intervals can reach
+  /// 1.28 s on a first connection (CoreBluetooth has not yet negotiated a
+  /// shorter interval), which makes the USB-derived 1 s readTimeout too tight
+  /// for the identity-handshake write + response round-trip.
+  ///
+  /// readTimeout 1 s → 3 s:
+  ///   Absorbs the worst-case first-connect latency (two connection intervals at
+  ///   1.28 s each = ~2.56 s) without requiring a retry.  Session commands land
+  ///   well within 200 ms once the interval is negotiated down.
+  ///
+  /// staleAckQuarantine 50 ms → 250 ms:
+  ///   Deploy-stability fix (ADAU1701 Deploy Stability Investigation).  A
+  ///   genuine but slow BLE ACK must not satisfy a later command; 250 ms gives
+  ///   it time to arrive and be discarded before the next exchange starts.
   Icp5BluetoothTransport(
       {Icp5SerialDriver? driver,
-      super.readTimeout,
+      super.readTimeout = const Duration(seconds: 3),
       super.writeTimeout,
       super.staleAckQuarantine = const Duration(milliseconds: 250),
       super.onDspWriteStop})
