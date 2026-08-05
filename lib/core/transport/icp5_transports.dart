@@ -942,13 +942,25 @@ class Icp5BluetoothTransport extends Icp5UsbTransport {
   ///   Deploy-stability fix (ADAU1701 Deploy Stability Investigation).  A
   ///   genuine but slow BLE ACK must not satisfy a later command; 250 ms gives
   ///   it time to arrive and be discarded before the next exchange starts.
+  ///
+  /// heartbeatInterval 3 s:
+  ///   WONDOM ICP5 firmware drops the BLE link after ~6 s of idle (no ICP5
+  ///   frame received). The heartbeat re-reads the identity block every 3 s to
+  ///   reset the firmware's idle timer. 3 s gives a 3 s margin before the
+  ///   confirmed ~6 s drop and is short enough that a single skipped tick
+  ///   (due to _busy) still leaves one full margin interval.
   Icp5BluetoothTransport(
       {Icp5SerialDriver? driver,
       super.readTimeout = const Duration(seconds: 3),
       super.writeTimeout,
       super.staleAckQuarantine = const Duration(milliseconds: 250),
-      super.onDspWriteStop})
-      : super(driver: driver ?? Icp5BluetoothGattDriver());
+      super.onDspWriteStop,
+      Duration heartbeatInterval = const Duration(seconds: 3)})
+      : _heartbeatInterval = heartbeatInterval,
+        super(driver: driver ?? Icp5BluetoothGattDriver());
+
+  final Duration _heartbeatInterval;
+  Timer? _heartbeatTimer;
 
   @override
   DspTransportIdentity get identity => DspTransportIdentity.icp5Bluetooth;
@@ -958,8 +970,84 @@ class Icp5BluetoothTransport extends Icp5UsbTransport {
   String? get missingEvidence =>
       'BLE GATT FFF2 TX / FFF1 Notify and raw ICP5 framing are proven; physical command QA remains pending.';
 
+  @visibleForTesting
+  bool get heartbeatActive => _heartbeatTimer != null;
+
+  /// Cancels the heartbeat timer synchronously without performing the full
+  /// async transport teardown.  Use this in [testWidgets] tests that need to
+  /// drain the pending fake-async timer at test end but cannot safely await
+  /// [close] inside a fakeAsync zone (the async close chain hangs when the
+  /// zone's microtask queue is not in a clean, fully-drained state).
+  @visibleForTesting
+  void stopHeartbeatForTest() => _stopHeartbeat();
+
   /// The BLE scan owns the exact CoreBluetooth object selected by the UI.
   /// Connecting must never rescan or silently substitute a different device.
   @override
-  Future<DspTransportResult> open() => _open(discoverFirst: false);
+  Future<DspTransportResult> open() async {
+    final result = await _open(discoverFirst: false);
+    if (result.success) _startHeartbeat();
+    return result;
+  }
+
+  @override
+  Future<void> close() async {
+    _stopHeartbeat();
+    await super.close();
+  }
+
+  @override
+  void _onConnectionError(Object error, StackTrace stackTrace) {
+    _stopHeartbeat();
+    super._onConnectionError(error, stackTrace);
+  }
+
+  void _startHeartbeat() {
+    // Cancel any existing timer before arming a fresh one — guards against a
+    // double-open that would otherwise leave an orphaned periodic timer.
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _heartbeatTimer =
+        Timer.periodic(_heartbeatInterval, (_) => _sendHeartbeat());
+  }
+
+  void _stopHeartbeat() {
+    if (_heartbeatTimer == null) return;
+    debugPrint('[${_icp5LifecycleTag()}] HEARTBEAT_STOP');
+    _heartbeatTimer!.cancel();
+    _heartbeatTimer = null;
+  }
+
+  Future<void> _sendHeartbeat() async {
+    if (!_handshakeComplete || _state != DspConnectionState.connected) {
+      _stopHeartbeat();
+      return;
+    }
+    if (_busy) {
+      debugPrint('[${_icp5LifecycleTag()}] HEARTBEAT_SKIP_BUSY');
+      return;
+    }
+    _busy = true;
+    debugPrint('[${_icp5LifecycleTag()}] HEARTBEAT_TX');
+    try {
+      // Re-read the identity block — the proven ICP5 read frame (opcode 0x1A,
+      // blockId 0x0000) that the device already responds to during handshake.
+      // Sending any valid ICP5 frame resets the firmware's ~6 s idle timer.
+      final response = await _exchange(
+        Icp5FrameCodec.identificationRequest,
+        (frame) => frame.length >= 3 && frame[0] == 0x55 && frame[2] == 0xE0,
+      );
+      if (response != null) {
+        debugPrint('[${_icp5LifecycleTag()}] HEARTBEAT_RX');
+      }
+    } catch (_) {
+      // Heartbeat errors are suppressed — a link drop surfaces through
+      // _stateSubscription → _onConnectionError, which stops the timer.
+    } finally {
+      _busy = false;
+    }
+  }
+
+  @visibleForTesting
+  Future<void> triggerHeartbeatForTest() => _sendHeartbeat();
 }

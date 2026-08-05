@@ -59,7 +59,10 @@ class _Connection implements Icp5SerialConnection {
   }
 
   @override
-  Future<void> close() async {}
+  // Must return a synchronously-completed Future; `async {}` requires a
+  // microtask to complete its Future and fakeAsync never flushes that
+  // microtask without an explicit pump(), causing a permanent hang.
+  Future<void> close() => Future.value();
 }
 
 class _BleDriver
@@ -223,6 +226,12 @@ void main() {
     );
     expect(container.read(activeAdau1701ContextProvider), isNull);
 
+    // Cancel the heartbeat timer synchronously before widget tree disposal.
+    // Awaiting transport.close() hangs inside testWidgets' fakeAsync zone when
+    // the microtask queue is not in a clean state at this point in the test;
+    // calling stopHeartbeatForTest() is sufficient because HardwareTab sets
+    // _ownsBleTransport=false for injected transports and never calls close().
+    transport.stopHeartbeatForTest();
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
   });

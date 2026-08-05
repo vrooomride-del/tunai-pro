@@ -71,9 +71,11 @@ class _Connection implements Icp5SerialConnection {
   }
 
   @override
-  Future<void> close() async {
-    if (!_bytes.isClosed) await _bytes.close();
-  }
+  // Return a synchronously-completed Future so that `await connection.close()`
+  // inside Icp5UsbTransport.close() resumes immediately in fakeAsync.  An
+  // `async {}` function would schedule a microtask that fakeAsync never
+  // flushes without an explicit pump(), causing a permanent hang.
+  Future<void> close() => Future.value();
 }
 
 class _Driver implements Icp5SerialDriver, Icp5BluetoothConnectionDiagnostics {
@@ -234,13 +236,15 @@ void main() {
         findsOneWidget);
     expect(find.text('ICP5 Bluetooth'), findsWidgets);
     for (var channel = 0; channel < 4; channel++) {
-      expect(find.byKey(Key('icp5_phase_c_ble_gain$channel')), findsOneWidget);
+      expect(
+          find.byKey(Key('icp5_phase_c_ble_gain$channel')), findsOneWidget);
       expect(
           find.byKey(Key('icp5_phase_c_ble_cutoff$channel')), findsOneWidget);
       expect(find.byKey(Key('icp5_phase_c_ble_peq$channel')), findsOneWidget);
     }
     // FINAL VALIDATION panel (ble_ prefix) must appear after handshake.
-    expect(find.byKey(const Key('ble_final_validation_panel')), findsOneWidget);
+    expect(
+        find.byKey(const Key('ble_final_validation_panel')), findsOneWidget);
     for (var ch = 0; ch < 4; ch++) {
       expect(find.byKey(Key('icp5_phase_c_ble_delay$ch')), findsOneWidget,
           reason: 'BLE FINAL VALIDATION: delay card $ch must exist');
@@ -254,6 +258,9 @@ void main() {
     expect(find.text('ble-wondom'), findsWidgets);
     expect(find.textContaining('No diagnostic command is sent automatically'),
         findsOneWidget);
+    // Cancel the heartbeat timer synchronously; awaiting transport.close()
+    // hangs non-deterministically inside testWidgets' fakeAsync zone.
+    transport.stopHeartbeatForTest();
   });
 
   testWidgets('BLE Master Volume action writes only through BLE transport',
@@ -279,6 +286,9 @@ void main() {
     ]);
     expect(find.text('PASS_ACK'), findsWidgets);
     expect(find.text('VERIFIED'), findsNothing);
+    // Cancel the heartbeat timer synchronously; awaiting transport.close()
+    // hangs non-deterministically inside testWidgets' fakeAsync zone.
+    transport.stopHeartbeatForTest();
   });
 
   testWidgets('wrong profile is rejected and never reports PASS_HANDSHAKE',

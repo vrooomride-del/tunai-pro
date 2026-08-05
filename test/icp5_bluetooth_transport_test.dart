@@ -484,6 +484,136 @@ void main() {
     await transport.close();
   });
 
+  // ── BLE heartbeat ────────────────────────────────────────────────────────
+  //
+  // WONDOM ICP5 firmware drops the BLE link after ~6 s idle. The heartbeat
+  // re-reads the identity block every 3 s to reset the firmware's idle timer.
+  // Tests confirm lifecycle coupling (start/stop) and busy-skip without
+  // touching Icp5UsbTransport or the handshake protocol.
+
+  group('BLE heartbeat', () {
+    test('heartbeat timer is active after successful handshake', () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        if (call == 1) conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 50));
+      await transport.discover();
+      await transport.open();
+
+      expect(transport.heartbeatActive, isTrue,
+          reason: 'timer must be armed after HANDSHAKE_PASS');
+
+      await transport.close();
+    });
+
+    test('heartbeat timer is cancelled after close()', () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        if (call == 1) conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 50));
+      await transport.discover();
+      await transport.open();
+      expect(transport.heartbeatActive, isTrue);
+
+      await transport.close();
+
+      expect(transport.heartbeatActive, isFalse,
+          reason: 'close() must cancel the heartbeat timer');
+    });
+
+    test('heartbeat timer is cancelled after peripheral-initiated disconnect',
+        () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        if (call == 1) conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 50));
+      await transport.discover();
+      await transport.open();
+      expect(transport.heartbeatActive, isTrue);
+
+      connection.disconnectNotify();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(transport.heartbeatActive, isFalse,
+          reason: '_onConnectionError must cancel the heartbeat timer');
+    });
+
+    test('heartbeat sends identity read frame when not busy', () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        // Respond to every write with identityRx (handshake + heartbeat).
+        conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 50));
+      await transport.discover();
+      await transport.open();
+      final writesAfterOpen = connection.writes.length; // = 1 (handshake)
+
+      await transport.triggerHeartbeatForTest();
+
+      expect(connection.writes.length, equals(writesAfterOpen + 1),
+          reason: 'heartbeat must send exactly one frame');
+      expect(connection.writes.last, Icp5FrameCodec.identificationRequest,
+          reason: 'heartbeat frame must be the identity read');
+      await transport.close();
+    });
+
+    test('heartbeat skips without sending when a command is in progress',
+        () async {
+      late _FakeGattConnection connection;
+      // Only respond to the handshake (call 1); leave call 2 (volume write)
+      // unanswered so _busy stays true while the heartbeat is triggered.
+      connection = _FakeGattConnection((conn, call, _) {
+        if (call == 1) conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 100));
+      await transport.discover();
+      await transport.open();
+
+      // Start a write that will not receive an ACK — keeps _busy = true.
+      final writeFuture = transport.writeCapturedMasterVolume(5.9);
+      // Yield once so _exchange() advances to its await inside the write.
+      await Future<void>.delayed(Duration.zero);
+
+      final writeCountBeforeHeartbeat = connection.writes.length;
+      await transport.triggerHeartbeatForTest();
+
+      expect(connection.writes.length, equals(writeCountBeforeHeartbeat),
+          reason: 'heartbeat must skip (HEARTBEAT_SKIP_BUSY) while _busy');
+
+      // Let the pending write time out so the test can exit cleanly.
+      await writeFuture;
+      await transport.close();
+    });
+
+    test('Icp5UsbTransport is unaffected — heartbeat is BLE-only', () {
+      // heartbeatActive is not a member of Icp5UsbTransport; it exists only on
+      // Icp5BluetoothTransport. Confirm the class boundary is intact.
+      final ble = Icp5BluetoothTransport();
+      expect(ble, isA<Icp5BluetoothTransport>());
+      expect(ble.heartbeatActive, isFalse,
+          reason: 'timer not yet started (no open() call)');
+
+      final usb = Icp5UsbTransport(
+          driver: _FakeGattDriver(_FakeGattConnection((_, __, ___) {})));
+      expect(usb, isNot(isA<Icp5BluetoothTransport>()),
+          reason: 'Icp5UsbTransport must not carry heartbeat behaviour');
+    });
+  });
+
   // ── Peripheral-initiated disconnect cleanup ───────────────────────────────
   //
   // Verifies that _onConnectionError performs the same state reset as close()
