@@ -25,7 +25,8 @@ const kTabProtection = 13;
 const kTabExport    = 14;
 const kTabHardware  = 15;
 const kTabDeploy    = 16;
-const kTabReport    = 17;
+const kTabAutoPeq   = 17;
+const kTabReport    = 18;
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 

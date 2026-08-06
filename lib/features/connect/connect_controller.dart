@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/profiles/system_profile.dart';
+import '../../core/deploy/pro_hardware_context_provider.dart';
+import '../../core/deploy/pro_adau1701_hardware_context.dart';
 import 'consumer_ble_service.dart';
 import 'usbi_detector.dart';
 import 'usbi_transport.dart';
@@ -453,6 +455,13 @@ class ConnectController extends StateNotifier<ConnectState> {
     };
     if (ble.connected) {
       _ref.read(systemProfileProvider.notifier).state = kTunaiOneSystemProfile;
+      // Expose the BLE transport via the shared context so the PRO deploy path
+      // (DspExportPackage → HardwareWritePlan → ProHardwareWriteExecutor) can
+      // find it without knowing which UI initiated the connection.
+      final ctx = Adau1701HardwareContext.fromTransport(_consumerBle.transport);
+      _ref.read(activeAdau1701ContextProvider.notifier).state = ctx;
+    } else {
+      _ref.read(activeAdau1701ContextProvider.notifier).state = null;
     }
     state = state.copyWith(
       connection: connection,

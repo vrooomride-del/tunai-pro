@@ -63,6 +63,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     _TabDef('Export', Icons.upload_outlined),
     _TabDef('Hardware', Icons.security_outlined),
     _TabDef('Deploy', Icons.inventory_2_outlined),
+    _TabDef('Auto PEQ', Icons.auto_fix_high_outlined),
     _TabDef('Report', Icons.summarize_outlined),
   ];
 
@@ -77,7 +78,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
     _TabGroup('TUNE',
         [kTabPeq, kTabXo, kTabPhase, kTabDelay, kTabGain, kTabMute]),
     _TabGroup('VERIFY', [kTabSimulation, kTabProtection]),
-    _TabGroup('DEPLOY', [kTabExport, kTabHardware, kTabDeploy, kTabReport]),
+    _TabGroup('DEPLOY', [kTabExport, kTabHardware, kTabDeploy, kTabAutoPeq, kTabReport]),
   ];
 
   List<Widget> _screens(String projectId) => [
@@ -135,6 +136,7 @@ class _WorkbenchShellState extends ConsumerState<WorkbenchShell> {
             onDspWritesDisabledChanged: (stopped) =>
                 setState(() => _dspWritesDisabled = stopped)),
         DeployTab(projectId: projectId),
+        AutoPeqTab(projectId: projectId),
         ReportTab(projectId: projectId),
       ];
 
