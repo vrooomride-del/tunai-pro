@@ -8,57 +8,69 @@ import '../dsp_engine.dart';
 /// 채널 인덱스 (DspState.outputs 순서와 일치):
 ///   0: TWE L  1: TWE R  2: MID L  3: MID R  4: WOO L  5: WOO R
 ///
-/// SigmaStudio PRAM 주소 (1466_cs42448_18out_eng 실제 export 대조 확정, 2026-07-04):
-///   Volume : 545, 548, 551, 554, 557, 560 (slew_mode = target+1) — 8.24 fixed, BE.
-///            SPI 쓰기 검증 완료 — 변경 없음
-///   Delay  : 562, 567, 563, 566, 564, 565 (ch0~5) — 정수 샘플(ms×48000/1000).
-///            채널 순서는 Volume과 동일 CH0~5로 가정 — 실기기에서 채널별로 값을
-///            넣어 소리로 확인 필요
-///   PEQ    : base=410, 밴드n(0~14) = 410+n×5, 15밴드, addr 410~484.
-///            계수 순서 B2,B1,B0,A2,A1 (ADAU1701 신 펌웨어의 B0,B1,B2,A0,A1과
-///            다르니 주의). 채널별 스트라이드는 이번 export에 없음 — 현재는
-///            모든 채널이 410 기준 단일 15밴드를 공유하는 것으로 처리(확인된
-///            정보 그대로). 채널별 개별 PEQ가 필요하면 추가 확인 필요
-///   HPF/LPF: 신규 발견 — PEQ/Delay와 구조가 전혀 다름, SafeLoad 방식 필요
-///            HPF target=24873~24877(5워드), slewMode=401
-///            LPF target=24878~24882(5워드), slewMode=407
-///            SafeLoad 레지스터 영역 24576~24583과 인접 — 일반 write가 아니라
-///            SigmaStudio SafeLoad 프로토콜(데이터→SAFELOAD_DATA0~4, 주소→
-///            SAFELOAD_ADDRESS, 개수→SAFELOAD_NUM 순으로 써서 트리거)이 필요할
-///            가능성이 높다. **불확실 — 실기기 테스트로 검증 전까지
-///            [experimentalXoWriteEnabled]는 항상 false로 유지할 것.**
-///   Mute   : 16채널, addr 1081~1096 (참고용, 미구현)
-///   Compressor: addr 489~542 (범위만 확인, 세부 미매핑, 참고용)
+/// SigmaStudio PRAM 주소 (TUNAI_ADAU1466_v0_9_Final export 확정, 2026-08-06):
+///
+///   Master Vol: TUNAI_MASTER_VOL_R=100, TUNAI_MASTER_VOL_L=103 (슬루=TARGET+1).
+///               5.27 fixed-point (선형값). 이전 펌웨어의 545/548과 완전히 다름.
+///
+///   Gain(ch trim): SINGLE1 블록, ch0~5 = 952,955,964,967,970,973 (slew=+1).
+///                  5.27 fixed-point. 채널 순서는 PARAM.h 블록 배치 기준 가정
+///                  — 실기기에서 채널별 값 입력 후 소리로 검증 필요.
+///
+///   Delay: ch0~5 가정 주소 = 960,961,962,1029,1030,1031 (PARAM.h 순).
+///          7번째 블록(DELAY2_2=1032)은 sub/mono 전용 추정 — 미사용.
+///          채널 순서 실기기 검증 필요.
+///
+///   PEQ (v0.9부터 채널별 독립 블록, 10밴드 × 5워드 각):
+///     ch0 TWE_L: base=588  (L_TWEETER_PEQ20_BAND, 588~637)
+///     ch1 TWE_R: base=688  (R_TWEETER_PEQ20_BAND, 688~737)
+///     ch2 MID_L: base=806  (L_MID_PEQ_20B,        806~855)
+///     ch3 MID_R: base=756  (R_MID_PEQ_20B,         756~805)
+///     ch4 WOO_L: base=538  (L_WOOFER_PEQ20_BAND,  538~587)
+///     ch5 WOO_R: base=638  (R_WOOFER_PEQ20_BAND,  638~687)
+///     밴드n 주소 = base + n×5. 계수 순서 B2,B1,B0,A2,A1.
+///
+///   XO (SafeLoad 방식 — experimentalXoWriteEnabled=false로 잠금):
+///     LPF_2 target=24973  HPF_2 target=24978  HPF_3 target=24983
+///     LPF_4 target=24988  HPF_4 target=24993  HPF_5 target=24998
+///     LPF_3 target=25208  LPF_5 target=25213
+///     채널별 XO 블록 대응은 SigmaStudio 라우팅 도면 확인 후 매핑 예정.
+///
+///   SafeLoad 레지스터 (PARAM.h 확정):
+///     DATA0~4=24576~24580, ADDRESS=24581, NUM_LOWER=24582, NUM_UPPER=24583.
 ///
 /// 고정소수점: ADAU1466 = 5.27 (ADAU1701의 5.23과 다름)
 class Adau1466Adapter implements DspAdapter {
   final RawWriteFn _send;
 
-  /// HPF/LPF는 SafeLoad 프로토콜이 실기기 검증되지 않았다 — 항상 false로 유지할 것.
-  /// true로 바꾸면 미검증 SafeLoad 시퀀스가 그대로 전송된다.
+  /// XO SafeLoad 프로토콜이 실기기 검증되지 않았다 — 항상 false로 유지할 것.
+  /// true로 바꾸면 미검증 SafeLoad 시퀀스가 전송된다.
   static bool experimentalXoWriteEnabled = false;
 
-  static const int _peqBands = 15;
-  static const int _peqBase  = 410; // 확정 — 채널별 스트라이드 미확인
+  static const int _peqBands = 10; // v0.9: 채널별 10밴드 (이전 15에서 변경)
 
-  // ── Volume 셀 PRAM 주소 (ch0~ch5) ─────────────────────────────
-  // SigmaStudio SPI 쓰기 검증 완료 — 변경 없음
-  static const List<int> _gainAddresses = [545, 548, 551, 554, 557, 560];
+  // 채널별 PEQ 블록 기본 주소 (ch0~ch5: TWE_L,TWE_R,MID_L,MID_R,WOO_L,WOO_R)
+  // PARAM.h에서 블록 이름으로 확정. 밴드n = base + n×5.
+  static const List<int> _peqBases = [588, 688, 806, 756, 538, 638];
 
-  // ── Delay 셀 PRAM 주소 (ch0~ch5, 확정) ─────────────────────────
-  // Volume과 동일 CH0~5 순서로 가정 — 실기기에서 채널별 소리 확인 필요
-  static const List<int> _delayAddresses = [562, 567, 563, 566, 564, 565];
+  // ── Gain (SINGLE1 ch trim, ch0~ch5) ──────────────────────────
+  // PARAM.h SINGLE1 블록 주소 순서 기반 — 채널 대응 실기기 검증 필요
+  static const List<int> _gainAddresses = [952, 955, 964, 967, 970, 973];
 
-  // ── HPF/LPF SafeLoad 대상 주소 (신규 발견, 미검증) ─────────────
-  static const int _hpfTargetAddr = 24873; // 5워드, slewMode=401
-  static const int _lpfTargetAddr = 24878; // 5워드, slewMode=407
+  // ── Delay (ch0~ch5 가정, ch 대응 실기기 검증 필요) ──────────────
+  static const List<int> _delayAddresses = [960, 961, 962, 1029, 1030, 1031];
 
-  // SafeLoad 레지스터 배치 — 표준 ADI SafeLoad 규약(DATA0~4/ADDRESS/NUM)을
-  // 가정한 것일 뿐, 이 프로젝트의 실제 24576~24583 배치와 일치하는지는
-  // 실기기로 확인되지 않았다.
-  static const int _safeloadData0   = 24576; // SAFELOAD_DATA0~4 (24576~24580, 가정)
-  static const int _safeloadAddress = 24581; // 목표 주소 레지스터 (가정)
-  static const int _safeloadNum     = 24582; // 개수 레지스터 — 쓰면 트리거 (가정)
+  // ── SafeLoad 레지스터 (PARAM.h 확정) ─────────────────────────
+  static const int _safeloadData0   = 24576; // DATA0~4: 24576~24580
+  static const int _safeloadAddress = 24581; // 목표 주소 레지스터
+  static const int _safeloadNum     = 24582; // 개수 레지스터 — 쓰면 트리거
+
+  // ── XO SafeLoad 대상 주소 (PARAM.h 확정, 채널 매핑 미확인) ──────
+  // 순서: LPF_2, HPF_2, HPF_3, LPF_4, HPF_4, HPF_5, LPF_3, LPF_5
+  // 채널별 HPF/LPF 대응은 SigmaStudio 라우팅 확인 후 2D 배열로 교체 예정
+  static const List<int> _xoTargets = [
+    24973, 24978, 24983, 24988, 24993, 24998, 25208, 25213,
+  ];
 
   Adau1466Adapter({required RawWriteFn send}) : _send = send;
 
@@ -79,12 +91,12 @@ class Adau1466Adapter implements DspAdapter {
     await _send(DspEngine.buildDelayFrame(delayMs, _delayAddresses[channelIndex]));
   }
 
-  // ── PEQ 밴드 (확정 주소, 채널 스트라이드 미확인) ────────────────
+  // ── PEQ 밴드 (채널별 독립 블록, 10밴드) ─────────────────────────
   @override
   Future<void> writeBiquad(int channelIndex, int bandIndex, BiquadCoeffs coeffs) async {
+    if (channelIndex >= _peqBases.length) return;
     assert(bandIndex < _peqBands);
-    // TODO: 채널별 PEQ 오프셋 미확인 — 현재 모든 채널이 410 기준 단일 15밴드를 공유
-    final addr = _peqBase + bandIndex * 5;
+    final addr = _peqBases[channelIndex] + bandIndex * 5;
     await _send(DspEngine.buildBleFrame1466(
       BiquadCoefficients(b0: coeffs.b2, b1: coeffs.b1, b2: coeffs.b0,
                          a1: coeffs.a2, a2: coeffs.a1),
@@ -93,22 +105,22 @@ class Adau1466Adapter implements DspAdapter {
   }
 
   // ── 크로스오버 (SafeLoad 스텁 — 기본 잠금) ──────────────────────
-  // SafeLoad 프로토콜이 실기기 검증되지 않아 experimentalXoWriteEnabled가
-  // false인 동안은 계산만 하고 아무 것도 전송하지 않는다.
+  // XO 블록↔채널 매핑이 확인되지 않았다. experimentalXoWriteEnabled=false 유지.
   @override
   Future<void> writeCrossover(int channelIndex, CrossoverConfig config) async {
-    if (!experimentalXoWriteEnabled) return; // TODO: SafeLoad 실기기 검증 전까지 잠금
+    if (!experimentalXoWriteEnabled) return;
 
     final xoType = _mapXoType(config.slope);
     if (xoType == null) return;
 
     final isHpf = config.side == FilterSide.hpf;
     final biquads = DspEngine.calculateCrossoverBiquads(config.freqHz, isHpf, xoType);
-    if (biquads.length != 1) return; // target당 5워드(1스테이지)뿐 — 이상 슬로프 미지원
+    if (biquads.length != 1) return;
 
-    final targetAddr = isHpf ? _hpfTargetAddr : _lpfTargetAddr;
+    // TODO: 채널별 XO 블록 매핑 확인 후 2D 배열 인덱스로 교체
+    // 임시: HPF → _xoTargets[1](HPF_2), LPF → _xoTargets[0](LPF_2) (ch 무관)
+    final targetAddr = isHpf ? _xoTargets[1] : _xoTargets[0];
     final c = biquads[0];
-    // PEQ와 동일한 계수 순서(B2,B1,B0,A2,A1)를 가정 — XO 자체는 별도 확인 안 됨
     await _writeSafeload(targetAddr, BiquadCoefficients(
       b0: c.b2, b1: c.b1, b2: c.b0, a1: c.a2, a2: c.a1,
     ));
@@ -134,7 +146,6 @@ class Adau1466Adapter implements DspAdapter {
     await _send(_buildRawIntFrame(_safeloadNum, words.length));
   }
 
-  // 정수 1워드를 그대로 싣는 프레임(고정소수점 변환 없음) — SafeLoad의
   // ADDRESS/NUM 레지스터처럼 계수가 아닌 정수 값을 쓸 때 사용
   Uint8List _buildRawIntFrame(int pramAddr, int value) {
     final frame = Uint8List(27);
