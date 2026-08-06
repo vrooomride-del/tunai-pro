@@ -23,7 +23,6 @@ import 'package:tunai_pro/core/acoustic/candidate_set.dart';
 /// (explaining why they were removed). Excluded from the symbol scan.
 const _commentOnlyFiles = <String>{
   'lib/features/workbench/tabs/auto_peq_tab.dart',
-  'lib/features/measure/measure_screen.dart',
 };
 
 /// Manual expert tuning panel. Pre-existing and intentionally out of scope:
@@ -43,18 +42,16 @@ List<File> _dartSources(String dir) => Directory(dir)
 
 /// Drop `//` line comments so prose describing the removed code does not
 /// register as a live reference.
-String _stripLineComments(String src) => src
-    .split('\n')
-    .map((line) {
+String _stripLineComments(String src) => src.split('\n').map((line) {
       final i = line.indexOf('//');
       return i < 0 ? line : line.substring(0, i);
-    })
-    .join('\n');
+    }).join('\n');
 
 void main() {
   group('deleted parallel Auto PEQ stack', () {
     test('AutoPeqEngine / AutoPeqPipeline source files are gone', () {
-      expect(File('lib/core/acoustic/auto_peq_engine.dart').existsSync(), isFalse,
+      expect(
+          File('lib/core/acoustic/auto_peq_engine.dart').existsSync(), isFalse,
           reason: 'auto_peq_engine.dart duplicated CandidateGenerator and '
               'produced boosts; it must stay deleted.');
       expect(File('lib/core/auto_peq_pipeline.dart').existsSync(), isFalse,
@@ -87,21 +84,28 @@ void main() {
   });
 
   group('no UI-level direct DSP write', () {
-    test('measure_screen does not trigger a deploy', () {
+    test(
+        'current Measure/Auto PEQ UI (measure_tab, live_measurement_'
+        'controller, live_measurement_section) does not trigger a deploy', () {
       // Comments may describe the removed behaviour; executable references
       // to the pipeline provider must not exist.
-      final src = _stripLineComments(
-        File('lib/features/measure/measure_screen.dart').readAsStringSync(),
-      );
-      expect(src.contains('autoPeqPipelineProvider'), isFalse,
-          reason: 'The measure screen produces a measurement artifact only; '
-              'deployment is the orchestration layer\'s responsibility.');
-      expect(src.contains('_DeploySection'), isFalse);
+      for (final path in const [
+        'lib/features/workbench/tabs/measure_tab.dart',
+        'lib/features/workbench/tabs/live_measurement_controller.dart',
+        'lib/features/workbench/tabs/live_measurement_section.dart',
+      ]) {
+        final src = _stripLineComments(File(path).readAsStringSync());
+        expect(src.contains('autoPeqPipelineProvider'), isFalse,
+            reason: '$path produces a measurement artifact only; '
+                'deployment is the orchestration layer\'s responsibility.');
+        expect(src.contains('_DeploySection'), isFalse, reason: path);
+      }
     });
 
     test('auto_peq_tab performs no computation and no transport write', () {
       final src = _stripLineComments(
-        File('lib/features/workbench/tabs/auto_peq_tab.dart').readAsStringSync(),
+        File('lib/features/workbench/tabs/auto_peq_tab.dart')
+            .readAsStringSync(),
       );
       for (final banned in const [
         'writePeqGain',
@@ -203,7 +207,8 @@ void main() {
     test('deepNull is never an applicable feature type', () {
       // The deleted engine treated every extremum as correctable, including
       // deep nulls, which it would have tried to boost.
-      expect(AcousticFeatureType.values, contains(AcousticFeatureType.deepNull));
+      expect(
+          AcousticFeatureType.values, contains(AcousticFeatureType.deepNull));
     });
   });
 }

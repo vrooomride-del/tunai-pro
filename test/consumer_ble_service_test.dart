@@ -1,13 +1,9 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/transport/icp5_frame_codec.dart';
 import 'package:tunai_pro/core/transport/icp5_serial_driver.dart';
 import 'package:tunai_pro/core/transport/icp5_transports.dart';
-import 'package:tunai_pro/features/connect/connect_controller.dart';
-import 'package:tunai_pro/features/connect/connect_screen.dart';
 import 'package:tunai_pro/features/connect/consumer_ble_service.dart';
 
 const _identity = <int>[
@@ -201,42 +197,28 @@ void main() {
     service.dispose();
   });
 
-  testWidgets('Consumer UI scans, selects, connects, and hides diagnostics',
-      (tester) async {
+  // Formerly a widget test that drove the now-deleted (orphaned, unreachable
+  // from lib/main.dart) ConnectScreen through scan → select → connect →
+  // disconnect. The ConsumerBleService behavior it exercised — auto-selecting
+  // the WONDOM ICP5 match on scan, writing exactly the identification
+  // request on connect, and returning to disconnected on teardown — is
+  // covered at the service level by 'scan prefers WONDOM ICP5 and supports
+  // manual selection' and 'connect requires shared PASS_HANDSHAKE and
+  // persists connected state' above. UI-only assertions (hidden diagnostics
+  // text, widget keys) do not apply once no widget renders this service.
+  test(
+      'full scan-select-connect-write-disconnect cycle matches the '
+      'ICP5 identification handshake', () async {
     final connection = _Connection();
-    final service = _service(_Driver(connection));
-    await tester.pumpWidget(ProviderScope(
-      overrides: [consumerBleServiceProvider.overrideWithValue(service)],
-      child: const MaterialApp(home: ConnectScreen()),
-    ));
-
-    expect(find.text('Bluetooth available'), findsOneWidget);
-    expect(find.text('PASS_ACK'), findsNothing);
-    expect(find.text('VERIFIED'), findsNothing);
-    expect(find.text(Icp5FrameCodec.expectedProfile), findsNothing);
-    await tester.tap(find.byKey(const Key('consumer_ble_scan_button')));
-    await tester.pumpAndSettle();
-    expect(find.text('WONDOM ICP5 · -42 dBm'), findsOneWidget);
-    expect(
-        find.byKey(const Key('consumer_ble_device_selector')), findsOneWidget);
-
-    await tester.tap(find.text('CONNECT'));
-    await tester.pumpAndSettle();
-    expect(find.text('Connected'), findsWidgets);
+    final driver = _Driver(connection);
+    final service = _service(driver);
+    await service.scan();
+    expect(service.state.selectedIdentifier, 'icp5-id');
+    await service.connect();
+    expect(service.state.status, ConsumerBleStatus.connected);
     expect(connection.writes, [Icp5FrameCodec.identificationRequest]);
-    expect(find.text('DISCONNECT'), findsOneWidget);
-    expect(find.byKey(const Key('consumer_proceed_room_scan')), findsOneWidget);
-    expect(find.text('PASS_ACK'), findsNothing);
-    expect(find.text('0x00000010'), findsNothing);
-    expect(find.text('FFF0'), findsNothing);
-    expect(find.text('FFF1'), findsNothing);
-    expect(find.text('FFF2'), findsNothing);
-
-    await tester.tap(find.text('DISCONNECT'));
-    await tester
-        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
-    await tester.pumpAndSettle();
-    expect(find.text('Disconnected'), findsWidgets);
+    await service.disconnect();
+    expect(service.state.status, ConsumerBleStatus.disconnected);
     service.dispose();
   });
 }
