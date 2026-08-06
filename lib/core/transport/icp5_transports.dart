@@ -961,6 +961,7 @@ class Icp5BluetoothTransport extends Icp5UsbTransport {
 
   final Duration _heartbeatInterval;
   Timer? _heartbeatTimer;
+  bool _deployInProgress = false;
 
   @override
   DspTransportIdentity get identity => DspTransportIdentity.icp5Bluetooth;
@@ -1018,7 +1019,34 @@ class Icp5BluetoothTransport extends Icp5UsbTransport {
     _heartbeatTimer = null;
   }
 
+  /// Suspends the heartbeat timer for the duration of a deploy sequence.
+  ///
+  /// During deploy the app sends continuous writes, so the ICP5 idle timer
+  /// cannot expire. The heartbeat must be suspended so it cannot grab [_busy]
+  /// between write operations and trigger cascading NACKs.
+  /// Call [resumeHeartbeat] when the deploy completes (success or failure).
+  void pauseHeartbeat() {
+    // Set flag BEFORE cancelling the timer so any queued-but-not-yet-executed
+    // timer callback is also blocked when it eventually runs.
+    _deployInProgress = true;
+    if (_heartbeatTimer == null) return;
+    debugPrint('[${_icp5LifecycleTag()}] HEARTBEAT_PAUSE');
+    _heartbeatTimer!.cancel();
+    _heartbeatTimer = null;
+  }
+
+  /// Resumes the heartbeat after a deploy. No-op if not connected.
+  void resumeHeartbeat() {
+    _deployInProgress = false;
+    if (_state != DspConnectionState.connected || _heartbeatTimer != null) {
+      return;
+    }
+    debugPrint('[${_icp5LifecycleTag()}] HEARTBEAT_RESUME');
+    _startHeartbeat();
+  }
+
   Future<void> _sendHeartbeat() async {
+    if (_deployInProgress) return;
     if (!_handshakeComplete || _state != DspConnectionState.connected) {
       _stopHeartbeat();
       return;

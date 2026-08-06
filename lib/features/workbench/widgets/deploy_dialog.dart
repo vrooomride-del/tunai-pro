@@ -16,6 +16,7 @@ import '../../../core/deploy/pro_hardware_context_provider.dart';
 import '../../../core/deploy/pro_hardware_write_approval.dart';
 import '../../../core/deploy/pro_hardware_write_executor.dart';
 import '../../../core/deploy/pro_hardware_write_plan.dart';
+import '../../../core/transport/icp5_transports.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_deploy_package_data.dart' show AppliedXoChannelState;
 import '../../../core/pro_export_data.dart';
@@ -160,12 +161,40 @@ class _DeployDialogBodyState extends ConsumerState<_DeployDialogBody> {
     final approval =
         HardwareWriteApproval.approve(_plan, approver: 'deploy-dialog');
     final executor = HardwareWriteExecutor(port);
-    final result = await executor.execute(
-      approval,
-      onProgress: (p) {
-        if (mounted) setState(() => _progress = p);
-      },
-    );
+
+    // Suspend the BLE heartbeat for the duration of the deploy. The heartbeat
+    // grabs _busy between write operations and causes cascading NACKs
+    // ("Another ICP5 transaction is active") on all remaining operations.
+    // During deploy the app sends continuous writes so the ICP5 idle timer
+    // cannot expire — heartbeat is unnecessary for this window.
+    final rawTransport = widget.overridePort == null
+        ? ref.read(activeAdau1701ContextProvider)?.transport
+        : null;
+    final bleTransport = rawTransport is Icp5BluetoothTransport ? rawTransport : null;
+    bleTransport?.pauseHeartbeat();
+    // If a heartbeat exchange was already in-flight when pauseHeartbeat() was
+    // called, it holds _busy until its BLE exchange completes. Poll until clear
+    // (up to 3.5 s — BLE readTimeout + quarantine) before starting writes.
+    if (bleTransport != null) {
+      const _pollMs = Duration(milliseconds: 50);
+      var waited = 0;
+      while (bleTransport.busy && waited < 3500) {
+        await Future.delayed(_pollMs);
+        waited += 50;
+      }
+    }
+
+    final HardwareWriteExecutionResult result;
+    try {
+      result = await executor.execute(
+        approval,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
+    } finally {
+      bleTransport?.resumeHeartbeat();
+    }
 
     // Persist the acknowledged gains for rollback. Channel gain has no
     // readback service, so a successful write is always ackOnly, never
