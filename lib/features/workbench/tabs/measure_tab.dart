@@ -50,78 +50,103 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
 
     final acoustic = project.acousticState;
 
-    return Column(children: [
-      // ── Orientation bar: workflow guidance + simulated-data indicator ─────
-      _MeasureOrientationBar(
-        guidance: _measurementGuidance(mStore.sessions, selectedSession),
-      ),
-      // ── Workflow progress card: 5-step guided sequence ────────────────────
-      _WorkflowProgressCard(
-          sessions: mStore.sessions, selected: selectedSession),
-      // ── Phase C: Driver readiness overview bar ────────────────────────────
-      _DriverReadinessBar(acoustic: acoustic),
-      // ── Live Measurement: real playback+record+FFT capture per channel ────
-      LiveMeasurementSection(project: project),
-      Expanded(
-          child: Row(children: [
-        // ── Session list panel (left) ────────────────────────────────────────
-        SizedBox(
-          width: 280,
-          child: _SessionListPanel(
-            project: project,
-            sessions: mStore.sessions,
-            selectedId: mStore.selectedSessionId,
-            onSelect: (id) =>
-                ref.read(proMeasurementProvider.notifier).selectSession(id),
-            onNew: () => _showNewSessionDialog(project),
-            onRename: (s) => _showRenameDialog(project, s),
-            onDuplicate: (s) => ref
-                .read(proMeasurementProvider.notifier)
-                .duplicateSession(project.id, s.id),
-            onDelete: (s) => _confirmDeleteSession(project, s),
-          ),
-        ),
-        Container(width: 0.5, color: kProBorder),
-        // ── Session detail panel (right) ─────────────────────────────────────
-        Expanded(
-          child: selectedSession == null
-              ? _ReadinessCard(
-                  project: project, sessionCount: mStore.sessions.length)
-              : _SessionDetailPanel(
-                  project: project,
-                  session: selectedSession,
-                  onAddPoint: () =>
-                      _showAddPointDialog(project, selectedSession),
-                  onSimulate: (pointId) => ref
-                      .read(proMeasurementProvider.notifier)
-                      .simulateCapture(
-                          projectId: project.id,
-                          sessionId: selectedSession.id,
-                          pointId: pointId),
-                  onAccept: (pointId) => ref
-                      .read(proMeasurementProvider.notifier)
-                      .acceptPoint(
-                          projectId: project.id,
-                          sessionId: selectedSession.id,
-                          pointId: pointId),
-                  onReject: (pointId) => ref
-                      .read(proMeasurementProvider.notifier)
-                      .rejectPoint(
-                          projectId: project.id,
-                          sessionId: selectedSession.id,
-                          pointId: pointId),
-                  onDeletePoint: (pointId) => ref
-                      .read(proMeasurementProvider.notifier)
-                      .deletePoint(
-                          projectId: project.id,
-                          sessionId: selectedSession.id,
-                          pointId: pointId),
-                  onMarkComplete: () =>
-                      _confirmMarkComplete(project, selectedSession),
+    // The tab body can be taller than the viewport WorkbenchShell hands this
+    // tab (Live Measurement's card alone can exceed a ~700-800px window on a
+    // small Mac display) -- LayoutBuilder + SingleChildScrollView +
+    // ConstrainedBox(minHeight:) is the standard "fill the viewport when
+    // short, scroll when tall" combo: the Column below never receives a
+    // bounded max-height, so nothing inside it may rely on Expanded/Flexible
+    // for vertical sizing (see the session list/detail row below, which
+    // switched from a vertical Expanded to IntrinsicHeight for exactly that
+    // reason). Horizontal Expanded inside a Row is unaffected and still used
+    // normally.
+    return LayoutBuilder(builder: (context, constraints) {
+      return SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Column(children: [
+            // ── Orientation bar: workflow guidance + simulated-data indicator ─
+            _MeasureOrientationBar(
+              guidance: _measurementGuidance(mStore.sessions, selectedSession),
+            ),
+            // ── Workflow progress card: 5-step guided sequence ──────────────
+            _WorkflowProgressCard(
+                sessions: mStore.sessions, selected: selectedSession),
+            // ── Phase C: Driver readiness overview bar ──────────────────────
+            _DriverReadinessBar(acoustic: acoustic),
+            // ── Live Measurement: real playback+record+FFT capture per channel
+            LiveMeasurementSection(project: project),
+            // IntrinsicHeight lets the two side-by-side panels below match
+            // height (like the previous Expanded+Row did) without requiring
+            // a bounded height from this now-unbounded scrolling Column --
+            // Expanded still works normally *inside* this Row because
+            // IntrinsicHeight gives the Row itself a concrete height.
+            IntrinsicHeight(
+              child: Row(children: [
+                // ── Session list panel (left) ──────────────────────────────
+                SizedBox(
+                  width: 280,
+                  child: _SessionListPanel(
+                    project: project,
+                    sessions: mStore.sessions,
+                    selectedId: mStore.selectedSessionId,
+                    onSelect: (id) => ref
+                        .read(proMeasurementProvider.notifier)
+                        .selectSession(id),
+                    onNew: () => _showNewSessionDialog(project),
+                    onRename: (s) => _showRenameDialog(project, s),
+                    onDuplicate: (s) => ref
+                        .read(proMeasurementProvider.notifier)
+                        .duplicateSession(project.id, s.id),
+                    onDelete: (s) => _confirmDeleteSession(project, s),
+                  ),
                 ),
+                Container(width: 0.5, color: kProBorder),
+                // ── Session detail panel (right) ───────────────────────────
+                Expanded(
+                  child: selectedSession == null
+                      ? _ReadinessCard(
+                          project: project,
+                          sessionCount: mStore.sessions.length)
+                      : _SessionDetailPanel(
+                          project: project,
+                          session: selectedSession,
+                          onAddPoint: () =>
+                              _showAddPointDialog(project, selectedSession),
+                          onSimulate: (pointId) => ref
+                              .read(proMeasurementProvider.notifier)
+                              .simulateCapture(
+                                  projectId: project.id,
+                                  sessionId: selectedSession.id,
+                                  pointId: pointId),
+                          onAccept: (pointId) => ref
+                              .read(proMeasurementProvider.notifier)
+                              .acceptPoint(
+                                  projectId: project.id,
+                                  sessionId: selectedSession.id,
+                                  pointId: pointId),
+                          onReject: (pointId) => ref
+                              .read(proMeasurementProvider.notifier)
+                              .rejectPoint(
+                                  projectId: project.id,
+                                  sessionId: selectedSession.id,
+                                  pointId: pointId),
+                          onDeletePoint: (pointId) => ref
+                              .read(proMeasurementProvider.notifier)
+                              .deletePoint(
+                                  projectId: project.id,
+                                  sessionId: selectedSession.id,
+                                  pointId: pointId),
+                          onMarkComplete: () =>
+                              _confirmMarkComplete(project, selectedSession),
+                        ),
+                ),
+              ]),
+            ),
+          ]),
         ),
-      ])), // closes Expanded + Row
-    ]); // closes Column
+      );
+    });
   }
 
   // ── Dialogs ───────────────────────────────────────────────────────────────
@@ -571,18 +596,23 @@ class _SessionListPanel extends StatelessWidget {
             ]),
           )
         else
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              itemCount: sessions.length,
-              itemBuilder: (ctx, i) => _SessionTile(
-                session: sessions[i],
-                selected: sessions[i].id == selectedId,
-                onTap: () => onSelect(sessions[i].id),
-                onRename: () => onRename(sessions[i]),
-                onDuplicate: () => onDuplicate(sessions[i]),
-                onDelete: () => onDelete(sessions[i]),
-              ),
+          // shrinkWrap + NeverScrollableScrollPhysics: this panel now sits in
+          // an IntrinsicHeight row inside MeasureTab's own scrolling body, so
+          // it must size to its content instead of requiring a bounded
+          // height (which Expanded here used to depend on). The tab-level
+          // SingleChildScrollView owns all scrolling.
+          ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: sessions.length,
+            itemBuilder: (ctx, i) => _SessionTile(
+              session: sessions[i],
+              selected: sessions[i].id == selectedId,
+              onTap: () => onSelect(sessions[i].id),
+              onRename: () => onRename(sessions[i]),
+              onDuplicate: () => onDuplicate(sessions[i]),
+              onDelete: () => onDelete(sessions[i]),
             ),
           ),
       ]),
