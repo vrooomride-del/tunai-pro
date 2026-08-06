@@ -236,35 +236,60 @@ class Icp5UsbTransport
           discovery?.error ?? 'No selected ICP5 device is available.');
     }
     _state = DspConnectionState.connecting;
+    final isBle = this is Icp5BluetoothTransport;
+    Timer? handshakeTimeoutTimer;
     try {
+      if (isBle) debugPrint('BLE_CONNECT_START');
       _connection = await driver.open(_selectedPort!);
+      if (isBle) debugPrint('BLE_CONNECTED');
       // Mirror ConsumerBleService._connectAndValidate: reset the receive buffer
       // and arm the handshake completer BEFORE subscribing and writing.
       _buffer.reset();
-      _handshakeResponse = Completer<List<int>>();
+      final handshake = Completer<List<int>>();
+      _handshakeResponse = handshake;
       _subscription = _connection!.bytes.listen(
         _onBytes,
         onError: _onConnectionError,
         onDone: _onConnectionClosed,
       );
-      // Attach the handshake awaiter BEFORE the write. .timeout() eagerly
-      // subscribes to the completer's future, so a disconnect error delivered
-      // synchronously during the GATT write is always handled here rather than
-      // surfacing as an unhandled async error.
-      final handshakeFuture = _handshakeResponse!.future.timeout(readTimeout);
       final written = await _connection!
           .write(Icp5FrameCodec.identificationRequest, writeTimeout)
           .timeout(writeTimeout);
       if (written != Icp5FrameCodec.identificationRequest.length) {
+        if (isBle) debugPrint('BLE_CONNECT_FAIL stage=handshake_write');
         await close();
         return _fail(DspTransportFailure.ackFailed,
             'ICP5 identity handshake write was incomplete.');
       }
       debugPrint('[${_icp5LifecycleTag()}] HANDSHAKE_START');
-      final identity = await handshakeFuture;
+      if (isBle) debugPrint('BLE_HANDSHAKE_TX');
+      // readTimeout is armed only AFTER write() returns (an explicit Timer,
+      // not `.future.timeout()` attached before the write) -- same fix as
+      // _exchange() below (3185ab1 / the ACK-race Timer rewrite), applied
+      // here too. BLE write(withoutResponse:false) awaits the ATT Write
+      // Response, which the Icp5BluetoothTransport class doc measures at up
+      // to ~2.56 s on a first connection (connection-interval negotiation
+      // not yet settled). Starting the readTimeout clock before write() ran
+      // — as this code previously did via `.timeout()` attached to the
+      // completer's future before the write — could leave as little as
+      // ~0.4 s of the nominal 3 s budget for the actual identity-frame
+      // response, timing the handshake out on real BLE hardware even though
+      // readTimeout is nominally "3 s". The completer is still armed and the
+      // byte-stream subscription still attached before write() (unchanged
+      // above), so a fast response arriving during the write is never
+      // missed — only the timeout window's start moves.
+      handshakeTimeoutTimer = Timer(readTimeout, () {
+        if (handshake.isCompleted) return;
+        handshake.completeError(
+            TimeoutException('ICP5 handshake timeout', readTimeout));
+      });
+      final identity = await handshake.future;
+      handshakeTimeoutTimer.cancel();
       _handshakeResponse = null;
+      if (isBle) debugPrint('BLE_HANDSHAKE_RX');
       final profile = Icp5FrameCodec.parseIdentity(identity);
       if (profile == null) {
+        if (isBle) debugPrint('BLE_CONNECT_FAIL stage=profile_mismatch');
         await close();
         return _fail(
             DspTransportFailure.ackFailed, 'ICP5 identity handshake failed.');
@@ -273,19 +298,24 @@ class Icp5UsbTransport
       _profile = profile;
       _state = DspConnectionState.connected;
       debugPrint('[${_icp5LifecycleTag()}] HANDSHAKE_PASS');
+      if (isBle) debugPrint('BLE_PROFILE_PASS');
       return const DspTransportResult(
           success: true,
           failure: DspTransportFailure.none,
           message: 'ICP5 connected · ADAU1701 profile proven.');
     } on TimeoutException {
       debugPrint('[${_icp5LifecycleTag()}] TIMEOUT');
+      if (isBle) debugPrint('BLE_CONNECT_FAIL stage=handshake_timeout');
       await close();
       return _fail(
           DspTransportFailure.ackFailed, 'ICP5 identity handshake timed out.');
     } catch (error) {
+      if (isBle) debugPrint('BLE_CONNECT_FAIL stage=exception error=$error');
       await close();
       _state = DspConnectionState.error;
       return _fail(DspTransportFailure.exception, '$error');
+    } finally {
+      handshakeTimeoutTimer?.cancel();
     }
   }
 
@@ -976,7 +1006,15 @@ class Icp5BluetoothTransport extends Icp5UsbTransport {
   Icp5BluetoothTransport(
       {Icp5SerialDriver? driver,
       super.readTimeout = const Duration(seconds: 3),
-      super.writeTimeout,
+      // Previously had no BLE-specific default, silently inheriting the
+      // USB base class's 1 s default -- every production call site happens
+      // to pass 3 s explicitly today, but the class's own *default* (used
+      // by any caller that doesn't) was inconsistent with the readTimeout
+      // default and this class's own documented rationale above. write()
+      // with withoutResponse:false awaits the ATT Write Response, subject
+      // to the same first-connect connection-interval latency as the read
+      // path, so it needs the same BLE-appropriate default.
+      super.writeTimeout = const Duration(seconds: 3),
       super.staleAckQuarantine = const Duration(milliseconds: 250),
       super.onDspWriteStop,
       Duration heartbeatInterval = const Duration(seconds: 3)})

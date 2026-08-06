@@ -44,8 +44,14 @@ class _FakeGattConnection implements Icp5SerialConnection {
   final writes = <List<int>>[];
   final void Function(_FakeGattConnection connection, int call, List<int> bytes)
       onWrite;
+  // Simulates real BLE write(withoutResponse:false) latency -- write()
+  // awaiting the ATT Write Response takes real time on real hardware
+  // (measured up to ~2.56 s on a first connection per
+  // Icp5BluetoothTransport's own class doc). Zero by default so every
+  // existing test using this fixture is unaffected.
+  final Duration writeDelay;
 
-  _FakeGattConnection(this.onWrite);
+  _FakeGattConnection(this.onWrite, {this.writeDelay = Duration.zero});
 
   @override
   Stream<List<int>> get bytes => _controller.stream;
@@ -58,11 +64,14 @@ class _FakeGattConnection implements Icp5SerialConnection {
   }
 
   void disconnectNotify() {
-    if (!_closed) _controller.addError(StateError('ICP5 BLE Notify disconnected.'));
+    if (!_closed) {
+      _controller.addError(StateError('ICP5 BLE Notify disconnected.'));
+    }
   }
 
   @override
   Future<int> write(List<int> bytes, Duration timeout) async {
+    if (writeDelay > Duration.zero) await Future<void>.delayed(writeDelay);
     writes.add(List<int>.of(bytes));
     onWrite(this, writes.length, bytes);
     return bytes.length;
@@ -115,12 +124,10 @@ class _MultiOpenFakeDriver implements Icp5SerialDriver {
   bool get platformSupported => true;
 
   @override
-  Future<Icp5DiscoveryResult> discover() async =>
-      const Icp5DiscoveryResult(source: 'fake FFF0', allPorts: [
-        Icp5SerialDevice(portName: 'ble-device')
-      ], matches: [
-        Icp5SerialDevice(portName: 'ble-device')
-      ]);
+  Future<Icp5DiscoveryResult> discover() async => const Icp5DiscoveryResult(
+      source: 'fake FFF0',
+      allPorts: [Icp5SerialDevice(portName: 'ble-device')],
+      matches: [Icp5SerialDevice(portName: 'ble-device')]);
 
   @override
   Future<Icp5SerialConnection> open(String portName) async =>
@@ -129,8 +136,7 @@ class _MultiOpenFakeDriver implements Icp5SerialDriver {
 
 void main() {
   group('Icp5BluetoothGattDriver scan accumulation', () {
-    test(
-        'ICP5 remains discoverable when connectable toggles true → false', () {
+    test('ICP5 remains discoverable when connectable toggles true → false', () {
       final accumulated = <String, Icp5SerialDevice>{};
       const id = 'AA:BB:CC:DD:EE:FF';
       const source = 'test';
@@ -207,8 +213,8 @@ void main() {
     late _FakeGattConnection connection;
     connection = _FakeGattConnection((conn, call, bytes) {
       if (call == 1) {
-        Future.delayed(const Duration(milliseconds: 1200),
-            () => conn.notify(identityRx));
+        Future.delayed(
+            const Duration(milliseconds: 1200), () => conn.notify(identityRx));
       }
     });
     final transport = Icp5BluetoothTransport(
@@ -224,13 +230,153 @@ void main() {
   });
 
   test(
+      'P1 regression: handshake succeeds when write() itself (BLE ATT Write '
+      'Response) is slow, not just the response after it -- readTimeout must '
+      'be armed AFTER write() returns, not before', () async {
+    // Real BLE write(withoutResponse:false) awaits the ATT Write Response,
+    // which the Icp5BluetoothTransport class doc measures at up to ~2.56 s
+    // on a first connection (connection-interval negotiation). The bug: an
+    // earlier _open() implementation attached `.timeout(readTimeout)` to the
+    // handshake completer's future BEFORE calling write(), so the 3 s clock
+    // started ticking during the write itself -- on real hardware this could
+    // consume most of the budget before the identity response even had a
+    // chance to arrive, timing the handshake out despite readTimeout
+    // nominally being "3 s". This scenario (2.0 s write latency + 1.5 s
+    // response latency = 3.5 s total, exceeding a "clock starts at write
+    // start" 3 s budget but well within a "clock starts after write
+    // returns" 3 s budget) reproduces that regression: the old code would
+    // fail this test, the fixed code passes it.
+    late _FakeGattConnection connection;
+    connection = _FakeGattConnection((conn, call, bytes) {
+      if (call == 1) {
+        Future.delayed(
+            const Duration(milliseconds: 1500), () => conn.notify(identityRx));
+      }
+    }, writeDelay: const Duration(milliseconds: 2000));
+    final transport = Icp5BluetoothTransport(
+        driver: _FakeGattDriver(connection)); // uses 3s BLE default
+
+    await transport.discover();
+    final result = await transport.open();
+
+    expect(result.success, isTrue,
+        reason: 'readTimeout must not start counting until write() returns');
+    expect(transport.handshakeComplete, isTrue);
+    expect(transport.detectedProfile, Icp5FrameCodec.expectedProfile);
+    await transport.close();
+  });
+
+  test('wrong profile in an otherwise well-formed identity frame fails closed',
+      () async {
+    // Valid envelope/checksum, but the ASCII profile string does not match
+    // Icp5FrameCodec.expectedProfile -- parseIdentity() must return null and
+    // _open() must not report success or set handshakeComplete/detectedProfile.
+    final wrongProfile = List<int>.of(identityRx);
+    wrongProfile[8] =
+        0x58; // 'X' in place of 'D' -- corrupts the profile string
+    final body = wrongProfile.sublist(0, wrongProfile.length - 1);
+    wrongProfile[wrongProfile.length - 1] = Icp5FrameCodec.checksum(body);
+
+    late _FakeGattConnection connection;
+    connection = _FakeGattConnection((conn, call, bytes) {
+      if (call == 1) conn.notify(wrongProfile);
+    });
+    final transport =
+        Icp5BluetoothTransport(driver: _FakeGattDriver(connection));
+
+    await transport.discover();
+    final result = await transport.open();
+
+    expect(result.success, isFalse);
+    expect(transport.handshakeComplete, isFalse);
+    expect(transport.detectedProfile, isNull);
+  });
+
+  test('no heartbeat frame is sent before the handshake completes', () async {
+    // Heartbeat must only start after open() resolves successfully
+    // (Icp5BluetoothTransport.open() calls _startHeartbeat() only when
+    // result.success). Hold the identity response indefinitely (never call
+    // notify) and confirm zero additional writes happen beyond the single
+    // handshake request while _open() is still awaiting it.
+    late _FakeGattConnection connection;
+    connection = _FakeGattConnection((conn, call, bytes) {
+      // Deliberately never respond -- forces a handshake timeout, giving a
+      // window to observe writes during the wait.
+    });
+    final transport = Icp5BluetoothTransport(
+        driver: _FakeGattDriver(connection),
+        readTimeout: const Duration(milliseconds: 100),
+        writeTimeout: const Duration(milliseconds: 100));
+
+    await transport.discover();
+    expect(transport.heartbeatActive, isFalse);
+    final result = await transport.open();
+
+    expect(result.success, isFalse);
+    expect(transport.heartbeatActive, isFalse,
+        reason: 'a failed handshake must never start the heartbeat');
+    // Exactly the one handshake identification write -- no heartbeat
+    // identity-read frame was queued while the handshake was pending.
+    expect(connection.writes.length, 1);
+    expect(connection.writes.single, Icp5FrameCodec.identificationRequest);
+  });
+
+  test(
+      'a late notify on an abandoned prior-generation connection does not '
+      'affect or complete the current handshake', () async {
+    // First attempt: connection A never responds -> handshake times out and
+    // close() runs, tearing down the subscription to A. Second attempt:
+    // connection B responds normally and the handshake succeeds. A late
+    // notify delivered to the now-abandoned connection A afterwards must not
+    // be observable through the transport (no listener remains attached to
+    // A's stream) and must not disturb B's already-completed state.
+    late _FakeGattConnection connectionA;
+    connectionA = _FakeGattConnection((conn, call, bytes) {});
+    late _FakeGattConnection connectionB;
+    connectionB = _FakeGattConnection((conn, call, bytes) {
+      if (call == 1) conn.notify(identityRx);
+    });
+    final driver = _MultiOpenFakeDriver([connectionA, connectionB]);
+    final transport = Icp5BluetoothTransport(
+        driver: driver,
+        readTimeout: const Duration(milliseconds: 50),
+        writeTimeout: const Duration(milliseconds: 50));
+
+    await transport.discover();
+    final r1 = await transport.open();
+    expect(r1.success, isFalse);
+    expect(transport.handshakeComplete, isFalse);
+
+    // Icp5BluetoothTransport.open() deliberately does not rescan
+    // (discoverFirst: false, so it never silently substitutes a different
+    // peripheral) -- close() (run on the failed attempt) also clears
+    // _selectedPort, so a real reconnect re-selects the same already-known
+    // device first. This mirrors TransportConnectionPanel._connectBluetooth,
+    // which remembers and re-applies the selection after a failed attempt.
+    expect(transport.selectEnumeratedPort('ble-device'), isTrue);
+    final r2 = await transport.open();
+    expect(r2.success, isTrue);
+    expect(transport.handshakeComplete, isTrue);
+    expect(transport.detectedProfile, Icp5FrameCodec.expectedProfile);
+
+    // A stale frame delivered to the abandoned first connection -- must not
+    // throw and must not alter the now-connected transport's state.
+    connectionA.notify(identityRx);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(transport.handshakeComplete, isTrue);
+    expect(transport.detectedProfile, Icp5FrameCodec.expectedProfile);
+    await transport.close();
+  });
+
+  test(
       'explicit USB-like 1s read timeout fails when response arrives after '
       '1.2 s (confirms 3s BLE default is necessary)', () async {
     late _FakeGattConnection connection;
     connection = _FakeGattConnection((conn, call, bytes) {
       if (call == 1) {
-        Future.delayed(const Duration(milliseconds: 1200),
-            () => conn.notify(identityRx));
+        Future.delayed(
+            const Duration(milliseconds: 1200), () => conn.notify(identityRx));
       }
     });
     final transport = Icp5BluetoothTransport(

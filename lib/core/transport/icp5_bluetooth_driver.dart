@@ -67,6 +67,7 @@ class Icp5BluetoothGattDriver
 
   @override
   Future<Icp5DiscoveryResult> discover() async {
+    debugPrint('BLE_SCAN_START');
     const source = discoverySource;
     _discoveredDevices.clear();
     _discoveredMetadata.clear();
@@ -168,9 +169,11 @@ class Icp5BluetoothGattDriver
     _failureStage = 'selected device lookup';
     final device = _discoveredDevices[portName];
     if (device == null) {
+      debugPrint('BLE_CONNECT_FAIL stage=selected_device_lookup');
       throw StateError(
           'Selected ICP5 BLE identifier is no longer available: $portName.');
     }
+    debugPrint('BLE_DEVICE_SELECTED');
     final connectingId = device.remoteId.str;
     final metadata = _discoveredMetadata[portName];
     _connectingIdentifier = connectingId;
@@ -182,11 +185,13 @@ class Icp5BluetoothGattDriver
         'advertisedName=${device.advName} rssi=${metadata?.rssi ?? 'unknown'}');
     if (!identifiersMatch(portName, connectingId)) {
       _failureStage = 'identifier validation';
+      debugPrint('BLE_CONNECT_FAIL stage=identifier_validation');
       throw StateError('BLE identifier mismatch before connect: selected '
           '$portName, connecting $connectingId. Connection aborted.');
     }
     _failureStage = 'connect';
     await device.connect(timeout: const Duration(seconds: 10));
+    debugPrint('BLE_CONNECTED');
     _failureStage = 'service discovery';
     final services = await device.discoverServices();
     _discoveredServiceUuids = List.unmodifiable(
@@ -196,9 +201,11 @@ class Icp5BluetoothGattDriver
         .where((candidate) => isExpectedUuid(candidate.uuid, serviceUuid))
         .firstOrNull;
     if (service == null) {
+      debugPrint('BLE_CONNECT_FAIL stage=service_discovery');
       await device.disconnect();
       throw StateError('Service discovery failed: FFF0 was not found.');
     }
+    debugPrint('BLE_SERVICE_FOUND');
     BluetoothCharacteristic? tx;
     BluetoothCharacteristic? rx;
     for (final characteristic in service.characteristics) {
@@ -211,22 +218,28 @@ class Icp5BluetoothGattDriver
     }
     if (tx == null ||
         !(tx.properties.write || tx.properties.writeWithoutResponse)) {
+      debugPrint('BLE_CONNECT_FAIL stage=tx_characteristic');
       await device.disconnect();
       throw StateError(
           'Service discovery failed: writable FFF2 was not found.');
     }
+    debugPrint('BLE_TX_FOUND');
     if (rx == null || !rx.properties.notify) {
+      debugPrint('BLE_CONNECT_FAIL stage=rx_characteristic');
       await device.disconnect();
       throw StateError(
           'Notify subscription failed: notifiable FFF1 was not found.');
     }
+    debugPrint('BLE_RX_FOUND');
     try {
       _failureStage = 'notify subscription';
       await rx.setNotifyValue(true);
     } catch (error) {
+      debugPrint('BLE_CONNECT_FAIL stage=notify_subscription');
       await device.disconnect();
       throw StateError('Notify subscription failed for FFF1: $error');
     }
+    debugPrint('BLE_NOTIFY_SUBSCRIBED');
     _failureStage = null;
     return _Icp5BluetoothGattConnection(device: device, tx: tx, rx: rx);
   }

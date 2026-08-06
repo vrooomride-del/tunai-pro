@@ -88,7 +88,7 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
 
   // ── Phase T: Controlled Master Volume Write state ────────────────────────
   final _transport = ProUsbiTransport();
-  double _leftVolume  = 0.8;
+  double _leftVolume = 0.8;
   double _rightVolume = 0.8;
   List<HardwareWriteRequest>? _dryRunRequests;
   bool _userConfirmed = false;
@@ -115,8 +115,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   bool _muteDiagnosticUsedForSession = false;
   bool _gainDiagnosticUsedForSession = false;
   // T4C: self-contained panel state (no Transport Command Preview dependency)
-  String _t4cSide = 'L';           // 'L' or 'R'
-  double _t4cValue = 1.0;          // 1.0 / 0.5 / 0.0
+  String _t4cSide = 'L'; // 'L' or 'R'
+  double _t4cValue = 1.0; // 1.0 / 0.5 / 0.0
 
   // ── MVP: Mute/Gain guarded validation panel state ────────────────────────
   VerifiedDspAddress? _muteGainSelected;
@@ -137,7 +137,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
 
   // ── Phase T2 Revised: Multi-transport readiness state ───────────────────
   bool _checkingTransport = false;
-  HardwareTransportBackend _selectedTransport = HardwareTransportBackend.simulation;
+  HardwareTransportBackend _selectedTransport =
+      HardwareTransportBackend.simulation;
   List<HardwareTransportInfo> _transportInfos =
       HardwareTransportInfo.defaultAvailableTransports;
   String? _transportCheckMessage;
@@ -162,19 +163,22 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
       connectionState: newConn,
       updatedAt: DateTime.now(),
     );
-    await ref.read(proProjectStoreProvider.notifier)
+    await ref
+        .read(proProjectStoreProvider.notifier)
         .updateHardwareState(widget.projectId, newHw);
   }
 
   Future<void> _setTargetDevice(HardwareTargetDevice d) async {
     final project = _project;
     if (project == null) return;
-    final newConn = project.hardwareState.connectionState.copyWith(targetDevice: d);
+    final newConn =
+        project.hardwareState.connectionState.copyWith(targetDevice: d);
     final newHw = project.hardwareState.copyWith(
       connectionState: newConn,
       updatedAt: DateTime.now(),
     );
-    await ref.read(proProjectStoreProvider.notifier)
+    await ref
+        .read(proProjectStoreProvider.notifier)
         .updateHardwareState(widget.projectId, newHw);
   }
 
@@ -183,9 +187,10 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     if (project == null) return;
     final current = project.hardwareState.connectionState;
     // Phase Q: only simulated status update. No real hardware scan.
-    final newStatus = current.transportType == HardwareTransportType.simulationOnly
-        ? HardwareConnectionStatus.simulated
-        : HardwareConnectionStatus.disconnected;
+    final newStatus =
+        current.transportType == HardwareTransportType.simulationOnly
+            ? HardwareConnectionStatus.simulated
+            : HardwareConnectionStatus.disconnected;
     final newConn = current.copyWith(
       connectionStatus: newStatus,
       lastCheckedAt: DateTime.now(),
@@ -194,7 +199,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
       connectionState: newConn,
       updatedAt: DateTime.now(),
     );
-    await ref.read(proProjectStoreProvider.notifier)
+    await ref
+        .read(proProjectStoreProvider.notifier)
         .updateHardwareState(widget.projectId, newHw);
   }
 
@@ -207,12 +213,12 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
       final now = DateTime.now();
       if (mounted) {
         setState(() {
-          _transportInfos = _transportInfos.map((t) =>
-              t.backend == _selectedTransport
+          _transportInfos = _transportInfos
+              .map((t) => t.backend == _selectedTransport
                   ? t.copyWith(lastCheckedAt: now)
-                  : t).toList();
-          _transportCheckMessage =
-              'Checked ${_selectedTransport.label} at '
+                  : t)
+              .toList();
+          _transportCheckMessage = 'Checked ${_selectedTransport.label} at '
               '${now.toLocal().toString().substring(0, 19)}. '
               '${_selectedTransport.descriptionNote}';
           _transportLastChecked = now;
@@ -229,10 +235,10 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   void _generateTransportCommand() {
     final registry = createTunaiAdau1466ThreeWayRegistry();
     final envelope = createMasterVolumeCommand(
-      backend:      _selectedTransport,
-      side:         _commandSide,
-      linearValue:  _commandValue,
-      registry:     registry,
+      backend: _selectedTransport,
+      side: _commandSide,
+      linearValue: _commandValue,
+      registry: registry,
     );
     setState(() => _commandEnvelope = envelope);
   }
@@ -240,11 +246,11 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
   void _generateDryRun() {
     setState(() {
       _dryRunRequests = createMasterVolumeWriteRequests(
-        leftVolume:  _leftVolume,
+        leftVolume: _leftVolume,
         rightVolume: _rightVolume,
       );
       _userConfirmed = false;
-      _lastWriteLog  = null;
+      _lastWriteLog = null;
     });
   }
 
@@ -253,10 +259,10 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     setState(() => _writing = true);
     try {
       final log = await performControlledMasterVolumeWrite(
-        leftVolume:    _leftVolume,
-        rightVolume:   _rightVolume,
+        leftVolume: _leftVolume,
+        rightVolume: _rightVolume,
         userConfirmed: _userConfirmed,
-        transport:     _transport,
+        transport: _transport,
       );
       if (mounted) setState(() => _lastWriteLog = log);
     } finally {
@@ -282,7 +288,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         updatedAt: DateTime.now(),
         revision: project.hardwareState.revision + 1,
       );
-      await ref.read(proProjectStoreProvider.notifier)
+      await ref
+          .read(proProjectStoreProvider.notifier)
           .updateHardwareState(widget.projectId, newHw);
     } finally {
       if (mounted) setState(() => _generating = false);
@@ -296,7 +303,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     try {
       final registry = createTunaiAdau1466ThreeWayRegistry();
       final newState = createValidationTasksFromRegistry(registry: registry);
-      await ref.read(proProjectStoreProvider.notifier)
+      await ref
+          .read(proProjectStoreProvider.notifier)
           .updateAddressValidationState(widget.projectId, newState);
       if (mounted) setState(() => _activeValidationTaskId = null);
     } finally {
@@ -311,30 +319,36 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     final project = _project;
     if (project == null) return;
     final vs = project.addressValidationState;
-    final updated = vs.tasks.map((t) => t.id == taskId
-        ? t.copyWith(
-            currentStatus: AddressValidationStatus.failed,
-            updatedAt: DateTime.now(),
-          )
-        : t).toList();
-    await ref.read(proProjectStoreProvider.notifier)
+    final updated = vs.tasks
+        .map((t) => t.id == taskId
+            ? t.copyWith(
+                currentStatus: AddressValidationStatus.failed,
+                updatedAt: DateTime.now(),
+              )
+            : t)
+        .toList();
+    await ref
+        .read(proProjectStoreProvider.notifier)
         .updateAddressValidationState(widget.projectId,
-          vs.copyWith(tasks: updated, updatedAt: DateTime.now()));
+            vs.copyWith(tasks: updated, updatedAt: DateTime.now()));
   }
 
   Future<void> _markTaskBlocked(String taskId) async {
     final project = _project;
     if (project == null) return;
     final vs = project.addressValidationState;
-    final updated = vs.tasks.map((t) => t.id == taskId
-        ? t.copyWith(
-            currentStatus: AddressValidationStatus.blocked,
-            updatedAt: DateTime.now(),
-          )
-        : t).toList();
-    await ref.read(proProjectStoreProvider.notifier)
+    final updated = vs.tasks
+        .map((t) => t.id == taskId
+            ? t.copyWith(
+                currentStatus: AddressValidationStatus.blocked,
+                updatedAt: DateTime.now(),
+              )
+            : t)
+        .toList();
+    await ref
+        .read(proProjectStoreProvider.notifier)
         .updateAddressValidationState(widget.projectId,
-          vs.copyWith(tasks: updated, updatedAt: DateTime.now()));
+            vs.copyWith(tasks: updated, updatedAt: DateTime.now()));
   }
 
   @override
@@ -358,9 +372,9 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
       _adau1701BleContext =
           Adau1701HardwareContext.fromTransport(_adau1701BleTransport);
     } else if (Platform.isWindows) {
-      _adau1701BleTransport =
-          ref.read(adau1701Icp5BleWindowsContextProvider).transport
-              as Icp5BluetoothTransport;
+      _adau1701BleTransport = ref
+          .read(adau1701Icp5BleWindowsContextProvider)
+          .transport as Icp5BluetoothTransport;
       _ownsBleTransport = false;
       // Reuse the provider-owned context — do not create a second wrapper.
       _adau1701BleContext = ref.read(adau1701Icp5BleWindowsContextProvider);
@@ -461,9 +475,10 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
     final notifier = ref.read(proProjectStoreProvider.notifier);
     notifier.updateHardwareConnection(callbackProjectId, connection);
     ref.read(activeAdau1701ContextProvider.notifier).state = activeContext;
+    if (activeContext != null) debugPrint('BLE_CONTEXT_ACTIVE');
   }
 
-/// Returns whichever ADAU1701 ICP5 transport is currently ready.
+  /// Returns whichever ADAU1701 ICP5 transport is currently ready.
   /// BLE takes priority when connected; falls back to USB.
   Icp5UsbTransport get _activeTuningTransport {
     if (_adau1701BleTransport.isConnected &&
@@ -475,11 +490,13 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
 
   @override
   Widget build(BuildContext context) {
-    final project = ref.watch(proProjectStoreProvider)
+    final project = ref
+        .watch(proProjectStoreProvider)
         .projects
         .where((p) => p.id == widget.projectId)
         .firstOrNull;
-    final hwState = project?.hardwareState ?? HardwareProjectState.createDefault();
+    final hwState =
+        project?.hardwareState ?? HardwareProjectState.createDefault();
     final conn = hwState.connectionState;
     // The CONNECTION STATE panel is sourced from the persisted project model,
     // which is not updated by the live ICP5 USB/BLE transport. Reflect the
@@ -497,8 +514,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         : conn;
     final activePlan = hwState.activePlan;
     final activePkg = project?.exportState.activePackage;
-    final validationState = project?.addressValidationState
-        ?? AddressValidationProjectState.createDefault();
+    final validationState = project?.addressValidationState ??
+        AddressValidationProjectState.createDefault();
 
     if (_isWindows &&
         _selectedTransport == HardwareTransportBackend.usbiWindowsTemporary) {
@@ -523,15 +540,18 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
               borderRadius: BorderRadius.circular(3),
             ),
             child: const Text('DRY RUN ONLY',
-                style: TextStyle(fontSize: 9, color: kProAmber,
-                    fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+                style: TextStyle(
+                    fontSize: 9,
+                    color: kProAmber,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.8)),
           ),
         ]),
         const SizedBox(height: 4),
         Text(
           Platform.isWindows
               ? 'Dry-run planning + T4C USBi Master Volume executor (Windows). '
-                'Select USBi transport below to access the write path.'
+                  'Select USBi transport below to access the write path.'
               : 'Dry-run hardware planning. No USBi/BLE write is enabled.',
           style: proSubtitle(),
         ),
@@ -543,7 +563,9 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         HardwareDeviceStatusCard(projectId: widget.projectId),
         const SizedBox(height: 20),
 
-        const ProSectionHeader(title: 'TRANSPORT ARCHITECTURE — ICP5 PHASE A', icon: Icons.alt_route_outlined),
+        const ProSectionHeader(
+            title: 'TRANSPORT ARCHITECTURE — ICP5 PHASE A',
+            icon: Icons.alt_route_outlined),
         const SizedBox(height: 8),
         TransportConnectionPanel(
           projectId: widget.projectId,
@@ -565,7 +587,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         ),
         const SizedBox(height: 20),
 
-        const ProSectionHeader(title: 'ADAU1701 ICP5 TUNING', icon: Icons.tune_outlined),
+        const ProSectionHeader(
+            title: 'ADAU1701 ICP5 TUNING', icon: Icons.tune_outlined),
         const SizedBox(height: 8),
         Adau1701Icp5TuningPanel(
           key: ValueKey(_activeTuningTransport.identity),
@@ -582,7 +605,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         const SizedBox(height: 20),
 
         // A: Connection State Panel
-        const ProSectionHeader(title: 'CONNECTION STATE', icon: Icons.usb_outlined),
+        const ProSectionHeader(
+            title: 'CONNECTION STATE', icon: Icons.usb_outlined),
         const SizedBox(height: 8),
         HardwareConnectionCard(
           conn: displayConn,
@@ -593,23 +617,26 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
         const SizedBox(height: 20),
 
         // B: Transport Readiness (Phase T2 Revised)
-        const ProSectionHeader(title: 'TRANSPORT READINESS', icon: Icons.compare_arrows_outlined),
+        const ProSectionHeader(
+            title: 'TRANSPORT READINESS', icon: Icons.compare_arrows_outlined),
         const SizedBox(height: 8),
         HardwareTransportReadinessCard(
-          selectedBackend:  _selectedTransport,
-          transportInfos:   _transportInfos,
-          checking:         _checkingTransport,
-          checkMessage:     _transportCheckMessage,
-          lastChecked:      _transportLastChecked,
-          onCheck:          _checkTransportReadiness,
-          onSelect:         _selectTransportBackend,
+          selectedBackend: _selectedTransport,
+          transportInfos: _transportInfos,
+          checking: _checkingTransport,
+          checkMessage: _transportCheckMessage,
+          lastChecked: _transportLastChecked,
+          onCheck: _checkTransportReadiness,
+          onSelect: _selectTransportBackend,
         ),
         const SizedBox(height: 20),
 
         // C: Active Export Package
-        const ProSectionHeader(title: 'ACTIVE EXPORT PACKAGE', icon: Icons.upload_outlined),
+        const ProSectionHeader(
+            title: 'ACTIVE EXPORT PACKAGE', icon: Icons.upload_outlined),
         const SizedBox(height: 8),
-        HardwareExportPackageCard(pkg: activePkg, protection: project?.protectionState),
+        HardwareExportPackageCard(
+            pkg: activePkg, protection: project?.protectionState),
         const SizedBox(height: 20),
 
         // C: Generate button
@@ -658,20 +685,24 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
 
         // D: Guard checklist
         if (activePlan != null) ...[
-          const ProSectionHeader(title: 'GUARD CHECKLIST', icon: Icons.checklist_outlined),
+          const ProSectionHeader(
+              title: 'GUARD CHECKLIST', icon: Icons.checklist_outlined),
           const SizedBox(height: 8),
           HardwareGuardChecklistCard(plan: activePlan),
           const SizedBox(height: 20),
 
           // E: Write plan preview
-          const ProSectionHeader(title: 'WRITE PLAN PREVIEW', icon: Icons.list_alt_outlined),
+          const ProSectionHeader(
+              title: 'WRITE PLAN PREVIEW', icon: Icons.list_alt_outlined),
           const SizedBox(height: 8),
           HardwareWritePlanCard(plan: activePlan),
           const SizedBox(height: 20),
 
           // F: Warnings
-          if (activePlan.warnings.isNotEmpty || activePlan.blockedReason != null) ...[
-            const ProSectionHeader(title: 'WARNINGS', icon: Icons.warning_amber_outlined),
+          if (activePlan.warnings.isNotEmpty ||
+              activePlan.blockedReason != null) ...[
+            const ProSectionHeader(
+                title: 'WARNINGS', icon: Icons.warning_amber_outlined),
             const SizedBox(height: 8),
             HardwareWarningsCard(plan: activePlan),
             const SizedBox(height: 20),
@@ -700,68 +731,84 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
 
         // ── G: Address Validation Status (Phase U1) ──────────────────────
         const SizedBox(height: 20),
-        const ProSectionHeader(title: 'ADDRESS VALIDATION STATUS', icon: Icons.checklist_outlined),
+        const ProSectionHeader(
+            title: 'ADDRESS VALIDATION STATUS', icon: Icons.checklist_outlined),
         const SizedBox(height: 8),
         const HardwareAddressValidationStatusCard(),
         const SizedBox(height: 16),
 
         // ── H: Live Validation Queue (Phase U1) ──────────────────────────
-        const ProSectionHeader(title: 'LIVE VALIDATION QUEUE', icon: Icons.playlist_add_check_outlined),
+        const ProSectionHeader(
+            title: 'LIVE VALIDATION QUEUE',
+            icon: Icons.playlist_add_check_outlined),
         const SizedBox(height: 8),
         const HardwareLiveValidationQueueCard(),
         const SizedBox(height: 16),
 
         // ── I: Address Live Validation Manager (Phase U2) ────────────────
         const SizedBox(height: 20),
-        const ProSectionHeader(title: 'ADDRESS LIVE VALIDATION MANAGER', icon: Icons.task_alt_outlined),
+        const ProSectionHeader(
+            title: 'ADDRESS LIVE VALIDATION MANAGER',
+            icon: Icons.task_alt_outlined),
         const SizedBox(height: 8),
         HardwareValidationManagerCard(
-          validationState:   validationState,
-          generating:        _generatingQueue,
-          activeTaskId:      _activeValidationTaskId,
-          onGenerate:        _generateValidationQueue,
-          onSelectTask:      _setActiveTask,
-          onMarkFailed:      _markTaskFailed,
-          onMarkBlocked:     _markTaskBlocked,
+          validationState: validationState,
+          generating: _generatingQueue,
+          activeTaskId: _activeValidationTaskId,
+          onGenerate: _generateValidationQueue,
+          onSelectTask: _setActiveTask,
+          onMarkFailed: _markTaskFailed,
+          onMarkBlocked: _markTaskBlocked,
         ),
         const SizedBox(height: 20),
 
         // ── J: Controlled Master Volume Write (Phase T) ──────────────────
         const SizedBox(height: 4),
-        const ProSectionHeader(title: 'CONTROLLED MASTER VOLUME WRITE', icon: Icons.volume_up_outlined),
+        const ProSectionHeader(
+            title: 'CONTROLLED MASTER VOLUME WRITE',
+            icon: Icons.volume_up_outlined),
         const SizedBox(height: 8),
         HardwareControlledWriteCard(
-          leftVolume:      _leftVolume,
-          rightVolume:     _rightVolume,
-          dryRunRequests:  _dryRunRequests,
-          userConfirmed:   _userConfirmed,
-          writing:         _writing,
-          lastLog:         _lastWriteLog,
-          onLeftChanged:   (v) => setState(() { _leftVolume = v; _dryRunRequests = null; _userConfirmed = false; }),
-          onRightChanged:  (v) => setState(() { _rightVolume = v; _dryRunRequests = null; _userConfirmed = false; }),
+          leftVolume: _leftVolume,
+          rightVolume: _rightVolume,
+          dryRunRequests: _dryRunRequests,
+          userConfirmed: _userConfirmed,
+          writing: _writing,
+          lastLog: _lastWriteLog,
+          onLeftChanged: (v) => setState(() {
+            _leftVolume = v;
+            _dryRunRequests = null;
+            _userConfirmed = false;
+          }),
+          onRightChanged: (v) => setState(() {
+            _rightVolume = v;
+            _dryRunRequests = null;
+            _userConfirmed = false;
+          }),
           onGenerateDryRun: _generateDryRun,
           onConfirmChanged: (v) => setState(() => _userConfirmed = v),
-          onWrite:         _performWrite,
+          onWrite: _performWrite,
         ),
 
         // ── K: Transport Command Preview (Phase T3) ──────────────────────
         const SizedBox(height: 20),
-        const ProSectionHeader(title: 'TRANSPORT COMMAND PREVIEW', icon: Icons.terminal_outlined),
+        const ProSectionHeader(
+            title: 'TRANSPORT COMMAND PREVIEW', icon: Icons.terminal_outlined),
         const SizedBox(height: 8),
         HardwareTransportCommandPreviewCard(
           selectedBackend: _selectedTransport,
-          commandSide:     _commandSide,
-          commandValue:    _commandValue,
-          envelope:        _commandEnvelope,
-          onSideChanged:   (s) => setState(() {
-            _commandSide     = s;
+          commandSide: _commandSide,
+          commandValue: _commandValue,
+          envelope: _commandEnvelope,
+          onSideChanged: (s) => setState(() {
+            _commandSide = s;
             _commandEnvelope = null;
           }),
-          onValueChanged:  (v) => setState(() {
-            _commandValue    = v;
+          onValueChanged: (v) => setState(() {
+            _commandValue = v;
             _commandEnvelope = null;
           }),
-          onGenerate:      _generateTransportCommand,
+          onGenerate: _generateTransportCommand,
         ),
 
         // ── L: T4C — USBi Temporary Master Volume Executor ──────────────
@@ -772,100 +819,111 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
                 HardwareTransportBackend.usbiWindowsTemporary) ...[
           const SizedBox(height: 20),
           HardwareT4cMasterVolumeCard(
-            side:           _t4cSide,
-            value:          _t4cValue,
-            deviceOpen:     _usbiDeviceOpen,
-            checking:       _usbiChecking,
-            openError:      _usbiOpenError,
-            executing:      _executingUsbi,
-            userConfirmed:  _usbiUserConfirmed,
-            lastResult:     _lastUsbiResult,
-            onSideChanged:  (s) => setState(() {
-              _t4cSide           = s;
+            side: _t4cSide,
+            value: _t4cValue,
+            deviceOpen: _usbiDeviceOpen,
+            checking: _usbiChecking,
+            openError: _usbiOpenError,
+            executing: _executingUsbi,
+            userConfirmed: _usbiUserConfirmed,
+            lastResult: _lastUsbiResult,
+            onSideChanged: (s) => setState(() {
+              _t4cSide = s;
               _usbiUserConfirmed = false;
-              _lastUsbiResult    = null;
+              _lastUsbiResult = null;
             }),
             onValueChanged: (v) => setState(() {
-              _t4cValue          = v;
+              _t4cValue = v;
               _usbiUserConfirmed = false;
-              _lastUsbiResult    = null;
+              _lastUsbiResult = null;
             }),
             onOpenDevice: () async {
-              setState(() { _usbiChecking = true; _usbiOpenError = null; });
+              setState(() {
+                _usbiChecking = true;
+                _usbiOpenError = null;
+              });
               final backend = _usbiNativeBackend as ProUsbiWindowsNativeBackend;
               final res = await backend.openDevice();
-              if (mounted) setState(() {
-                _usbiChecking   = false;
-                _usbiDeviceOpen = res.success;
-                _usbiOpenError  = res.success ? null : res.error;
-              });
+              if (mounted)
+                setState(() {
+                  _usbiChecking = false;
+                  _usbiDeviceOpen = res.success;
+                  _usbiOpenError = res.success ? null : res.error;
+                });
             },
             onCloseDevice: () async {
               final backend = _usbiNativeBackend as ProUsbiWindowsNativeBackend;
               await backend.closeDevice();
-              if (mounted) setState(() {
-                _usbiDeviceOpen    = false;
-                _usbiUserConfirmed = false;
-                _usbiOpenError     = null;
-                _lastUsbiResult    = null;
-              });
+              if (mounted)
+                setState(() {
+                  _usbiDeviceOpen = false;
+                  _usbiUserConfirmed = false;
+                  _usbiOpenError = null;
+                  _lastUsbiResult = null;
+                });
             },
             onConfirmChanged: (v) => setState(() {
               _usbiUserConfirmed = v;
-              _lastUsbiResult    = null;
+              _lastUsbiResult = null;
             }),
             onExecute: () async {
-              if (!_usbiUserConfirmed || _executingUsbi || !_usbiDeviceOpen) return;
+              if (!_usbiUserConfirmed || _executingUsbi || !_usbiDeviceOpen)
+                return;
               setState(() => _executingUsbi = true);
-              final addrInt = _t4cSide == 'L'
-                  ? kMasterVolumeLAddr : kMasterVolumeRAddr;
+              final addrInt =
+                  _t4cSide == 'L' ? kMasterVolumeLAddr : kMasterVolumeRAddr;
               final fixedInt = _t4cValue >= 1.0
                   ? 0x01000000
                   : _t4cValue >= 0.5
                       ? 0x00800000
                       : 0x00000000;
               final req = UsbiExecutionRequest(
-                id:                't4c_${DateTime.now().millisecondsSinceEpoch}',
+                id: 't4c_${DateTime.now().millisecondsSinceEpoch}',
                 commandEnvelopeId: 't4c_direct',
-                transportBackend:  HardwareTransportBackend.usbiWindowsTemporary,
-                parameterId:       'master_volume_${_t4cSide.toLowerCase()}',
-                logicalName:       'Master Volume ${_t4cSide}',
-                addressHex:        '0x${addrInt.toRadixString(16).padLeft(4, '0').toUpperCase()}',
-                addressInt:        addrInt,
-                fixedPointHex:     '0x${fixedInt.toRadixString(16).padLeft(8, '0').toUpperCase()}',
-                fixedPointInt:     fixedInt,
-                valueFloat:        _t4cValue,
-                userConfirmed:     _usbiUserConfirmed,
+                transportBackend: HardwareTransportBackend.usbiWindowsTemporary,
+                parameterId: 'master_volume_${_t4cSide.toLowerCase()}',
+                logicalName: 'Master Volume ${_t4cSide}',
+                addressHex:
+                    '0x${addrInt.toRadixString(16).padLeft(4, '0').toUpperCase()}',
+                addressInt: addrInt,
+                fixedPointHex:
+                    '0x${fixedInt.toRadixString(16).padLeft(8, '0').toUpperCase()}',
+                fixedPointInt: fixedInt,
+                valueFloat: _t4cValue,
+                userConfirmed: _usbiUserConfirmed,
               );
               final result = await _usbiExecutor.execute(req);
-              if (mounted) setState(() {
-                _executingUsbi  = false;
-                _lastUsbiResult = result;
-              });
+              if (mounted)
+                setState(() {
+                  _executingUsbi = false;
+                  _lastUsbiResult = result;
+                });
             },
             onRestore: () async {
               if (_executingUsbi || !_usbiDeviceOpen) return;
               setState(() => _executingUsbi = true);
-              final addrInt = _t4cSide == 'L'
-                  ? kMasterVolumeLAddr : kMasterVolumeRAddr;
+              final addrInt =
+                  _t4cSide == 'L' ? kMasterVolumeLAddr : kMasterVolumeRAddr;
               final req = UsbiExecutionRequest(
-                id:                't4c_restore_${DateTime.now().millisecondsSinceEpoch}',
+                id: 't4c_restore_${DateTime.now().millisecondsSinceEpoch}',
                 commandEnvelopeId: 't4c_restore',
-                transportBackend:  HardwareTransportBackend.usbiWindowsTemporary,
-                parameterId:       'master_volume_${_t4cSide.toLowerCase()}_restore',
-                logicalName:       'Master Volume ${_t4cSide} Restore 1.0',
-                addressHex:        '0x${addrInt.toRadixString(16).padLeft(4, '0').toUpperCase()}',
-                addressInt:        addrInt,
-                fixedPointHex:     '0x01000000',
-                fixedPointInt:     0x01000000,
-                valueFloat:        1.0,
-                userConfirmed:     true,
+                transportBackend: HardwareTransportBackend.usbiWindowsTemporary,
+                parameterId: 'master_volume_${_t4cSide.toLowerCase()}_restore',
+                logicalName: 'Master Volume ${_t4cSide} Restore 1.0',
+                addressHex:
+                    '0x${addrInt.toRadixString(16).padLeft(4, '0').toUpperCase()}',
+                addressInt: addrInt,
+                fixedPointHex: '0x01000000',
+                fixedPointInt: 0x01000000,
+                valueFloat: 1.0,
+                userConfirmed: true,
               );
               final result = await _usbiExecutor.execute(req);
-              if (mounted) setState(() {
-                _executingUsbi  = false;
-                _lastUsbiResult = result;
-              });
+              if (mounted)
+                setState(() {
+                  _executingUsbi = false;
+                  _lastUsbiResult = result;
+                });
             },
           ),
         ],
@@ -880,45 +938,50 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
               icon: Icons.tune_outlined),
           const SizedBox(height: 8),
           HardwareT4cMuteGainCard(
-            selected:         _muteGainSelected,
-            deviceOpen:       _usbiDeviceOpen,
-            confirmed:        _muteGainConfirmed,
-            executing:        _executingMuteGain,
-            lastResult:       _lastMuteGainResult,
+            selected: _muteGainSelected,
+            deviceOpen: _usbiDeviceOpen,
+            confirmed: _muteGainConfirmed,
+            executing: _executingMuteGain,
+            lastResult: _lastMuteGainResult,
             onSelect: (addr) => setState(() {
-              _muteGainSelected  = addr;
+              _muteGainSelected = addr;
               _muteGainConfirmed = false;
               _lastMuteGainResult = null;
             }),
             onConfirmChanged: (v) => setState(() {
-              _muteGainConfirmed  = v;
+              _muteGainConfirmed = v;
               _lastMuteGainResult = null;
             }),
             onExecute: () async {
               final addr = _muteGainSelected;
-              if (addr == null || !_muteGainConfirmed ||
-                  _executingMuteGain || !_usbiDeviceOpen) return;
+              if (addr == null ||
+                  !_muteGainConfirmed ||
+                  _executingMuteGain ||
+                  !_usbiDeviceOpen) {
+                return;
+              }
               if (!addr.isActualWriteEligible) return;
               if (addr.dataFormat == null) return;
               setState(() => _executingMuteGain = true);
               final req = UsbiExecutionRequest(
-                id:                'mvp_mg_${DateTime.now().millisecondsSinceEpoch}',
+                id: 'mvp_mg_${DateTime.now().millisecondsSinceEpoch}',
                 commandEnvelopeId: 'mvp_mute_gain',
-                transportBackend:  HardwareTransportBackend.usbiWindowsTemporary,
-                parameterId:       addr.id,
-                logicalName:       addr.logicalName,
-                addressHex:        addr.addressHex,
-                addressInt:        addr.addressInt,
-                fixedPointHex:     '0x00000000',
-                fixedPointInt:     0x00000000,
-                valueFloat:        0.0,
-                userConfirmed:     _muteGainConfirmed,
+                transportBackend: HardwareTransportBackend.usbiWindowsTemporary,
+                parameterId: addr.id,
+                logicalName: addr.logicalName,
+                addressHex: addr.addressHex,
+                addressInt: addr.addressInt,
+                fixedPointHex: '0x00000000',
+                fixedPointInt: 0x00000000,
+                valueFloat: 0.0,
+                userConfirmed: _muteGainConfirmed,
               );
               final result = await _usbiExecutor.execute(req);
-              if (mounted) setState(() {
-                _executingMuteGain  = false;
-                _lastMuteGainResult = result;
-              });
+              if (mounted)
+                setState(() {
+                  _executingMuteGain = false;
+                  _lastMuteGainResult = result;
+                });
             },
           ),
         ],
@@ -981,15 +1044,16 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
               icon: Icons.science_outlined),
           const SizedBox(height: 8),
           SigmaVerificationConsole(
-            backend:           _usbiNativeBackend,
+            backend: _usbiNativeBackend,
             isWindowsPlatform: () => Platform.isWindows,
-            deviceOpen:        _usbiDeviceOpen,
+            deviceOpen: _usbiDeviceOpen,
           ),
         ],
 
         // ── R: Hardware MVP Status Card (always visible) ─────────────────
         const SizedBox(height: 20),
-        const ProSectionHeader(title: 'HARDWARE MVP STATUS', icon: Icons.info_outline),
+        const ProSectionHeader(
+            title: 'HARDWARE MVP STATUS', icon: Icons.info_outline),
         const SizedBox(height: 8),
         const HardwareMvpStatusCard(),
 
@@ -1008,15 +1072,15 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
             Expanded(
               child: Text(
                 Platform.isWindows &&
-                    _selectedTransport ==
-                        HardwareTransportBackend.usbiWindowsTemporary
+                        _selectedTransport ==
+                            HardwareTransportBackend.usbiWindowsTemporary
                     ? 'Only verified Master Volume L/R can use the temporary '
-                      'USBi executor. All other writes remain blocked. '
-                      'No PEQ/XO/Gain/Mute/Delay/SafeLoad/EEPROM/Selfboot. '
-                      'USBi is temporary — ICP5 is the final target.'
+                        'USBi executor. All other writes remain blocked. '
+                        'No PEQ/XO/Gain/Mute/Delay/SafeLoad/EEPROM/Selfboot. '
+                        'USBi is temporary — ICP5 is the final target.'
                     : 'Hardware write remains disabled for the selected transport. '
-                      'No USB, BLE, or ICP5 packets are sent. No SafeLoad is executed. '
-                      'No EEPROM/Selfboot write is performed.',
+                        'No USB, BLE, or ICP5 packets are sent. No SafeLoad is executed. '
+                        'No EEPROM/Selfboot write is performed.',
                 style: proSubtitle(size: 9),
               ),
             ),
@@ -1045,12 +1109,16 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
               borderRadius: BorderRadius.circular(3),
             ),
             child: const Text('MV WRITE ACTIVE',
-                style: TextStyle(fontSize: 9, color: kProAccent,
-                    fontWeight: FontWeight.w700, letterSpacing: 0.7)),
+                style: TextStyle(
+                    fontSize: 9,
+                    color: kProAccent,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.7)),
           ),
         ]),
         const SizedBox(height: 16),
-        const ProSectionHeader(title: 'TRANSPORT READINESS', icon: Icons.compare_arrows_outlined),
+        const ProSectionHeader(
+            title: 'TRANSPORT READINESS', icon: Icons.compare_arrows_outlined),
         const SizedBox(height: 8),
         HardwareTransportReadinessCard(
           selectedBackend: _selectedTransport,
@@ -1067,11 +1135,17 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           height: 30,
           child: OutlinedButton.icon(
             key: const Key('usbi-open-device'),
-            onPressed: (!_usbiDeviceOpen && !_usbiChecking &&
+            onPressed: (!_usbiDeviceOpen &&
+                    !_usbiChecking &&
                     _usbiNativeBackend is ProUsbiWindowsNativeBackend)
                 ? () async {
-                    setState(() { _usbiChecking = true; _usbiOpenError = null; });
-                    final result = await (_usbiNativeBackend as ProUsbiWindowsNativeBackend).openDevice();
+                    setState(() {
+                      _usbiChecking = true;
+                      _usbiOpenError = null;
+                    });
+                    final result = await (_usbiNativeBackend
+                            as ProUsbiWindowsNativeBackend)
+                        .openDevice();
                     if (mounted) {
                       setState(() {
                         _usbiChecking = false;
@@ -1090,12 +1164,14 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
                   }
                 : null,
             icon: const Icon(Icons.usb_outlined, size: 13),
-            label: Text(_usbiDeviceOpen ? 'USBi Device Open' : 'Open USBi Device'),
+            label:
+                Text(_usbiDeviceOpen ? 'USBi Device Open' : 'Open USBi Device'),
           ),
         ),
         if (_usbiOpenError != null) ...[
           const SizedBox(height: 8),
-          Text(_usbiOpenError!, style: const TextStyle(fontSize: 9, color: Colors.redAccent)),
+          Text(_usbiOpenError!,
+              style: const TextStyle(fontSize: 9, color: Colors.redAccent)),
         ],
         if (_dspWriteStopWarning != null) ...[
           const SizedBox(height: 8),
@@ -1108,12 +1184,16 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(_dspWriteStopWarning!,
-                style: const TextStyle(fontSize: 10, color: Colors.redAccent,
+                style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.redAccent,
                     fontWeight: FontWeight.w800)),
           ),
         ],
         const SizedBox(height: 16),
-        const ProSectionHeader(title: 'ADAU1466 SIGMA VERIFICATION CONSOLE', icon: Icons.science_outlined),
+        const ProSectionHeader(
+            title: 'ADAU1466 SIGMA VERIFICATION CONSOLE',
+            icon: Icons.science_outlined),
         const SizedBox(height: 8),
         SigmaVerificationConsole(
           backend: _usbiNativeBackend,
@@ -1140,7 +1220,8 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           },
         ),
         const SizedBox(height: 20),
-        const ProSectionHeader(title: 'OPERATIONAL MASTER VOLUME', icon: Icons.volume_up_outlined),
+        const ProSectionHeader(
+            title: 'OPERATIONAL MASTER VOLUME', icon: Icons.volume_up_outlined),
         const SizedBox(height: 8),
         OperationalMasterVolumeControl(
           backend: _usbiNativeBackend,
