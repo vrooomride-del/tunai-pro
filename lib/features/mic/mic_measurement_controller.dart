@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/speaker_profile.dart';
 import '../../core/profiles/system_profile.dart';
@@ -62,6 +63,10 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   static const int sampleRate = 48000;
   static const int fftSize = 65536;
   static const int durationSec = 10;
+  // BLE A2DP codec initializes silently for ~1-2s after play() is called.
+  // Pre-rolling for this many seconds before starting the recorder captures
+  // only the stable portion of the signal.
+  static const int _bleWarmupSec = 2;
 
   static Future<bool> checkAndRequestPermission() async {
     final recorder = AudioRecorder();
@@ -78,7 +83,11 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     }
   }
 
-  Future<void> startMeasurement({List<double>? scfCorrection, SpeakerProfile? speakerProfile}) async {
+  Future<void> startMeasurement({
+    List<double>? scfCorrection,
+    SpeakerProfile? speakerProfile,
+    bool bleWarmup = false,
+  }) async {
     try {
       final hasPermission = await _recorder.hasPermission();
       if (!hasPermission) {
@@ -89,27 +98,44 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         return;
       }
 
-      // 핑크노이즈 생성 + 저장
+      // 핑크노이즈 생성 + 저장 (BLE 모드는 warmup 구간 포함)
       state = state.copyWith(status: MeasurementStatus.playing, message: '핑크노이즈 생성 중...');
-      final wavFile = await _generatePinkNoise();
+      final warmup = bleWarmup ? _bleWarmupSec : 0;
+      final wavFile = await _generatePinkNoise(totalSec: warmup + durationSec);
 
-      // 녹음 시작
       final dir = await getTemporaryDirectory();
       final recPath = '${dir.path}/tunai_pro_measurement.wav';
 
-      await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          sampleRate: sampleRate,
-          numChannels: 1,
-        ),
-        path: recPath,
-      );
+      if (bleWarmup) {
+        // BLE A2DP: 재생 먼저 → 코덱 초기화 대기 → 녹음 시작.
+        // 코덱이 깨어나는 동안 녹음하면 무음/팝이 섞이므로 반드시 이 순서.
+        await _player.setFilePath(wavFile.path);
+        await _player.play();
+        state = state.copyWith(message: 'BLE 오디오 초기화 중... ($_bleWarmupSec초)');
+        await Future.delayed(Duration(seconds: warmup));
+        await _recorder.start(
+          const RecordConfig(
+            encoder: AudioEncoder.wav,
+            sampleRate: sampleRate,
+            numChannels: 1,
+          ),
+          path: recPath,
+        );
+      } else {
+        // 일반(USB/유선) 측정 — 기존 순서 그대로 보존: 녹음 먼저 시작 후 재생.
+        await _recorder.start(
+          const RecordConfig(
+            encoder: AudioEncoder.wav,
+            sampleRate: sampleRate,
+            numChannels: 1,
+          ),
+          path: recPath,
+        );
+        await _player.setFilePath(wavFile.path);
+        await _player.play();
+      }
 
-      // 핑크노이즈 재생
       state = state.copyWith(message: '측정 중... ($durationSec초)');
-      await _player.setFilePath(wavFile.path);
-      await _player.play();
       await Future.delayed(const Duration(seconds: durationSec));
 
       // 정지
@@ -147,6 +173,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     required Function(int, CrossoverFilter) applyHp,
     required CrossoverType xoverType,
     List<double>? scfCorrection,
+    bool bleWarmup = false,
   }) async {
     final hasPermission = await _recorder.hasPermission();
     if (!hasPermission) {
@@ -167,7 +194,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         await muteAllExcept(i);
         await Future.delayed(const Duration(milliseconds: 300)); // DSP 적용 대기
 
-        final response = await _measureOnce(scfCorrection: scfCorrection);
+        final response = await _measureOnce(scfCorrection: scfCorrection, bleWarmup: bleWarmup);
         channelResponses[i] = response;
       }
 
@@ -213,17 +240,33 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     }
   }
 
-  Future<List<Map<String, double>>> _measureOnce({List<double>? scfCorrection}) async {
-    final wavFile = await _generatePinkNoise();
+  Future<List<Map<String, double>>> _measureOnce({
+    List<double>? scfCorrection,
+    bool bleWarmup = false,
+  }) async {
+    final warmup = bleWarmup ? _bleWarmupSec : 0;
+    final wavFile = await _generatePinkNoise(totalSec: warmup + durationSec);
     final dir = await getTemporaryDirectory();
     final recPath = '${dir.path}/tunai_ch_${DateTime.now().millisecondsSinceEpoch}.wav';
 
-    await _recorder.start(
-      const RecordConfig(encoder: AudioEncoder.wav, sampleRate: sampleRate, numChannels: 1),
-      path: recPath,
-    );
-    await _player.setFilePath(wavFile.path);
-    await _player.play();
+    if (bleWarmup) {
+      // BLE A2DP: 재생 먼저 → 코덱 초기화 대기 → 녹음 시작.
+      await _player.setFilePath(wavFile.path);
+      await _player.play();
+      await Future.delayed(Duration(seconds: warmup));
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.wav, sampleRate: sampleRate, numChannels: 1),
+        path: recPath,
+      );
+    } else {
+      // 일반(USB/유선) 측정 — 기존 순서 그대로 보존: 녹음 먼저 시작 후 재생.
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.wav, sampleRate: sampleRate, numChannels: 1),
+        path: recPath,
+      );
+      await _player.setFilePath(wavFile.path);
+      await _player.play();
+    }
     await Future.delayed(const Duration(seconds: durationSec));
     await _recorder.stop();
     await _player.stop();
@@ -354,10 +397,26 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     return nearest;
   }
 
-  Future<File> _generatePinkNoise() async {
+  Future<File> _generatePinkNoise({int totalSec = durationSec}) async {
     final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/pink_noise_pro.wav');
-    const totalSamples = sampleRate * durationSec;
+    // 일반(BLE 웜업 없음) 측정은 기존 파일명(pink_noise_pro.wav)을 그대로 쓴다.
+    // BLE 웜업 구간이 붙어 길이가 달라질 때만 구분용 접미사를 붙인다.
+    final fileName = totalSec == durationSec
+        ? 'pink_noise_pro.wav'
+        : 'pink_noise_pro_${totalSec}s.wav';
+    final file = File('${dir.path}/$fileName');
+    final wavBytes = buildPinkNoiseWavBytes(totalSec: totalSec);
+    await file.writeAsBytes(wavBytes);
+    return file;
+  }
+
+  /// 순수 함수: 파일시스템/플랫폼 채널에 닿지 않고 핑크노이즈 WAV 바이트를 만든다.
+  /// [_generatePinkNoise]에서 그대로 추출한 것 — 바이트 단위로 동일하며 동작 변경
+  /// 없음. totalSec으로부터 만들어지는 파일 길이(=바이트 수)를 플러그인 없이
+  /// 단위 테스트할 수 있도록 분리했다.
+  @visibleForTesting
+  static Uint8List buildPinkNoiseWavBytes({int totalSec = durationSec}) {
+    final totalSamples = sampleRate * totalSec;
     final pcm = Int16List(totalSamples);
 
     // Paul Kellet 핑크노이즈
@@ -377,7 +436,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     }
 
     // WAV 헤더 생성
-    const dataSize = totalSamples * 2;
+    final dataSize = totalSamples * 2;
     final header = ByteData(44);
     void setStr(int offset, String s) {
       for (int i = 0; i < s.length; i++) { header.setUint8(offset + i, s.codeUnitAt(i)); }
@@ -396,8 +455,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     final wavBytes = BytesBuilder();
     wavBytes.add(header.buffer.asUint8List());
     wavBytes.add(pcm.buffer.asUint8List());
-    await file.writeAsBytes(wavBytes.toBytes());
-    return file;
+    return wavBytes.toBytes();
   }
 
   /// 측정 1회 완료 시 AKG-ready 이력에 기록(fire-and-forget) — 지금 당장 아무도
