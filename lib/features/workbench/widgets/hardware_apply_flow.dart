@@ -107,6 +107,30 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
     }
   }
 
+  /// Human-readable reason the readiness step is blocked, read directly from
+  /// the transport's own connection flags — no new gate, no new state. The
+  /// pass/fail decision stays exactly [_context.isReady]; this only explains
+  /// *why* to the user instead of a flat "Hardware disconnected" regardless
+  /// of the actual cause (never connected vs. handshake in flight vs. wrong
+  /// device identity).
+  String _readinessDetail() {
+    final t = _context.transport;
+    if (!t.isConnected) {
+      return 'Hardware disconnected — connect via the Hardware tab';
+    }
+    if (!t.handshakeComplete) {
+      return 'Handshake in progress — waiting for ADAU1701 identity';
+    }
+    if (t.detectedProfile == null) {
+      // Should not be reachable — handshakeComplete only becomes true once
+      // the identity handshake has confirmed the expected profile. Kept as
+      // an explicit, honest fallback rather than silently reporting ready.
+      return 'Device identity not confirmed';
+    }
+    return 'Hardware connected · ${_context.transportType.label} · '
+        '${t.detectedProfile}';
+  }
+
   /// V3-6A: the shared five-step ladder, computed entirely from state this
   /// flow already tracks (_context, _plan, _approval, _applying, _progress,
   /// _result) — no new state, no new persistence. This flow has no restore
@@ -121,7 +145,7 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
       DeployStepInfo(
         kind: DeployStepKind.projectCheck,
         status: ready ? DeployStepStatus.complete : DeployStepStatus.blocked,
-        detail: ready ? 'Hardware connected' : 'Hardware disconnected',
+        detail: _readinessDetail(),
       ),
       DeployStepInfo(
         kind: DeployStepKind.writePlan,
@@ -293,8 +317,7 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
   }) {
     final enabled = onPressed != null;
     return OutlinedButton.icon(
-      icon: Icon(icon,
-          size: 14, color: enabled ? accent : Colors.white24),
+      icon: Icon(icon, size: 14, color: enabled ? accent : Colors.white24),
       label: Text(label,
           style: proLabel(
               size: 10,
@@ -368,15 +391,21 @@ class _ResultsView extends StatelessWidget {
         DeployResultSummary(result: result),
         const SizedBox(height: 10),
         Wrap(spacing: 10, runSpacing: 8, children: [
-          _CountChip(label: 'WRITTEN', value: '${result.writtenCount}',
+          _CountChip(
+              label: 'WRITTEN',
+              value: '${result.writtenCount}',
               color: result.writtenCount > 0 ? kProGreen : null),
-          _CountChip(label: 'BLOCKED', value: '${result.blockedCount}',
+          _CountChip(
+              label: 'BLOCKED',
+              value: '${result.blockedCount}',
               color: result.blockedCount > 0 ? kProAmber : null),
           _CountChip(
               label: 'FAILED',
               value: '$failedOnlyCount',
               color: failedOnlyCount > 0 ? kProRed : null),
-          _CountChip(label: 'UNSUPPORTED', value: '${result.unsupportedCount}',
+          _CountChip(
+              label: 'UNSUPPORTED',
+              value: '${result.unsupportedCount}',
               color: result.unsupportedCount > 0 ? Colors.white38 : null),
         ]),
         const SizedBox(height: 10),
@@ -407,7 +436,8 @@ class _ResultsView extends StatelessWidget {
                   if (o.isFailure && o.message.isNotEmpty) ...[
                     const SizedBox(height: 2),
                     Text(o.message,
-                        style: proSubtitle(size: 9, color: _statusColor(o.status))),
+                        style: proSubtitle(
+                            size: 9, color: _statusColor(o.status))),
                   ],
                 ],
               ),
@@ -434,7 +464,8 @@ class _CountChip extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(label, style: proLabel(size: 8, spacing: 0.8)),
           const SizedBox(height: 2),
-          Text(value, style: proValue(size: 13, color: color ?? Colors.white54)),
+          Text(value,
+              style: proValue(size: 13, color: color ?? Colors.white54)),
         ]),
       );
 }

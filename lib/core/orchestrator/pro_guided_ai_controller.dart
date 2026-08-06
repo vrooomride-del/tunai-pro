@@ -63,6 +63,29 @@ import 'tools/pro_tool_artifact_store.dart';
 import 'tools/pro_tool_registry.dart';
 import 'pro_closed_loop_measurement_bridge.dart';
 
+/// One required full-system channel that is still missing parsed FRD.
+/// Display-only — carries a channel id and a human label, never a DSP value.
+class FrdReadinessChannel {
+  final String id;
+  final String label;
+  const FrdReadinessChannel({required this.id, required this.label});
+}
+
+/// Result of [ProGuidedAiController.frdReadiness] — whether every required
+/// full-system channel has parsed FRD, and which ones don't yet.
+class FrdReadiness {
+  final List<String> requiredChannelIds;
+  final List<FrdReadinessChannel> missingChannels;
+
+  const FrdReadiness({
+    required this.requiredChannelIds,
+    required this.missingChannels,
+  });
+
+  bool get isFullyReady => missingChannels.isEmpty;
+  int get readyCount => requiredChannelIds.length - missingChannels.length;
+}
+
 final guidedAiProvider =
     StateNotifierProvider.autoDispose<ProGuidedAiController, ProGuidedAiState>(
   (ref) => ProGuidedAiController(),
@@ -75,6 +98,32 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     'ch_tw_r',
     'ch_wf_r',
   ];
+
+  /// Whether [project] has parsed FRD for all four channels the full-system
+  /// Guided AI apply requires, and which ones are still missing.
+  ///
+  /// This is the single source of truth for that check — entry-point UI
+  /// (Auto PEQ tab) and the Guided AI screen itself must both call this
+  /// rather than re-deriving the same "does this channel have parsed FRD"
+  /// filter, so the readiness a user sees before starting can never drift
+  /// from the readiness [start] actually enforces.
+  static FrdReadiness frdReadiness(ProProject project) {
+    final byId = {
+      for (final ch in project.acousticState.driverChannels) ch.id: ch,
+    };
+    final missing = <FrdReadinessChannel>[];
+    for (final id in requiredFullSystemChannelIds) {
+      final channel = byId[id];
+      if (channel?.hasParsedFrd != true) {
+        missing
+            .add(FrdReadinessChannel(id: id, label: channel?.shortLabel ?? id));
+      }
+    }
+    return FrdReadiness(
+      requiredChannelIds: requiredFullSystemChannelIds,
+      missingChannels: List.unmodifiable(missing),
+    );
+  }
 
   final ProOrchestrateService _cloudService;
 
@@ -745,8 +794,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       // the exact bug this phase fixes (rollback baseline == just-applied
       // tuning). Report explicitly and produce no cycle at all rather than a
       // misleading one.
-      debugPrint(
-          'GUIDED_AI_MISSING_PRE_APPLY_SNAPSHOT cycle=$cycleNumber '
+      debugPrint('GUIDED_AI_MISSING_PRE_APPLY_SNAPSHOT cycle=$cycleNumber '
           'projectId=${beforeProject.id}');
       return null;
     }
@@ -958,14 +1006,11 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
   }
 
   static List<String> _frdReadyRequiredChannelIds(ProProject project) {
-    final ready = <String>[];
-    for (final id in requiredFullSystemChannelIds) {
-      final channel = project.acousticState.driverChannels
-          .where((ch) => ch.id == id)
-          .firstOrNull;
-      if (channel?.hasParsedFrd == true) ready.add(id);
-    }
-    return List.unmodifiable(ready);
+    final missingIds =
+        frdReadiness(project).missingChannels.map((c) => c.id).toSet();
+    return List.unmodifiable(
+      requiredFullSystemChannelIds.where((id) => !missingIds.contains(id)),
+    );
   }
 
   static Set<String> _completedSafetyChannelIds(
@@ -1377,19 +1422,19 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
     double? robustPrimaryAfterRmsDb;
     String? robustTargetName;
     String? robustTargetPolicy;
-    final hybridXoSummary = HybridXoFeasibilityEvaluator.evaluate(
-            project: project)
-        .displaySummary;
+    final hybridXoSummary =
+        HybridXoFeasibilityEvaluator.evaluate(project: project).displaySummary;
     final protectionSummary = SpeakerCapabilityEvidence.fromProject(project)
         .values
         .map((e) => '${e.channelId}: ${e.status.name}'
             '${e.protectionMarginDb == null ? '' : ' margin=${e.protectionMarginDb!.toStringAsFixed(1)} dB'}')
         .join('\n');
-    final unknownCapabilityChannels = SpeakerCapabilityEvidence.fromProject(project)
-        .values
-        .where((e) => e.status == SpeakerCapabilityStatus.unknown)
-        .map((e) => e.channelId)
-        .toList(growable: false);
+    final unknownCapabilityChannels =
+        SpeakerCapabilityEvidence.fromProject(project)
+            .values
+            .where((e) => e.status == SpeakerCapabilityStatus.unknown)
+            .map((e) => e.channelId)
+            .toList(growable: false);
     final positions = project.acousticState.listeningPositions;
     if (positions.isNotEmpty) {
       final safetyByChannel = <String, CandidateSafetyResult>{};
@@ -1455,7 +1500,8 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       beforeAfterSummary = '$beforeAfterSummary (Target: $robustTargetName)';
     }
     if (beforeAfterSummary != null && protectionSummary.isNotEmpty) {
-      beforeAfterSummary = '$beforeAfterSummary\nProtection: $protectionSummary';
+      beforeAfterSummary =
+          '$beforeAfterSummary\nProtection: $protectionSummary';
     }
 
     return ProGuidedAiConfirmPending(

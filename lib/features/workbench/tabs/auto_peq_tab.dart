@@ -24,6 +24,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/orchestrator/pro_guided_ai_controller.dart'
+    show ProGuidedAiController, FrdReadiness;
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/workbench_tab_provider.dart';
@@ -41,15 +43,20 @@ class AutoPeqTab extends ConsumerWidget {
         .where((p) => p.id == projectId)
         .firstOrNull;
 
-    final frdCount = project?.acousticState.parsedFrdCount ?? 0;
-    final ready = frdCount > 0;
+    // Gate on the exact same 4-channel readiness ProGuidedAiController.start()
+    // enforces for a full-system apply — not "any single FRD parsed". Showing
+    // a looser readiness here would send the user into Guided AI only to be
+    // blocked there for a reason they were never told about.
+    final readiness =
+        project == null ? null : ProGuidedAiController.frdReadiness(project);
+    final ready = readiness?.isFullyReady ?? false;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _HeaderCard(project: project),
         const SizedBox(height: 12),
-        _ReadinessCard(frdCount: frdCount),
+        _ReadinessCard(readiness: readiness),
         const SizedBox(height: 12),
         _ActionCard(ready: ready),
       ]),
@@ -96,13 +103,16 @@ class _HeaderCard extends StatelessWidget {
 // ── Readiness ─────────────────────────────────────────────────────────────────
 
 class _ReadinessCard extends StatelessWidget {
-  final int frdCount;
-  const _ReadinessCard({required this.frdCount});
+  final FrdReadiness? readiness;
+  const _ReadinessCard({required this.readiness});
 
   @override
   Widget build(BuildContext context) {
-    final ready = frdCount > 0;
+    final r = readiness;
+    final ready = r?.isFullyReady ?? false;
     final color = ready ? Colors.green : Colors.amber;
+    final total = r?.requiredChannelIds.length ?? 4;
+    final readyCount = r?.readyCount ?? 0;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -111,21 +121,46 @@ class _ReadinessCard extends StatelessWidget {
         border: Border.all(color: kProBorder),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(children: [
-        Icon(
-          ready ? Icons.check_circle_outline : Icons.warning_amber_outlined,
-          size: 16,
-          color: color,
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            ready
-                ? '측정 데이터 $frdCount개 — 실행 준비됨.'
-                : 'FRD 파일이 없습니다. Import 탭에서 측정 파일을 먼저 불러오세요.',
-            style: TextStyle(fontSize: 11, color: color, height: 1.4),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(
+            ready ? Icons.check_circle_outline : Icons.warning_amber_outlined,
+            size: 16,
+            color: color,
           ),
-        ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              r == null
+                  ? '프로젝트를 먼저 선택하세요.'
+                  : ready
+                      ? '4채널 FRD 준비 완료 ($readyCount/$total) — 실행 가능.'
+                      : '4채널 중 $readyCount/$total 준비됨 — 부족한 채널이 있습니다.',
+              style: TextStyle(fontSize: 11, color: color, height: 1.4),
+            ),
+          ),
+        ]),
+        if (r != null && r.missingChannels.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          for (final ch in r.missingChannels)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(children: [
+                const Icon(Icons.radio_button_unchecked,
+                    size: 12, color: Colors.white24),
+                const SizedBox(width: 8),
+                Text(
+                  '${ch.label} — FRD 없음',
+                  style: const TextStyle(fontSize: 11, color: Colors.white38),
+                ),
+              ]),
+            ),
+          const SizedBox(height: 4),
+          Text(
+            'Import 탭에서 부족한 채널의 측정 파일을 불러오세요.',
+            style: proSubtitle(size: 10),
+          ),
+        ],
       ]),
     );
   }

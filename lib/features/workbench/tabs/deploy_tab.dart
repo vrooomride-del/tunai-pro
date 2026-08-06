@@ -188,12 +188,22 @@ class _DeployTabState extends ConsumerState<DeployTab> {
 
   @override
   Widget build(BuildContext context) {
-    final project = ref.watch(proProjectStoreProvider)
+    final project = ref
+        .watch(proProjectStoreProvider)
         .projects
         .where((p) => p.id == widget.projectId)
         .firstOrNull;
-    final deployState = project?.deployState ?? DeployProjectState.createDefault();
+    final deployState =
+        project?.deployState ?? DeployProjectState.createDefault();
     final activePkg = deployState.activePackage;
+
+    // Watched (not just read inside HardwareApplyFlow's contextFactory
+    // closure) so this build re-runs whenever the live BLE/USB context
+    // changes — see the HardwareApplyFlow construction below for why that
+    // matters: without this watch, DeployTab never rebuilds on a BLE
+    // connect/disconnect, so HardwareApplyFlow (a plain StatefulWidget)
+    // would never even get the chance to notice.
+    final activeContext = ref.watch(activeAdau1701ContextProvider);
 
     ref.listen<DeployScrollTarget?>(deployScrollTargetProvider, (_, target) {
       if (target == DeployScrollTarget.factoryProfile) {
@@ -278,6 +288,19 @@ class _DeployTabState extends ConsumerState<DeployTab> {
               title: 'HARDWARE APPLY', icon: Icons.memory_outlined),
           const SizedBox(height: 8),
           HardwareApplyFlow(
+            // HardwareApplyFlow is a plain StatefulWidget: it resolves
+            // contextFactory() exactly once, in initState, and caches the
+            // result for its whole lifetime. Because the IndexedStack in
+            // WorkbenchShell keeps every tab mounted, that snapshot would
+            // otherwise never refresh — a user who opens Deploy before
+            // connecting BLE (or who reconnects with a new BLE session)
+            // would see a permanently-stale "Hardware disconnected" even
+            // after a real handshake succeeds elsewhere in the app. Keying
+            // on the identity of the live transport (falling back to a
+            // constant for "no active context yet, using the USB provider")
+            // forces a remount — and therefore a fresh initState — exactly
+            // when the active transport actually changes, and only then.
+            key: ValueKey(activeContext?.transport ?? 'usb-fallback'),
             exportPackage: project.exportState.activePackage!,
             profile: _hardwareProfileFor(
                 project.exportState.activePackage!.targetPlatform),
@@ -287,8 +310,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
             // BLE-connected device always failed preflight here even though
             // the same transport worked for Gain deploy.
             contextFactory: () =>
-                ref.read(activeAdau1701ContextProvider) ??
-                ref.read(adau1701Icp5UsbContextProvider),
+                activeContext ?? ref.read(adau1701Icp5UsbContextProvider),
             onResult: (result) {
               if (!mounted) return;
               setState(() => _lastHardwareResult = result);
@@ -302,8 +324,8 @@ class _DeployTabState extends ConsumerState<DeployTab> {
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: const Color(0xFF0D1A0D),
-                  border: Border.all(
-                      color: const Color(0xFF4CAF50).withAlpha(80)),
+                  border:
+                      Border.all(color: const Color(0xFF4CAF50).withAlpha(80)),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Column(
@@ -401,7 +423,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
         // ── D: Package history ───────────────────────────────────────────────
         if (deployState.packages.isNotEmpty) ...[
           const ProSectionHeader(
-            title: 'PACKAGE HISTORY', icon: Icons.history_outlined),
+              title: 'PACKAGE HISTORY', icon: Icons.history_outlined),
           const SizedBox(height: 8),
           _PackageHistoryPanel(
             packages: deployState.packages.reversed.toList(),
@@ -439,9 +461,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Row(children: [
-                Icon(_showJson
-                    ? Icons.expand_less
-                    : Icons.expand_more,
+                Icon(_showJson ? Icons.expand_less : Icons.expand_more,
                     color: Colors.white38, size: 14),
                 const SizedBox(width: 8),
                 Text(
@@ -461,8 +481,7 @@ class _DeployTabState extends ConsumerState<DeployTab> {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: SelectableText(
-                const JsonEncoder.withIndent('  ')
-                    .convert(activePkg.toJson()),
+                const JsonEncoder.withIndent('  ').convert(activePkg.toJson()),
                 style: const TextStyle(
                     fontSize: 9,
                     fontFamily: 'monospace',
@@ -504,18 +523,16 @@ class _DeployTabState extends ConsumerState<DeployTab> {
           child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-            _SafetyRow(
-                'No hardware write has been performed.',
-                Icons.block_outlined),
-            SizedBox(height: 4),
-            _SafetyRow(
-                'EEPROM/Selfboot write is disabled.',
-                Icons.memory_outlined),
-            SizedBox(height: 4),
-            _SafetyRow(
-                'Hardware deployment requires a future controlled write phase.',
-                Icons.warning_amber_outlined),
-          ]),
+                _SafetyRow('No hardware write has been performed.',
+                    Icons.block_outlined),
+                SizedBox(height: 4),
+                _SafetyRow('EEPROM/Selfboot write is disabled.',
+                    Icons.memory_outlined),
+                SizedBox(height: 4),
+                _SafetyRow(
+                    'Hardware deployment requires a future controlled write phase.',
+                    Icons.warning_amber_outlined),
+              ]),
         ),
       ]),
     );
@@ -561,20 +578,19 @@ class _ReadinessPanel extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         ProInfoRow(
-            label: 'Project', value: '${project!.name} · ${project!.dspTarget}'),
+            label: 'Project',
+            value: '${project!.name} · ${project!.dspTarget}'),
         ProInfoRow(label: 'Status', value: project!.profileStatus.label),
         ProInfoRow(label: 'Measurement', value: acoustic.readinessLabel),
         ProInfoRow(
             label: 'PEQ bands',
-            value:
-                '${tuning.totalPeqBands} (${tuning.activePeqBands} active)'),
+            value: '${tuning.totalPeqBands} (${tuning.activePeqBands} active)'),
         ProInfoRow(label: 'Simulation', value: simulation.readinessLabel),
         ProInfoRow(label: 'Protection', value: protection.readinessLabel),
         ProInfoRow(label: 'Export', value: export.readinessLabel),
         ProInfoRow(label: 'Connection', value: connState.transportType.label),
         ProInfoRow(label: 'Hardware', value: hardware.readinessLabel),
-        ProInfoRow(
-            label: 'Deploy packages', value: '${deploy.packageCount}'),
+        ProInfoRow(label: 'Deploy packages', value: '${deploy.packageCount}'),
         ProInfoRow(label: 'Presets', value: '${deploy.presetCount}'),
         ProInfoRow(label: 'Readiness', value: deploy.readinessLabel),
         ProInfoRow(
@@ -631,7 +647,8 @@ class _GeneratePanel extends StatelessWidget {
         ]),
         const SizedBox(height: 10),
         // Name field
-        Text('Name (optional)', style: proLabel(size: 9, color: Colors.white38)),
+        Text('Name (optional)',
+            style: proLabel(size: 9, color: Colors.white38)),
         const SizedBox(height: 4),
         TextField(
           controller: nameController,
@@ -658,7 +675,8 @@ class _GeneratePanel extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Text('Notes (optional)', style: proLabel(size: 9, color: Colors.white38)),
+        Text('Notes (optional)',
+            style: proLabel(size: 9, color: Colors.white38)),
         const SizedBox(height: 4),
         TextField(
           controller: notesController,
@@ -681,8 +699,7 @@ class _GeneratePanel extends StatelessWidget {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(3),
-              borderSide:
-                  BorderSide(color: kProAccent.withValues(alpha: 0.5)),
+              borderSide: BorderSide(color: kProAccent.withValues(alpha: 0.5)),
             ),
           ),
         ),
@@ -692,9 +709,8 @@ class _GeneratePanel extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
             decoration: BoxDecoration(
-              color: generating
-                  ? kProSurface
-                  : kProAccent.withValues(alpha: 0.08),
+              color:
+                  generating ? kProSurface : kProAccent.withValues(alpha: 0.08),
               border: Border.all(
                   color: generating
                       ? kProBorder
@@ -780,18 +796,14 @@ class _ActivePackagePanel extends StatelessWidget {
             label: 'Created',
             value: pkg.createdAt.toLocal().toString().substring(0, 16)),
         if (pkg.exportPackageId != null)
-          ProInfoRow(
-              label: 'Export Package ID', value: pkg.exportPackageId!),
+          ProInfoRow(label: 'Export Package ID', value: pkg.exportPackageId!),
         if (pkg.hardwarePlanId != null)
-          ProInfoRow(
-              label: 'Hardware Plan ID', value: pkg.hardwarePlanId!),
-        ProInfoRow(
-            label: 'Warnings', value: '${pkg.snapshot.warnings.length}'),
+          ProInfoRow(label: 'Hardware Plan ID', value: pkg.hardwarePlanId!),
+        ProInfoRow(label: 'Warnings', value: '${pkg.snapshot.warnings.length}'),
         if (pkg.snapshot.blockedReason != null) ...[
           const SizedBox(height: 6),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Icon(Icons.block_outlined,
-                size: 12, color: kProAmber),
+            const Icon(Icons.block_outlined, size: 12, color: kProAmber),
             const SizedBox(width: 6),
             Expanded(
               child: Text(pkg.snapshot.blockedReason!,
@@ -862,21 +874,21 @@ class _PackageHistoryPanel extends StatelessWidget {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text(pkg.name,
-                      style: proTitle(
-                          size: 10,
-                          color: isActive ? Colors.white : Colors.white60),
-                      overflow: TextOverflow.ellipsis),
-                  Text(pkg.version,
-                      style: proLabel(size: 8, color: Colors.white24)),
-                ]),
+                      Text(pkg.name,
+                          style: proTitle(
+                              size: 10,
+                              color: isActive ? Colors.white : Colors.white60),
+                          overflow: TextOverflow.ellipsis),
+                      Text(pkg.version,
+                          style: proLabel(size: 8, color: Colors.white24)),
+                    ]),
               ),
               if (!isActive && pkg.status != DeployPackageStatus.archived)
                 GestureDetector(
                   onTap: () => onSetActive(pkg.id),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       border: Border.all(color: kProBorder),
                       borderRadius: BorderRadius.circular(3),
@@ -890,8 +902,8 @@ class _PackageHistoryPanel extends StatelessWidget {
                 GestureDetector(
                   onTap: () => onArchive(pkg.id),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       border: Border.all(color: kProBorder),
                       borderRadius: BorderRadius.circular(3),
@@ -939,9 +951,8 @@ class _PresetPanel extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: canCreate
-                  ? kProAccent.withValues(alpha: 0.08)
-                  : kProSurface,
+              color:
+                  canCreate ? kProAccent.withValues(alpha: 0.08) : kProSurface,
               border: Border.all(
                   color: canCreate
                       ? kProAccent.withValues(alpha: 0.4)
@@ -950,8 +961,7 @@ class _PresetPanel extends StatelessWidget {
             ),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.bookmark_add_outlined,
-                  size: 13,
-                  color: canCreate ? kProAccent : Colors.white24),
+                  size: 13, color: canCreate ? kProAccent : Colors.white24),
               const SizedBox(width: 7),
               Text(
                 canCreate
@@ -968,63 +978,63 @@ class _PresetPanel extends StatelessWidget {
         if (deployState.presets.isNotEmpty) ...[
           const SizedBox(height: 10),
           ...deployState.presets.map((preset) => Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Row(children: [
-              Icon(Icons.bookmark_outlined,
-                  size: 12,
-                  color: preset.locked
-                      ? kProAmber
-                      : Colors.white38),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(preset.name,
-                      style: proTitle(size: 10),
-                      overflow: TextOverflow.ellipsis),
-                  Row(children: [
-                    Text(preset.version,
-                        style: proLabel(size: 8, color: Colors.white24)),
-                    const SizedBox(width: 6),
-                    Text(preset.slotType.label,
-                        style: proLabel(size: 8, color: Colors.white24)),
-                    if (preset.targetPlatform != null) ...[
-                      const SizedBox(width: 6),
-                      Text(preset.targetPlatform!.label,
-                          style: proLabel(size: 8, color: Colors.white24)),
-                    ],
-                    if (preset.locked) ...[
-                      const SizedBox(width: 6),
-                      const Text('LOCKED',
-                          style: TextStyle(
-                              fontSize: 8,
-                              color: kProAmber,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0.5)),
-                    ],
-                  ]),
-                ]),
-              ),
-              GestureDetector(
-                onTap: () => onToggleLock(preset.id),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: kProBorder),
-                    borderRadius: BorderRadius.circular(3),
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(children: [
+                  Icon(Icons.bookmark_outlined,
+                      size: 12,
+                      color: preset.locked ? kProAmber : Colors.white38),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(preset.name,
+                              style: proTitle(size: 10),
+                              overflow: TextOverflow.ellipsis),
+                          Row(children: [
+                            Text(preset.version,
+                                style:
+                                    proLabel(size: 8, color: Colors.white24)),
+                            const SizedBox(width: 6),
+                            Text(preset.slotType.label,
+                                style:
+                                    proLabel(size: 8, color: Colors.white24)),
+                            if (preset.targetPlatform != null) ...[
+                              const SizedBox(width: 6),
+                              Text(preset.targetPlatform!.label,
+                                  style:
+                                      proLabel(size: 8, color: Colors.white24)),
+                            ],
+                            if (preset.locked) ...[
+                              const SizedBox(width: 6),
+                              const Text('LOCKED',
+                                  style: TextStyle(
+                                      fontSize: 8,
+                                      color: kProAmber,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.5)),
+                            ],
+                          ]),
+                        ]),
                   ),
-                  child: Text(preset.locked ? 'Unlock' : 'Lock',
-                      style: proLabel(size: 8, color: Colors.white38)),
-                ),
-              ),
-            ]),
-          )),
+                  GestureDetector(
+                    onTap: () => onToggleLock(preset.id),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: kProBorder),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text(preset.locked ? 'Unlock' : 'Lock',
+                          style: proLabel(size: 8, color: Colors.white38)),
+                    ),
+                  ),
+                ]),
+              )),
         ] else ...[
           const SizedBox(height: 8),
-          Text('No presets saved yet.',
-              style: proSubtitle(size: 10)),
+          Text('No presets saved yet.', style: proSubtitle(size: 10)),
         ],
       ]),
     );
@@ -1040,12 +1050,30 @@ class _StatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (color, bg) = switch (status) {
-      DeployPackageStatus.ready    => (kProGreen, kProGreen.withValues(alpha: 0.12)),
-      DeployPackageStatus.blocked  => (const Color(0xFFEF4444), const Color(0xFFEF4444).withValues(alpha: 0.12)),
-      DeployPackageStatus.archived => (Colors.white24, Colors.white.withValues(alpha: 0.04)),
-      DeployPackageStatus.exported => (kProAccent, kProAccent.withValues(alpha: 0.12)),
-      DeployPackageStatus.draft    => (Colors.white38, Colors.white.withValues(alpha: 0.06)),
-      DeployPackageStatus.stale    => (Colors.amber, Colors.amber.withValues(alpha: 0.12)),
+      DeployPackageStatus.ready => (
+          kProGreen,
+          kProGreen.withValues(alpha: 0.12)
+        ),
+      DeployPackageStatus.blocked => (
+          const Color(0xFFEF4444),
+          const Color(0xFFEF4444).withValues(alpha: 0.12)
+        ),
+      DeployPackageStatus.archived => (
+          Colors.white24,
+          Colors.white.withValues(alpha: 0.04)
+        ),
+      DeployPackageStatus.exported => (
+          kProAccent,
+          kProAccent.withValues(alpha: 0.12)
+        ),
+      DeployPackageStatus.draft => (
+          Colors.white38,
+          Colors.white.withValues(alpha: 0.06)
+        ),
+      DeployPackageStatus.stale => (
+          Colors.amber,
+          Colors.amber.withValues(alpha: 0.12)
+        ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1070,11 +1098,11 @@ class _ReadinessPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = switch (level) {
-      DeployReadinessLevel.readyForDryRun  => kProGreen,
-      DeployReadinessLevel.readyForReview  => kProAccent,
-      DeployReadinessLevel.warnings        => kProAmber,
-      DeployReadinessLevel.blocked         => const Color(0xFFEF4444),
-      DeployReadinessLevel.incomplete      => Colors.white38,
+      DeployReadinessLevel.readyForDryRun => kProGreen,
+      DeployReadinessLevel.readyForReview => kProAccent,
+      DeployReadinessLevel.warnings => kProAmber,
+      DeployReadinessLevel.blocked => const Color(0xFFEF4444),
+      DeployReadinessLevel.incomplete => Colors.white38,
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1084,9 +1112,7 @@ class _ReadinessPill extends StatelessWidget {
           borderRadius: BorderRadius.circular(3)),
       child: Text(level.label,
           style: TextStyle(
-              fontSize: 8,
-              color: color,
-              fontWeight: FontWeight.w500)),
+              fontSize: 8, color: color, fontWeight: FontWeight.w500)),
     );
   }
 }
@@ -1095,30 +1121,28 @@ class _KindChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _KindChip({required this.label, required this.selected, required this.onTap});
+  const _KindChip(
+      {required this.label, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: selected
-            ? kProAccent.withValues(alpha: 0.1)
-            : kProSurface,
-        border: Border.all(
-            color: selected
-                ? kProAccent.withValues(alpha: 0.5)
-                : kProBorder),
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: Text(label,
-          style: TextStyle(
-              fontSize: 10,
-              color: selected ? kProAccent : Colors.white38,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
-    ),
-  );
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: selected ? kProAccent.withValues(alpha: 0.1) : kProSurface,
+            border: Border.all(
+                color:
+                    selected ? kProAccent.withValues(alpha: 0.5) : kProBorder),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 10,
+                  color: selected ? kProAccent : Colors.white38,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
+        ),
+      );
 }
 
 class _SafetyRow extends StatelessWidget {
@@ -1128,12 +1152,13 @@ class _SafetyRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-    Icon(icon, color: kProAmber, size: 12),
-    const SizedBox(width: 8),
-    Expanded(
-      child: Text(text, style: const TextStyle(fontSize: 10, color: kProAmber)),
-    ),
-  ]);
+        Icon(icon, color: kProAmber, size: 12),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text,
+              style: const TextStyle(fontSize: 10, color: kProAmber)),
+        ),
+      ]);
 }
 
 // ── _FactoryProfileSection ────────────────────────────────────────────────────
@@ -1273,8 +1298,7 @@ class _EligibilityCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('• ',
-                      style:
-                          TextStyle(color: Colors.redAccent, fontSize: 10)),
+                      style: TextStyle(color: Colors.redAccent, fontSize: 10)),
                   Expanded(
                     child: Text(r,
                         style: const TextStyle(
@@ -1333,13 +1357,11 @@ class _ProfileSummaryCard extends StatelessWidget {
               ),
             ),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: kProAccent.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(3),
-                border:
-                    Border.all(color: kProAccent.withValues(alpha: 0.4)),
+                border: Border.all(color: kProAccent.withValues(alpha: 0.4)),
               ),
               child: Text('v${profile.version}',
                   style: const TextStyle(
@@ -1352,10 +1374,11 @@ class _ProfileSummaryCard extends StatelessWidget {
           _profileRow('Hardware', profile.hardwareTarget),
           _profileRow('Channels', profile.channelConfig),
           _profileRow('Validation', profile.validationStatus),
-          _profileRow('Cycles', '${profile.completedCycleNumbers.length} completed'),
+          _profileRow(
+              'Cycles', '${profile.completedCycleNumbers.length} completed'),
           _profileRow('Fingerprint', profile.projectFingerprint),
-          _profileRow('Created',
-              profile.createdAt.toIso8601String().substring(0, 19)),
+          _profileRow(
+              'Created', profile.createdAt.toIso8601String().substring(0, 19)),
           const SizedBox(height: 8),
           GestureDetector(
             onTap: onToggleExport,
@@ -1373,8 +1396,7 @@ class _ProfileSummaryCard extends StatelessWidget {
             const SizedBox(height: 6),
             if (exportError != null)
               Text(exportError,
-                  style: const TextStyle(
-                      color: Colors.redAccent, fontSize: 10))
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 10))
             else
               SelectableText(
                 exportJson!,
@@ -1398,19 +1420,19 @@ class _ProfileSummaryCard extends StatelessWidget {
             Text(label,
                 style: const TextStyle(color: Colors.white38, fontSize: 10)),
             Text(value,
-                style: const TextStyle(
-                    color: Colors.white54, fontSize: 10)),
+                style: const TextStyle(color: Colors.white54, fontSize: 10)),
           ],
         ),
       );
 }
 
 Widget _emptyBox(String msg) => Container(
-  padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-  decoration: BoxDecoration(
-    color: kProSurface,
-    border: Border.all(color: kProBorder),
-    borderRadius: BorderRadius.circular(4),
-  ),
-  child: Text(msg, style: const TextStyle(fontSize: 10, color: Colors.white38)),
-);
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(msg,
+          style: const TextStyle(fontSize: 10, color: Colors.white38)),
+    );

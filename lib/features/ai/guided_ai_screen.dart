@@ -253,13 +253,11 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
     final bool channelIdInvalid =
         targetChannelId != null && targetChannel == null;
     // 4-channel default mode: no single-channel selection required.
-    // Required channels for full-system analysis.
-    const requiredChannelIds = [
-      'ch_tw_l',
-      'ch_wf_l',
-      'ch_tw_r',
-      'ch_wf_r',
-    ];
+    // Required channels for full-system analysis — single source of truth
+    // is ProGuidedAiController.requiredFullSystemChannelIds; this list must
+    // never be retyped, or it can silently drift from what start() enforces.
+    const requiredChannelIds =
+        ProGuidedAiController.requiredFullSystemChannelIds;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
@@ -631,7 +629,9 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                         _afterFrdInput = null;
                         _afterFrdError = null;
                       });
-                      ref.read(guidedAiProvider.notifier).continueWithNextCycle();
+                      ref
+                          .read(guidedAiProvider.notifier)
+                          .continueWithNextCycle();
                     },
                     onComplete: () {
                       ref.read(deployScrollTargetProvider.notifier).state =
@@ -716,17 +716,23 @@ String _guidedAiOrientationText(ProGuidedAiState state) {
   return 'Stage: Failed — review the error below, then tap 처음으로 to retry.';
 }
 
-const _kGuidedAiWorkflowLabels = ['Analyze', 'Review', 'Apply', 'Re-measure', 'Evaluate'];
+const _kGuidedAiWorkflowLabels = [
+  'Analyze',
+  'Review',
+  'Apply',
+  'Re-measure',
+  'Evaluate'
+];
 
 List<bool> _guidedAiWorkflowCompletion(ProGuidedAiState state) => [
-  state is ProGuidedAiConfirmPending || state is ProGuidedAiCompleted,
-  state is ProGuidedAiCompleted,
-  state is ProGuidedAiCompleted && state.applyResult != null,
-  state is ProGuidedAiCompleted &&
-      state.loopPhase != null &&
-      state.loopPhase != ProClosedLoopPhase.awaitingMeasurement &&
-      state.loopPhase != ProClosedLoopPhase.awaitingAfterFrd,
-];
+      state is ProGuidedAiConfirmPending || state is ProGuidedAiCompleted,
+      state is ProGuidedAiCompleted,
+      state is ProGuidedAiCompleted && state.applyResult != null,
+      state is ProGuidedAiCompleted &&
+          state.loopPhase != null &&
+          state.loopPhase != ProClosedLoopPhase.awaitingMeasurement &&
+          state.loopPhase != ProClosedLoopPhase.awaitingAfterFrd,
+    ];
 
 // Compact, borderless two-line bar combining the orientation line (goal 1/3)
 // and the workflow breadcrumb (goal 2), kept deliberately minimal — this is
@@ -747,31 +753,37 @@ class _GuidedAiOrientationBar extends StatelessWidget {
         ? -1
         : [...completion, false].indexWhere((c) => !c);
 
-    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Icon(Icons.explore_outlined, color: Colors.white54, size: 9),
-        const SizedBox(width: 4),
-        Expanded(
-          child: Text(
-            _guidedAiOrientationText(state),
-            style: const TextStyle(color: Colors.white54, fontSize: 9, height: 1.0),
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
-          ),
-        ),
-      ]),
-      Row(children: [
-        for (var i = 0; i < _kGuidedAiWorkflowLabels.length; i++) ...[
-          _GuidedAiStepChip(
-            label: _kGuidedAiWorkflowLabels[i],
-            complete: i < completion.length ? completion[i] : false,
-            current: i == currentIndex,
-          ),
-          if (i < _kGuidedAiWorkflowLabels.length - 1)
-            const Text(' › ', style: TextStyle(color: Colors.white24, fontSize: 8, height: 1.0)),
-        ],
-      ]),
-    ]);
+    return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.explore_outlined, color: Colors.white54, size: 9),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                _guidedAiOrientationText(state),
+                style: const TextStyle(
+                    color: Colors.white54, fontSize: 9, height: 1.0),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ]),
+          Row(children: [
+            for (var i = 0; i < _kGuidedAiWorkflowLabels.length; i++) ...[
+              _GuidedAiStepChip(
+                label: _kGuidedAiWorkflowLabels[i],
+                complete: i < completion.length ? completion[i] : false,
+                current: i == currentIndex,
+              ),
+              if (i < _kGuidedAiWorkflowLabels.length - 1)
+                const Text(' › ',
+                    style: TextStyle(
+                        color: Colors.white24, fontSize: 8, height: 1.0)),
+            ],
+          ]),
+        ]);
   }
 }
 
@@ -810,28 +822,33 @@ class _AosSafetyNote extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: const Color(0xFF141414),
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: Colors.white12),
-    ),
-    child: const Row(children: [
-      Icon(Icons.shield_outlined, color: Colors.white54, size: 15),
-      SizedBox(width: 10),
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('AOS Safety Check',
-              style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
-          SizedBox(height: 2),
-          Text(
-            'Candidates are validated against tuning limits and available evidence.',
-            style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF141414),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: const Row(children: [
+          Icon(Icons.shield_outlined, color: Colors.white54, size: 15),
+          SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('AOS Safety Check',
+                  style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500)),
+              SizedBox(height: 2),
+              Text(
+                'Candidates are validated against tuning limits and available evidence.',
+                style:
+                    TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
+              ),
+            ]),
           ),
         ]),
-      ),
-    ]),
-  );
+      );
 }
 
 // ── Widgets ───────────────────────────────────────────────────────────────────
@@ -1016,7 +1033,8 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
   @override
   Widget build(BuildContext context) {
     final isBlocked = widget.applyBlockedReason != null ||
-        ((widget.insufficientEvidence || widget.unknownCapabilityChannels.isNotEmpty) &&
+        ((widget.insufficientEvidence ||
+                widget.unknownCapabilityChannels.isNotEmpty) &&
             !_expertApprovalGranted);
     return _buildCard(isBlocked);
   }
@@ -1116,7 +1134,8 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
               const SizedBox(height: 10),
               const Text(
                 '생성된 보정 후보가 없습니다 — 측정 결과가 이미 목표 범위 내에 있습니다.',
-                style: TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
+                style:
+                    TextStyle(color: Colors.white38, fontSize: 11, height: 1.4),
               ),
             ],
             if (widget.beforeAfterSummary != null) ...[
@@ -1184,12 +1203,14 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
             if (widget.hybridXoSummary != null) ...[
               const SizedBox(height: 8),
               Text(widget.hybridXoSummary!,
-                  style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.35)),
+                  style: const TextStyle(
+                      color: Colors.white54, fontSize: 11, height: 1.35)),
             ],
             if (widget.protectionSummary != null) ...[
               const SizedBox(height: 8),
               Text('Protection evidence\n${widget.protectionSummary}',
-                  style: const TextStyle(color: Colors.white54, fontSize: 11, height: 1.35)),
+                  style: const TextStyle(
+                      color: Colors.white54, fontSize: 11, height: 1.35)),
             ],
             if (widget.insufficientEvidence ||
                 widget.unknownCapabilityChannels.isNotEmpty) ...[
@@ -1223,32 +1244,34 @@ class _ConfirmationCardState extends State<_ConfirmationCard> {
               InkWell(
                 onTap: widget.confirmInProgress
                     ? null
-                    : () => setState(() =>
-                        _expertApprovalGranted = !_expertApprovalGranted),
+                    : () => setState(
+                        () => _expertApprovalGranted = !_expertApprovalGranted),
                 borderRadius: BorderRadius.circular(4),
                 child: SizedBox(
                   width: double.infinity,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Row(
-                    children: [
-                      Checkbox(
-                        value: _expertApprovalGranted,
-                        onChanged: widget.confirmInProgress
-                            ? null
-                            : (value) => setState(() =>
-                                _expertApprovalGranted = value ?? false),
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          'Expert로서 미확인 근거를 인지하고 적용을 승인합니다',
-                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                      children: [
+                        Checkbox(
+                          value: _expertApprovalGranted,
+                          onChanged: widget.confirmInProgress
+                              ? null
+                              : (value) => setState(() =>
+                                  _expertApprovalGranted = value ?? false),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Expert로서 미확인 근거를 인지하고 적용을 승인합니다',
+                            style:
+                                TextStyle(color: Colors.white54, fontSize: 11),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
