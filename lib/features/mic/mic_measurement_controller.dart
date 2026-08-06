@@ -39,17 +39,20 @@ class MicMeasurementState {
     Map<int, List<Map<String, double>>>? channelResponses,
     List<double?>? recommendedCrossovers,
     String? error,
-  }) => MicMeasurementState(
-    status: status ?? this.status,
-    message: message ?? this.message,
-    frequencyResponse: frequencyResponse ?? this.frequencyResponse,
-    channelResponses: channelResponses ?? this.channelResponses,
-    recommendedCrossovers: recommendedCrossovers ?? this.recommendedCrossovers,
-    error: error ?? this.error,
-  );
+  }) =>
+      MicMeasurementState(
+        status: status ?? this.status,
+        message: message ?? this.message,
+        frequencyResponse: frequencyResponse ?? this.frequencyResponse,
+        channelResponses: channelResponses ?? this.channelResponses,
+        recommendedCrossovers:
+            recommendedCrossovers ?? this.recommendedCrossovers,
+        error: error ?? this.error,
+      );
 }
 
-final micMeasurementProvider = StateNotifierProvider<MicMeasurementController, MicMeasurementState>(
+final micMeasurementProvider =
+    StateNotifierProvider<MicMeasurementController, MicMeasurementState>(
   (ref) => MicMeasurementController(ref),
 );
 
@@ -77,7 +80,9 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
 
   static void openMicSettings() {
     if (Platform.isMacOS) {
-      Process.run('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone']);
+      Process.run('open', [
+        'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+      ]);
     } else if (Platform.isWindows) {
       Process.run('ms-settings:privacy-microphone', [], runInShell: true);
     }
@@ -99,55 +104,61 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       }
 
       // 핑크노이즈 생성 + 저장 (BLE 모드는 warmup 구간 포함)
-      state = state.copyWith(status: MeasurementStatus.playing, message: '핑크노이즈 생성 중...');
+      state = state.copyWith(
+          status: MeasurementStatus.playing, message: '핑크노이즈 생성 중...');
       final warmup = bleWarmup ? _bleWarmupSec : 0;
       final wavFile = await _generatePinkNoise(totalSec: warmup + durationSec);
 
       final dir = await getTemporaryDirectory();
       final recPath = '${dir.path}/tunai_pro_measurement.wav';
 
-      if (bleWarmup) {
-        // BLE A2DP: 재생 먼저 → 코덱 초기화 대기 → 녹음 시작.
-        // 코덱이 깨어나는 동안 녹음하면 무음/팝이 섞이므로 반드시 이 순서.
-        await _player.setFilePath(wavFile.path);
-        await _player.play();
-        state = state.copyWith(message: 'BLE 오디오 초기화 중... ($_bleWarmupSec초)');
-        await Future.delayed(Duration(seconds: warmup));
-        await _recorder.start(
-          const RecordConfig(
-            encoder: AudioEncoder.wav,
-            sampleRate: sampleRate,
-            numChannels: 1,
-          ),
-          path: recPath,
-        );
-      } else {
-        // 일반(USB/유선) 측정 — 기존 순서 그대로 보존: 녹음 먼저 시작 후 재생.
-        await _recorder.start(
-          const RecordConfig(
-            encoder: AudioEncoder.wav,
-            sampleRate: sampleRate,
-            numChannels: 1,
-          ),
-          path: recPath,
-        );
-        await _player.setFilePath(wavFile.path);
-        await _player.play();
+      // try/finally: 예외·취소가 재생 시작과 정지 사이 어디서 나든 recorder와
+      // player가 켜진 채로 남지 않도록 보장한다. (정상 경로에서도 이 finally가
+      // 유일한 정지 지점이므로 아래에 별도 stop() 호출은 없다.)
+      try {
+        if (bleWarmup) {
+          // BLE A2DP: 재생 먼저 → 코덱 초기화 대기 → 녹음 시작.
+          // 코덱이 깨어나는 동안 녹음하면 무음/팝이 섞이므로 반드시 이 순서.
+          await _player.setFilePath(wavFile.path);
+          await _player.play();
+          state = state.copyWith(message: 'BLE 오디오 초기화 중... ($_bleWarmupSec초)');
+          await Future.delayed(Duration(seconds: warmup));
+          await _recorder.start(
+            const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: sampleRate,
+              numChannels: 1,
+            ),
+            path: recPath,
+          );
+        } else {
+          // 일반(USB/유선) 측정 — 기존 순서 그대로 보존: 녹음 먼저 시작 후 재생.
+          await _recorder.start(
+            const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: sampleRate,
+              numChannels: 1,
+            ),
+            path: recPath,
+          );
+          await _player.setFilePath(wavFile.path);
+          await _player.play();
+        }
+
+        state = state.copyWith(message: '측정 중... ($durationSec초)');
+        await Future.delayed(const Duration(seconds: durationSec));
+      } finally {
+        await _safeStopRecorderAndPlayer();
       }
 
-      state = state.copyWith(message: '측정 중... ($durationSec초)');
-      await Future.delayed(const Duration(seconds: durationSec));
-
-      // 정지
-      await _recorder.stop();
-      await _player.stop();
-
       // FFT 분석
-      state = state.copyWith(status: MeasurementStatus.analyzing, message: 'FFT 분석 중...');
+      state = state.copyWith(
+          status: MeasurementStatus.analyzing, message: 'FFT 분석 중...');
       final pcmBytes = await File(recPath).readAsBytes();
       final rawPcm = Uint8List.sublistView(pcmBytes, 44);
       final samples = _pcmToFloat(rawPcm);
-      final response = _analyzeFFT(samples, scfCorrection: scfCorrection, speakerProfile: speakerProfile);
+      final response = _analyzeFFT(samples,
+          scfCorrection: scfCorrection, speakerProfile: speakerProfile);
 
       state = state.copyWith(
         status: MeasurementStatus.done,
@@ -177,7 +188,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   }) async {
     final hasPermission = await _recorder.hasPermission();
     if (!hasPermission) {
-      state = state.copyWith(status: MeasurementStatus.error, error: 'MIC_PERMISSION_DENIED');
+      state = state.copyWith(
+          status: MeasurementStatus.error, error: 'MIC_PERMISSION_DENIED');
       return;
     }
 
@@ -194,7 +206,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         await muteAllExcept(i);
         await Future.delayed(const Duration(milliseconds: 300)); // DSP 적용 대기
 
-        final response = await _measureOnce(scfCorrection: scfCorrection, bleWarmup: bleWarmup);
+        final response = await _measureOnce(
+            scfCorrection: scfCorrection, bleWarmup: bleWarmup);
         channelResponses[i] = response;
       }
 
@@ -218,7 +231,9 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
           case ChannelType.mid:
             final lpFreq = _getCrossoverFreqAbove(i, channelTypes, crossovers);
             applyHp(i, CrossoverFilter(type: xoverType, frequency: xFreq));
-            if (lpFreq != null) applyLp(i, CrossoverFilter(type: xoverType, frequency: lpFreq));
+            if (lpFreq != null) {
+              applyLp(i, CrossoverFilter(type: xoverType, frequency: lpFreq));
+            }
           case ChannelType.fullRange:
             break;
         }
@@ -236,7 +251,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       _recordSession(channelCount: channelResponses.length);
     } catch (e) {
       await unmuteAll();
-      state = state.copyWith(status: MeasurementStatus.error, error: e.toString());
+      state =
+          state.copyWith(status: MeasurementStatus.error, error: e.toString());
     }
   }
 
@@ -247,29 +263,40 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     final warmup = bleWarmup ? _bleWarmupSec : 0;
     final wavFile = await _generatePinkNoise(totalSec: warmup + durationSec);
     final dir = await getTemporaryDirectory();
-    final recPath = '${dir.path}/tunai_ch_${DateTime.now().millisecondsSinceEpoch}.wav';
+    final recPath =
+        '${dir.path}/tunai_ch_${DateTime.now().millisecondsSinceEpoch}.wav';
 
-    if (bleWarmup) {
-      // BLE A2DP: 재생 먼저 → 코덱 초기화 대기 → 녹음 시작.
-      await _player.setFilePath(wavFile.path);
-      await _player.play();
-      await Future.delayed(Duration(seconds: warmup));
-      await _recorder.start(
-        const RecordConfig(encoder: AudioEncoder.wav, sampleRate: sampleRate, numChannels: 1),
-        path: recPath,
-      );
-    } else {
-      // 일반(USB/유선) 측정 — 기존 순서 그대로 보존: 녹음 먼저 시작 후 재생.
-      await _recorder.start(
-        const RecordConfig(encoder: AudioEncoder.wav, sampleRate: sampleRate, numChannels: 1),
-        path: recPath,
-      );
-      await _player.setFilePath(wavFile.path);
-      await _player.play();
+    // try/finally: startMeasurement()와 동일한 이유 — 예외가 어디서 나든
+    // recorder/player가 켜진 채로 남지 않도록 보장.
+    try {
+      if (bleWarmup) {
+        // BLE A2DP: 재생 먼저 → 코덱 초기화 대기 → 녹음 시작.
+        await _player.setFilePath(wavFile.path);
+        await _player.play();
+        await Future.delayed(Duration(seconds: warmup));
+        await _recorder.start(
+          const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: sampleRate,
+              numChannels: 1),
+          path: recPath,
+        );
+      } else {
+        // 일반(USB/유선) 측정 — 기존 순서 그대로 보존: 녹음 먼저 시작 후 재생.
+        await _recorder.start(
+          const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: sampleRate,
+              numChannels: 1),
+          path: recPath,
+        );
+        await _player.setFilePath(wavFile.path);
+        await _player.play();
+      }
+      await Future.delayed(const Duration(seconds: durationSec));
+    } finally {
+      await _safeStopRecorderAndPlayer();
     }
-    await Future.delayed(const Duration(seconds: durationSec));
-    await _recorder.stop();
-    await _player.stop();
 
     final pcmBytes = await File(recPath).readAsBytes();
     final rawPcm = Uint8List.sublistView(pcmBytes, 44);
@@ -308,19 +335,34 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     return crossovers;
   }
 
-  double? _getCrossoverFreq(int idx, List<ChannelType> types, List<double?> crossovers) {
+  double? _getCrossoverFreq(
+      int idx, List<ChannelType> types, List<double?> crossovers) {
     // 이 채널 아래쪽 크로스오버 주파수
     if (idx > 0 && idx - 1 < crossovers.length) return crossovers[idx - 1];
     if (idx < crossovers.length) return crossovers[idx];
     return null;
   }
 
-  double? _getCrossoverFreqAbove(int idx, List<ChannelType> types, List<double?> crossovers) {
+  double? _getCrossoverFreqAbove(
+      int idx, List<ChannelType> types, List<double?> crossovers) {
     if (idx < crossovers.length) return crossovers[idx];
     return null;
   }
 
   void reset() => state = const MicMeasurementState();
+
+  /// 녹음 시작~정지 구간 어디서 예외/취소가 나든 recorder/player를 켜진
+  /// 채로 방치하지 않기 위한 정리. 이미 멈춰 있는 상태에서 stop()을 다시
+  /// 호출해도 안전하지만, 방어적으로 개별 실패는 서로를 막지 않게 분리한다.
+  /// DSP mute 상태는 건드리지 않는다 — 채널 격리는 사용자가 수동으로 한다.
+  Future<void> _safeStopRecorderAndPlayer() async {
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+    try {
+      await _player.stop();
+    } catch (_) {}
+  }
 
   Float64List _pcmToFloat(Uint8List pcmBytes) {
     final samples = Float64List(pcmBytes.length ~/ 2);
@@ -381,9 +423,37 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   double _nearestThirdOctave(double freq) {
     // 1/3 옥타브 밴드 중심 주파수 (ISO 표준)
     const centers = [
-      20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160,
-      200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600,
-      2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000
+      20,
+      25,
+      31.5,
+      40,
+      50,
+      63,
+      80,
+      100,
+      125,
+      160,
+      200,
+      250,
+      315,
+      400,
+      500,
+      630,
+      800,
+      1000,
+      1250,
+      1600,
+      2000,
+      2500,
+      3150,
+      4000,
+      5000,
+      6300,
+      8000,
+      10000,
+      12500,
+      16000,
+      20000
     ];
     double nearest = centers[0].toDouble();
     double minDist = (freq - nearest).abs();
@@ -420,17 +490,17 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     final pcm = Int16List(totalSamples);
 
     // Paul Kellet 핑크노이즈
-    double b0=0, b1=0, b2=0, b3=0, b4=0, b5=0, b6=0;
+    double b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
     final rng = Random();
     for (int i = 0; i < totalSamples; i++) {
       final white = rng.nextDouble() * 2 - 1;
-      b0 = 0.99886*b0 + white*0.0555179;
-      b1 = 0.99332*b1 + white*0.0750759;
-      b2 = 0.96900*b2 + white*0.1538520;
-      b3 = 0.86650*b3 + white*0.3104856;
-      b4 = 0.55000*b4 + white*0.5329522;
-      b5 = -0.7616*b5 - white*0.0168980;
-      final pink = (b0+b1+b2+b3+b4+b5+b6+white*0.5362) * 0.11;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      final pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
       b6 = white * 0.115926;
       pcm[i] = (pink.clamp(-1.0, 1.0) * 32767).round();
     }
@@ -439,10 +509,15 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     final dataSize = totalSamples * 2;
     final header = ByteData(44);
     void setStr(int offset, String s) {
-      for (int i = 0; i < s.length; i++) { header.setUint8(offset + i, s.codeUnitAt(i)); }
+      for (int i = 0; i < s.length; i++) {
+        header.setUint8(offset + i, s.codeUnitAt(i));
+      }
     }
-    setStr(0, 'RIFF'); header.setUint32(4, 36 + dataSize, Endian.little);
-    setStr(8, 'WAVE'); setStr(12, 'fmt ');
+
+    setStr(0, 'RIFF');
+    header.setUint32(4, 36 + dataSize, Endian.little);
+    setStr(8, 'WAVE');
+    setStr(12, 'fmt ');
     header.setUint32(16, 16, Endian.little);
     header.setUint16(20, 1, Endian.little);
     header.setUint16(22, 1, Endian.little);
@@ -450,7 +525,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     header.setUint32(28, sampleRate * 2, Endian.little);
     header.setUint16(32, 2, Endian.little);
     header.setUint16(34, 16, Endian.little);
-    setStr(36, 'data'); header.setUint32(40, dataSize, Endian.little);
+    setStr(36, 'data');
+    header.setUint32(40, dataSize, Endian.little);
 
     final wavBytes = BytesBuilder();
     wavBytes.add(header.buffer.asUint8List());

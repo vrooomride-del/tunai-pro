@@ -8,6 +8,7 @@ import '../../../core/pro_acoustic_data.dart';
 import '../../../shared/pro_widgets.dart';
 import '../../../shared/components/stat_chip.dart';
 import '../../../shared/components/section_header.dart';
+import 'live_measurement_section.dart';
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -24,12 +25,17 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(proMeasurementProvider.notifier).loadForProject(widget.projectId);
+      ref
+          .read(proMeasurementProvider.notifier)
+          .loadForProject(widget.projectId);
     });
   }
 
-  ProProject? get _project => ref.watch(proProjectStoreProvider)
-      .projects.where((p) => p.id == widget.projectId).firstOrNull;
+  ProProject? get _project => ref
+      .watch(proProjectStoreProvider)
+      .projects
+      .where((p) => p.id == widget.projectId)
+      .firstOrNull;
 
   @override
   Widget build(BuildContext context) {
@@ -50,48 +56,72 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
         guidance: _measurementGuidance(mStore.sessions, selectedSession),
       ),
       // ── Workflow progress card: 5-step guided sequence ────────────────────
-      _WorkflowProgressCard(sessions: mStore.sessions, selected: selectedSession),
+      _WorkflowProgressCard(
+          sessions: mStore.sessions, selected: selectedSession),
       // ── Phase C: Driver readiness overview bar ────────────────────────────
       _DriverReadinessBar(acoustic: acoustic),
-      Expanded(child: Row(children: [
-      // ── Session list panel (left) ────────────────────────────────────────
-      SizedBox(
-        width: 280,
-        child: _SessionListPanel(
-          project: project,
-          sessions: mStore.sessions,
-          selectedId: mStore.selectedSessionId,
-          onSelect: (id) =>
-              ref.read(proMeasurementProvider.notifier).selectSession(id),
-          onNew: () => _showNewSessionDialog(project),
-          onRename: (s) => _showRenameDialog(project, s),
-          onDuplicate: (s) => ref.read(proMeasurementProvider.notifier)
-              .duplicateSession(project.id, s.id),
-          onDelete: (s) => _confirmDeleteSession(project, s),
-        ),
-      ),
-      Container(width: 0.5, color: kProBorder),
-      // ── Session detail panel (right) ─────────────────────────────────────
+      // ── Live Measurement: real playback+record+FFT capture per channel ────
+      LiveMeasurementSection(project: project),
       Expanded(
-        child: selectedSession == null
-            ? _ReadinessCard(project: project, sessionCount: mStore.sessions.length)
-            : _SessionDetailPanel(
-                project: project,
-                session: selectedSession,
-                onAddPoint: () => _showAddPointDialog(project, selectedSession),
-                onSimulate: (pointId) => ref.read(proMeasurementProvider.notifier)
-                    .simulateCapture(projectId: project.id, sessionId: selectedSession.id, pointId: pointId),
-                onAccept: (pointId) => ref.read(proMeasurementProvider.notifier)
-                    .acceptPoint(projectId: project.id, sessionId: selectedSession.id, pointId: pointId),
-                onReject: (pointId) => ref.read(proMeasurementProvider.notifier)
-                    .rejectPoint(projectId: project.id, sessionId: selectedSession.id, pointId: pointId),
-                onDeletePoint: (pointId) => ref.read(proMeasurementProvider.notifier)
-                    .deletePoint(projectId: project.id, sessionId: selectedSession.id, pointId: pointId),
-                onMarkComplete: () => _confirmMarkComplete(project, selectedSession),
-              ),
-      ),
-    ])),   // closes Expanded + Row
-    ]);    // closes Column
+          child: Row(children: [
+        // ── Session list panel (left) ────────────────────────────────────────
+        SizedBox(
+          width: 280,
+          child: _SessionListPanel(
+            project: project,
+            sessions: mStore.sessions,
+            selectedId: mStore.selectedSessionId,
+            onSelect: (id) =>
+                ref.read(proMeasurementProvider.notifier).selectSession(id),
+            onNew: () => _showNewSessionDialog(project),
+            onRename: (s) => _showRenameDialog(project, s),
+            onDuplicate: (s) => ref
+                .read(proMeasurementProvider.notifier)
+                .duplicateSession(project.id, s.id),
+            onDelete: (s) => _confirmDeleteSession(project, s),
+          ),
+        ),
+        Container(width: 0.5, color: kProBorder),
+        // ── Session detail panel (right) ─────────────────────────────────────
+        Expanded(
+          child: selectedSession == null
+              ? _ReadinessCard(
+                  project: project, sessionCount: mStore.sessions.length)
+              : _SessionDetailPanel(
+                  project: project,
+                  session: selectedSession,
+                  onAddPoint: () =>
+                      _showAddPointDialog(project, selectedSession),
+                  onSimulate: (pointId) => ref
+                      .read(proMeasurementProvider.notifier)
+                      .simulateCapture(
+                          projectId: project.id,
+                          sessionId: selectedSession.id,
+                          pointId: pointId),
+                  onAccept: (pointId) => ref
+                      .read(proMeasurementProvider.notifier)
+                      .acceptPoint(
+                          projectId: project.id,
+                          sessionId: selectedSession.id,
+                          pointId: pointId),
+                  onReject: (pointId) => ref
+                      .read(proMeasurementProvider.notifier)
+                      .rejectPoint(
+                          projectId: project.id,
+                          sessionId: selectedSession.id,
+                          pointId: pointId),
+                  onDeletePoint: (pointId) => ref
+                      .read(proMeasurementProvider.notifier)
+                      .deletePoint(
+                          projectId: project.id,
+                          sessionId: selectedSession.id,
+                          pointId: pointId),
+                  onMarkComplete: () =>
+                      _confirmMarkComplete(project, selectedSession),
+                ),
+        ),
+      ])), // closes Expanded + Row
+    ]); // closes Column
   }
 
   // ── Dialogs ───────────────────────────────────────────────────────────────
@@ -102,19 +132,21 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
       builder: (ctx) => const _NewSessionDialog(),
     );
     if (result != null && mounted) {
-      final session = await ref.read(proMeasurementProvider.notifier).addSession(
-        projectId: project.id,
-        name: result.name,
-        sampleRate: result.sampleRate,
-        sweepType: result.sweepType,
-        micProfile: result.micProfile,
-        notes: result.notes.isEmpty ? null : result.notes,
-      );
+      final session =
+          await ref.read(proMeasurementProvider.notifier).addSession(
+                projectId: project.id,
+                name: result.name,
+                sampleRate: result.sampleRate,
+                sweepType: result.sweepType,
+                micProfile: result.micProfile,
+                notes: result.notes.isEmpty ? null : result.notes,
+              );
       ref.read(proMeasurementProvider.notifier).selectSession(session.id);
     }
   }
 
-  Future<void> _showRenameDialog(ProProject project, MeasurementSession session) async {
+  Future<void> _showRenameDialog(
+      ProProject project, MeasurementSession session) async {
     final ctrl = TextEditingController(text: session.name);
     final newName = await showDialog<String>(
       context: context,
@@ -127,22 +159,27 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
         title: Text('Rename Session', style: proTitle(size: 14)),
         content: _ProTextField(controller: ctrl, autofocus: true),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text('Cancel', style: proSubtitle(size: 12))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Cancel', style: proSubtitle(size: 12))),
           TextButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text),
-            child: const Text('Rename', style: TextStyle(color: kProAccent, fontSize: 12)),
+            child: const Text('Rename',
+                style: TextStyle(color: kProAccent, fontSize: 12)),
           ),
         ],
       ),
     );
     ctrl.dispose();
     if (newName != null && newName.trim().isNotEmpty && mounted) {
-      await ref.read(proMeasurementProvider.notifier)
+      await ref
+          .read(proMeasurementProvider.notifier)
           .renameSession(project.id, session.id, newName);
     }
   }
 
-  Future<void> _confirmDeleteSession(ProProject project, MeasurementSession session) async {
+  Future<void> _confirmDeleteSession(
+      ProProject project, MeasurementSession session) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -151,27 +188,33 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
           borderRadius: BorderRadius.circular(6),
           side: const BorderSide(color: kProBorder),
         ),
-        title: Text('Delete Session', style: proTitle(size: 14, color: kProRed)),
+        title:
+            Text('Delete Session', style: proTitle(size: 14, color: kProRed)),
         content: Text(
           'Delete "${session.name}"? This cannot be undone.',
           style: proSubtitle(size: 12),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text('Cancel', style: proSubtitle(size: 12))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Cancel', style: proSubtitle(size: 12))),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete', style: TextStyle(color: kProRed, fontSize: 12)),
+            child: const Text('Delete',
+                style: TextStyle(color: kProRed, fontSize: 12)),
           ),
         ],
       ),
     );
     if (confirmed == true && mounted) {
-      await ref.read(proMeasurementProvider.notifier)
+      await ref
+          .read(proMeasurementProvider.notifier)
           .deleteSession(project.id, session.id);
     }
   }
 
-  Future<void> _showAddPointDialog(ProProject project, MeasurementSession session) async {
+  Future<void> _showAddPointDialog(
+      ProProject project, MeasurementSession session) async {
     final result = await showDialog<_NewPointArgs>(
       context: context,
       builder: (ctx) => _AddPointDialog(existingCount: session.points.length),
@@ -188,16 +231,19 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
         notes: result.notes.isEmpty ? null : result.notes,
       );
       await ref.read(proMeasurementProvider.notifier).addPoint(
-        projectId: project.id,
-        sessionId: session.id,
-        point: point,
-      );
+            projectId: project.id,
+            sessionId: session.id,
+            point: point,
+          );
     }
   }
 
-  Future<void> _confirmMarkComplete(ProProject project, MeasurementSession session) async {
+  Future<void> _confirmMarkComplete(
+      ProProject project, MeasurementSession session) async {
     if (session.status == MeasurementSessionStatus.completed ||
-        session.status == MeasurementSessionStatus.reviewed) { return; }
+        session.status == MeasurementSessionStatus.reviewed) {
+      return;
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -208,36 +254,43 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
           side: const BorderSide(color: kProBorder),
         ),
         title: Text('Mark Session Complete', style: proTitle(size: 14)),
-        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(
-            'Mark "${session.name}" as completed?\n\nThis will advance the project status to Measured if it is currently Draft.',
-            style: proSubtitle(size: 12),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-            decoration: BoxDecoration(
-              color: kProAmber.withValues(alpha: 0.06),
-              border: Border.all(color: kProAmber.withValues(alpha: 0.3)),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              'AI suggestions require expert verification.\nReview all captured points before proceeding to analysis.',
-              style: proSubtitle(size: 10),
-            ),
-          ),
-        ]),
+        content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Mark "${session.name}" as completed?\n\nThis will advance the project status to Measured if it is currently Draft.',
+                style: proSubtitle(size: 12),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                decoration: BoxDecoration(
+                  color: kProAmber.withValues(alpha: 0.06),
+                  border: Border.all(color: kProAmber.withValues(alpha: 0.3)),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'AI suggestions require expert verification.\nReview all captured points before proceeding to analysis.',
+                  style: proSubtitle(size: 10),
+                ),
+              ),
+            ]),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text('Cancel', style: proSubtitle(size: 12))),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Cancel', style: proSubtitle(size: 12))),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Mark Complete', style: TextStyle(color: kProGreen, fontSize: 12)),
+            child: const Text('Mark Complete',
+                style: TextStyle(color: kProGreen, fontSize: 12)),
           ),
         ],
       ),
     );
     if (confirmed == true && mounted) {
-      await ref.read(proMeasurementProvider.notifier)
+      await ref
+          .read(proMeasurementProvider.notifier)
           .markSessionCompleted(project.id, session.id);
     }
   }
@@ -245,15 +298,25 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
 
 // ── Orientation Bar ───────────────────────────────────────────────────────────
 
-String _measurementGuidance(List<MeasurementSession> sessions, MeasurementSession? selected) {
-  if (sessions.isEmpty) return 'Create a measurement session to begin acoustic capture.';
-  if (selected == null) return 'Select a session on the left to continue its measurement points.';
+String _measurementGuidance(
+    List<MeasurementSession> sessions, MeasurementSession? selected) {
+  if (sessions.isEmpty) {
+    return 'Create a measurement session to begin acoustic capture.';
+  }
+  if (selected == null) {
+    return 'Select a session on the left to continue its measurement points.';
+  }
   final isCompleted = selected.status == MeasurementSessionStatus.completed ||
       selected.status == MeasurementSessionStatus.reviewed;
   if (isCompleted) return 'This session is complete.';
-  if (selected.points.isEmpty) return 'Add measurement points to begin capturing data for this session.';
-  final hasCaptured = selected.points.any((p) => p.status == MeasurementPointStatus.captured);
-  if (hasCaptured) return 'Review captured points — accept or reject each before marking complete.';
+  if (selected.points.isEmpty) {
+    return 'Add measurement points to begin capturing data for this session.';
+  }
+  final hasCaptured =
+      selected.points.any((p) => p.status == MeasurementPointStatus.captured);
+  if (hasCaptured) {
+    return 'Review captured points — accept or reject each before marking complete.';
+  }
   return 'Simulate capture for each point, then accept or reject the result.';
 }
 
@@ -263,42 +326,55 @@ class _MeasureOrientationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-    decoration: const BoxDecoration(
-      color: kProSurface,
-      border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
-    ),
-    child: Row(children: [
-      const Icon(Icons.explore_outlined, color: kProAccent, size: 13),
-      const SizedBox(width: 8),
-      Expanded(
-        child: Text(guidance, style: proSubtitle(size: 11),
-            overflow: TextOverflow.ellipsis, maxLines: 1),
-      ),
-      const SizedBox(width: 10),
-      const ProStatusPill(label: 'SIMULATED DATA', color: kProAmber),
-    ]),
-  );
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        decoration: const BoxDecoration(
+          color: kProSurface,
+          border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+        ),
+        child: Row(children: [
+          const Icon(Icons.explore_outlined, color: kProAccent, size: 13),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(guidance,
+                style: proSubtitle(size: 11),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1),
+          ),
+          const SizedBox(width: 10),
+          const ProStatusPill(label: 'SIMULATED DATA', color: kProAmber),
+        ]),
+      );
 }
 
 // ── Workflow Progress Card ────────────────────────────────────────────────────
 
-const _kWorkflowStepLabels = ['Session', 'Point', 'Capture', 'Review', 'Complete'];
-
-List<bool> _workflowStepCompletion(List<MeasurementSession> sessions, MeasurementSession? selected) => [
-  sessions.isNotEmpty,
-  selected != null && selected.points.isNotEmpty,
-  selected != null && selected.capturedCount > 0,
-  selected != null &&
-      !selected.points.any((p) => p.status == MeasurementPointStatus.captured) &&
-      selected.points.any((p) =>
-          p.status == MeasurementPointStatus.accepted || p.status == MeasurementPointStatus.rejected),
-  selected != null &&
-      (selected.status == MeasurementSessionStatus.completed ||
-          selected.status == MeasurementSessionStatus.reviewed),
+const _kWorkflowStepLabels = [
+  'Session',
+  'Point',
+  'Capture',
+  'Review',
+  'Complete'
 ];
 
-String _workflowNextText(List<MeasurementSession> sessions, MeasurementSession? selected) {
+List<bool> _workflowStepCompletion(
+        List<MeasurementSession> sessions, MeasurementSession? selected) =>
+    [
+      sessions.isNotEmpty,
+      selected != null && selected.points.isNotEmpty,
+      selected != null && selected.capturedCount > 0,
+      selected != null &&
+          !selected.points
+              .any((p) => p.status == MeasurementPointStatus.captured) &&
+          selected.points.any((p) =>
+              p.status == MeasurementPointStatus.accepted ||
+              p.status == MeasurementPointStatus.rejected),
+      selected != null &&
+          (selected.status == MeasurementSessionStatus.completed ||
+              selected.status == MeasurementSessionStatus.reviewed),
+    ];
+
+String _workflowNextText(
+    List<MeasurementSession> sessions, MeasurementSession? selected) {
   if (sessions.isEmpty) return 'Next: Create a measurement session';
   if (selected == null) return 'Next: Select a session to continue';
   if (selected.status == MeasurementSessionStatus.completed ||
@@ -322,7 +398,8 @@ class _WorkflowProgressCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final completion = _workflowStepCompletion(sessions, selected);
     final activeIndex = completion.indexWhere((c) => !c);
-    final currentIndex = activeIndex == -1 ? _kWorkflowStepLabels.length - 1 : activeIndex;
+    final currentIndex =
+        activeIndex == -1 ? _kWorkflowStepLabels.length - 1 : activeIndex;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
@@ -344,7 +421,8 @@ class _WorkflowProgressCard extends StatelessWidget {
             if (i < _kWorkflowStepLabels.length - 1)
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 4),
-                child: Icon(Icons.arrow_forward, size: 10, color: Colors.white24),
+                child:
+                    Icon(Icons.arrow_forward, size: 10, color: Colors.white24),
               ),
           ],
         ]),
@@ -374,31 +452,40 @@ class _WorkflowStepChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = complete ? kProGreen : (current ? kProAccent : Colors.white24);
+    final color =
+        complete ? kProGreen : (current ? kProAccent : Colors.white24);
     final tinted = complete || current;
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         decoration: BoxDecoration(
           color: tinted ? color.withValues(alpha: 0.08) : Colors.transparent,
-          border: Border.all(color: color.withValues(alpha: tinted ? 0.4 : 0.2)),
+          border:
+              Border.all(color: color.withValues(alpha: tinted ? 0.4 : 0.2)),
           borderRadius: BorderRadius.circular(3),
         ),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
-          if (complete)
-            Icon(Icons.check, size: 10, color: color)
-          else
-            Text('$number', style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w600)),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              label,
-              style: TextStyle(color: color, fontSize: 9.5),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
-          ),
-        ]),
+        child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (complete)
+                Icon(Icons.check, size: 10, color: color)
+              else
+                Text('$number',
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600)),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(color: color, fontSize: 9.5),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
+            ]),
       ),
     );
   }
@@ -457,11 +544,14 @@ class _SessionListPanel extends StatelessWidget {
                 border: Border.all(color: kProAccent.withValues(alpha: 0.4)),
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.add, color: kProAccent, size: 13),
-                SizedBox(width: 6),
-                Text('New Session', style: TextStyle(color: kProAccent, fontSize: 11)),
-              ]),
+              child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.add, color: kProAccent, size: 13),
+                    SizedBox(width: 6),
+                    Text('New Session',
+                        style: TextStyle(color: kProAccent, fontSize: 11)),
+                  ]),
             ),
           ),
         ),
@@ -470,13 +560,14 @@ class _SessionListPanel extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 20, 14, 0),
             child: Column(children: [
-              const Icon(Icons.mic_off_outlined, color: Colors.white12, size: 28),
+              const Icon(Icons.mic_off_outlined,
+                  color: Colors.white12, size: 28),
               const SizedBox(height: 10),
-              Text('Start your first measurement', style: proTitle(size: 12, color: Colors.white38)),
+              Text('Start your first measurement',
+                  style: proTitle(size: 12, color: Colors.white38)),
               const SizedBox(height: 6),
               Text('Create a session to begin acoustic measurement.',
-                  style: proSubtitle(size: 11),
-                  textAlign: TextAlign.center),
+                  style: proSubtitle(size: 11), textAlign: TextAlign.center),
             ]),
           )
         else
@@ -517,11 +608,13 @@ class _SessionTile extends StatelessWidget {
   });
 
   Color _statusColor() => switch (session.status) {
-    MeasurementSessionStatus.completed || MeasurementSessionStatus.reviewed => kProGreen,
-    MeasurementSessionStatus.running => kProAccent,
-    MeasurementSessionStatus.ready   => kProAmber,
-    _                                => const Color(0xFF6B7280),
-  };
+        MeasurementSessionStatus.completed ||
+        MeasurementSessionStatus.reviewed =>
+          kProGreen,
+        MeasurementSessionStatus.running => kProAccent,
+        MeasurementSessionStatus.ready => kProAmber,
+        _ => const Color(0xFF6B7280),
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -530,27 +623,39 @@ class _SessionTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
         decoration: BoxDecoration(
-          color: selected ? kProAccent.withValues(alpha: 0.08) : Colors.transparent,
-          border: Border(left: BorderSide(
+          color: selected
+              ? kProAccent.withValues(alpha: 0.08)
+              : Colors.transparent,
+          border: Border(
+              left: BorderSide(
             color: selected ? kProAccent : Colors.transparent,
             width: 2,
           )),
         ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(session.name, style: proTitle(size: 11,
-                color: selected ? Colors.white : Colors.white70),
-                overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 4),
-            Row(children: [
-              ProStatusPill(label: session.status.label, color: _statusColor()),
-              const SizedBox(width: 6),
-              Text('${session.points.length} pts', style: proLabel(size: 9, color: Colors.white24, spacing: 0.3)),
-            ]),
-            const SizedBox(height: 3),
-            Text('${session.sampleRateLabel} · ${session.sweepType.label}',
-                style: proLabel(size: 9, color: Colors.white24, spacing: 0.3)),
-          ])),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(session.name,
+                    style: proTitle(
+                        size: 11,
+                        color: selected ? Colors.white : Colors.white70),
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 4),
+                Row(children: [
+                  ProStatusPill(
+                      label: session.status.label, color: _statusColor()),
+                  const SizedBox(width: 6),
+                  Text('${session.points.length} pts',
+                      style: proLabel(
+                          size: 9, color: Colors.white24, spacing: 0.3)),
+                ]),
+                const SizedBox(height: 3),
+                Text('${session.sampleRateLabel} · ${session.sweepType.label}',
+                    style:
+                        proLabel(size: 9, color: Colors.white24, spacing: 0.3)),
+              ])),
           PopupMenuButton<String>(
             color: kProPanel,
             iconColor: Colors.white24,
@@ -562,9 +667,18 @@ class _SessionTile extends StatelessWidget {
               if (v == 'delete') onDelete();
             },
             itemBuilder: (_) => const [
-              PopupMenuItem(value: 'rename', child: Text('Rename', style: TextStyle(color: Colors.white70, fontSize: 12))),
-              PopupMenuItem(value: 'duplicate', child: Text('Duplicate', style: TextStyle(color: Colors.white70, fontSize: 12))),
-              PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: kProRed, fontSize: 12))),
+              PopupMenuItem(
+                  value: 'rename',
+                  child: Text('Rename',
+                      style: TextStyle(color: Colors.white70, fontSize: 12))),
+              PopupMenuItem(
+                  value: 'duplicate',
+                  child: Text('Duplicate',
+                      style: TextStyle(color: Colors.white70, fontSize: 12))),
+              PopupMenuItem(
+                  value: 'delete',
+                  child: Text('Delete',
+                      style: TextStyle(color: kProRed, fontSize: 12))),
             ],
           ),
         ]),
@@ -586,12 +700,14 @@ class _ReadinessCard extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Icon(Icons.mic_none_outlined, color: kProAccent.withValues(alpha: 0.6), size: 18),
+          Icon(Icons.mic_none_outlined,
+              color: kProAccent.withValues(alpha: 0.6), size: 18),
           const SizedBox(width: 10),
           Text('Measurement Workspace', style: proTitle(size: 16)),
         ]),
         const SizedBox(height: 6),
-        Text('Capture, review, and organize acoustic measurements before analysis.',
+        Text(
+            'Capture, review, and organize acoustic measurements before analysis.',
             style: proSubtitle()),
         const SizedBox(height: 20),
 
@@ -607,14 +723,20 @@ class _ReadinessCard extends StatelessWidget {
             border: Border.all(color: kProBorder),
             borderRadius: BorderRadius.circular(4),
           ),
-          child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            ProSectionHeader(title: 'Measurement Protocol'),
-            SizedBox(height: 10),
-            _ProtocolRow(Icons.chevron_right, 'Measurement data must be reviewed before tuning.'),
-            _ProtocolRow(Icons.chevron_right, 'AI suggestions require expert verification.'),
-            _ProtocolRow(Icons.chevron_right, 'AOS protection remains active throughout.'),
-            _ProtocolRow(Icons.chevron_right, 'DSP execution occurs only after verified deployment.'),
-          ]),
+          child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ProSectionHeader(title: 'Measurement Protocol'),
+                SizedBox(height: 10),
+                _ProtocolRow(Icons.chevron_right,
+                    'Measurement data must be reviewed before tuning.'),
+                _ProtocolRow(Icons.chevron_right,
+                    'AI suggestions require expert verification.'),
+                _ProtocolRow(Icons.chevron_right,
+                    'AOS protection remains active throughout.'),
+                _ProtocolRow(Icons.chevron_right,
+                    'DSP execution occurs only after verified deployment.'),
+              ]),
         ),
 
         const SizedBox(height: 20),
@@ -628,7 +750,8 @@ class _ReadinessCard extends StatelessWidget {
           child: Row(children: [
             const Icon(Icons.info_outline, color: kProAmber, size: 13),
             const SizedBox(width: 10),
-            Expanded(child: Text(
+            Expanded(
+                child: Text(
               'Measurement capture uses simulated data. Connect a measurement interface and import FRD/ZMA files in the Import tab.',
               style: proSubtitle(size: 10),
             )),
@@ -663,7 +786,8 @@ class _ChecklistCard extends StatelessWidget {
         _CheckRow('Sample rate', true, project.sampleRateLabel),
         _CheckRow('DSP target', true, project.dspTarget),
         const _CheckRow('Mic profile', true, 'Default'),
-        _CheckRow('Sessions created', sessionCount > 0, '$sessionCount sessions'),
+        _CheckRow(
+            'Sessions created', sessionCount > 0, '$sessionCount sessions'),
       ]),
     );
   }
@@ -677,15 +801,19 @@ class _CheckRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(children: [
-      Icon(ok ? Icons.check_circle_outline : Icons.radio_button_unchecked,
-          color: ok ? kProGreen : Colors.white24, size: 13),
-      const SizedBox(width: 10),
-      SizedBox(width: 160, child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
-      Text(value, style: proValue(size: 10, color: ok ? Colors.white60 : Colors.white24)),
-    ]),
-  );
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(children: [
+          Icon(ok ? Icons.check_circle_outline : Icons.radio_button_unchecked,
+              color: ok ? kProGreen : Colors.white24, size: 13),
+          const SizedBox(width: 10),
+          SizedBox(
+              width: 160,
+              child: Text(label, style: proLabel(size: 10, spacing: 0.3))),
+          Text(value,
+              style: proValue(
+                  size: 10, color: ok ? Colors.white60 : Colors.white24)),
+        ]),
+      );
 }
 
 class _ProtocolRow extends StatelessWidget {
@@ -695,13 +823,13 @@ class _ProtocolRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 3),
-    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Icon(icon, color: Colors.white24, size: 12),
-      const SizedBox(width: 8),
-      Expanded(child: Text(text, style: proSubtitle(size: 10))),
-    ]),
-  );
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, color: Colors.white24, size: 12),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: proSubtitle(size: 10))),
+        ]),
+      );
 }
 
 // ── Session Detail Panel ──────────────────────────────────────────────────────
@@ -738,30 +866,37 @@ class _SessionDetailPanel extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // Session header
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(session.name, style: proTitle(size: 15)),
-            const SizedBox(height: 4),
-            Row(children: [
-              ProStatusPill(
-                label: session.status.label,
-                color: _isCompleted ? kProGreen : const Color(0xFF6B7280),
-              ),
-              const SizedBox(width: 8),
-              Text('${session.sampleRateLabel} · ${session.sweepType.label} · ${session.micProfile}',
-                  style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
-            ]),
-          ])),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(session.name, style: proTitle(size: 15)),
+                const SizedBox(height: 4),
+                Row(children: [
+                  ProStatusPill(
+                    label: session.status.label,
+                    color: _isCompleted ? kProGreen : const Color(0xFF6B7280),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                      '${session.sampleRateLabel} · ${session.sweepType.label} · ${session.micProfile}',
+                      style: proLabel(
+                          size: 9, color: Colors.white38, spacing: 0.3)),
+                ]),
+              ])),
           if (!_isCompleted)
             GestureDetector(
               onTap: onMarkComplete,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
                   color: kProGreen.withValues(alpha: 0.1),
                   border: Border.all(color: kProGreen.withValues(alpha: 0.4)),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: const Text('Mark Complete', style: TextStyle(color: kProGreen, fontSize: 11)),
+                child: const Text('Mark Complete',
+                    style: TextStyle(color: kProGreen, fontSize: 11)),
               ),
             ),
         ]),
@@ -793,7 +928,8 @@ class _SessionDetailPanel extends StatelessWidget {
                   child: const Row(mainAxisSize: MainAxisSize.min, children: [
                     Icon(Icons.add, color: kProAccent, size: 13),
                     SizedBox(width: 4),
-                    Text('Add Point', style: TextStyle(color: kProAccent, fontSize: 11)),
+                    Text('Add Point',
+                        style: TextStyle(color: kProAccent, fontSize: 11)),
                   ]),
                 ),
         ),
@@ -803,16 +939,16 @@ class _SessionDetailPanel extends StatelessWidget {
           _EmptyPoints(isCompleted: _isCompleted, onAdd: onAddPoint)
         else
           ...session.points.map((p) => Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _PointCard(
-              point: p,
-              readOnly: _isCompleted,
-              onSimulate: () => onSimulate(p.id),
-              onAccept: () => onAccept(p.id),
-              onReject: () => onReject(p.id),
-              onDelete: () => onDeletePoint(p.id),
-            ),
-          )),
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _PointCard(
+                  point: p,
+                  readOnly: _isCompleted,
+                  onSimulate: () => onSimulate(p.id),
+                  onAccept: () => onAccept(p.id),
+                  onReject: () => onReject(p.id),
+                  onDelete: () => onDeletePoint(p.id),
+                ),
+              )),
 
         if (_isCompleted) ...[
           const SizedBox(height: 20),
@@ -824,9 +960,11 @@ class _SessionDetailPanel extends StatelessWidget {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Row(children: [
-              const Icon(Icons.check_circle_outline, color: kProGreen, size: 14),
+              const Icon(Icons.check_circle_outline,
+                  color: kProGreen, size: 14),
               const SizedBox(width: 10),
-              Expanded(child: Text(
+              Expanded(
+                  child: Text(
                 'Session complete. Measurement data is ready for acoustic analysis in the Analyze tab.',
                 style: proSubtitle(size: 11),
               )),
@@ -845,58 +983,66 @@ class _EmptyPoints extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(children: [
-      const Icon(Icons.radio_button_unchecked, color: Colors.white12, size: 28),
-      const SizedBox(height: 12),
-      Text('No measurement points yet.', style: proTitle(size: 12, color: Colors.white38)),
-      const SizedBox(height: 6),
-      Text(
-        isCompleted
-            ? 'This session was completed without points.'
-            : 'Add measurement points for each listening position or driver.',
-        style: proSubtitle(size: 11),
-        textAlign: TextAlign.center,
-      ),
-      if (!isCompleted) ...[
-        const SizedBox(height: 16),
-        GestureDetector(
-          onTap: onAdd,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-            decoration: BoxDecoration(
-              color: kProAccent.withValues(alpha: 0.1),
-              border: Border.all(color: kProAccent.withValues(alpha: 0.4)),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: const Text('Add Measurement Point', style: TextStyle(color: kProAccent, fontSize: 11)),
-          ),
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
         ),
-      ],
-    ]),
-  );
+        child: Column(children: [
+          const Icon(Icons.radio_button_unchecked,
+              color: Colors.white12, size: 28),
+          const SizedBox(height: 12),
+          Text('No measurement points yet.',
+              style: proTitle(size: 12, color: Colors.white38)),
+          const SizedBox(height: 6),
+          Text(
+            isCompleted
+                ? 'This session was completed without points.'
+                : 'Add measurement points for each listening position or driver.',
+            style: proSubtitle(size: 11),
+            textAlign: TextAlign.center,
+          ),
+          if (!isCompleted) ...[
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: onAdd,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                decoration: BoxDecoration(
+                  color: kProAccent.withValues(alpha: 0.1),
+                  border: Border.all(color: kProAccent.withValues(alpha: 0.4)),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('Add Measurement Point',
+                    style: TextStyle(color: kProAccent, fontSize: 11)),
+              ),
+            ),
+          ],
+        ]),
+      );
 }
 
 // ── Point Card ────────────────────────────────────────────────────────────────
 
 String? _pointStatusGuidance(MeasurementPointStatus status) => switch (status) {
-  MeasurementPointStatus.captured => 'Review this result before continuing.',
-  MeasurementPointStatus.accepted => 'Measurement accepted.',
-  MeasurementPointStatus.rejected => 'Measurement rejected. Capture again.',
-  _ => null,
-};
+      MeasurementPointStatus.captured =>
+        'Review this result before continuing.',
+      MeasurementPointStatus.accepted => 'Measurement accepted.',
+      MeasurementPointStatus.rejected => 'Measurement rejected. Capture again.',
+      _ => null,
+    };
 
 String? _pointActionGuidance(MeasurementPointStatus status) => switch (status) {
-  MeasurementPointStatus.pending || MeasurementPointStatus.ready => 'Generate measurement data for this point.',
-  MeasurementPointStatus.captured => 'Review this result, then accept or reject it.',
-  MeasurementPointStatus.rejected => 'Capture again to retry this point.',
-  _ => null,
-};
+      MeasurementPointStatus.pending ||
+      MeasurementPointStatus.ready =>
+        'Generate measurement data for this point.',
+      MeasurementPointStatus.captured =>
+        'Review this result, then accept or reject it.',
+      MeasurementPointStatus.rejected => 'Capture again to retry this point.',
+      _ => null,
+    };
 
 class _PointCard extends StatelessWidget {
   final MeasurementPoint point;
@@ -916,12 +1062,12 @@ class _PointCard extends StatelessWidget {
   });
 
   Color _statusColor() => switch (point.status) {
-    MeasurementPointStatus.accepted  => kProGreen,
-    MeasurementPointStatus.captured  => kProAccent,
-    MeasurementPointStatus.rejected  => kProRed,
-    MeasurementPointStatus.ready     => kProAmber,
-    MeasurementPointStatus.pending   => const Color(0xFF6B7280),
-  };
+        MeasurementPointStatus.accepted => kProGreen,
+        MeasurementPointStatus.captured => kProAccent,
+        MeasurementPointStatus.rejected => kProRed,
+        MeasurementPointStatus.ready => kProAmber,
+        MeasurementPointStatus.pending => const Color(0xFF6B7280),
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -935,23 +1081,31 @@ class _PointCard extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(point.label, style: proTitle(size: 12)),
-            const SizedBox(height: 4),
-            Row(children: [
-              ProStatusPill(label: point.status.label, color: _statusColor()),
-              const SizedBox(width: 8),
-              Text('${point.channel.label} · ${point.position.label}',
-                  style: proLabel(size: 9, color: Colors.white38, spacing: 0.3)),
-              const SizedBox(width: 8),
-              Text('${point.distanceCm.toStringAsFixed(0)} cm · ${point.angleDeg.toStringAsFixed(0)}°',
-                  style: proLabel(size: 9, color: Colors.white24, spacing: 0.3)),
-            ]),
-            if (_pointStatusGuidance(point.status) != null) ...[
-              const SizedBox(height: 6),
-              Text(_pointStatusGuidance(point.status)!, style: proSubtitle(size: 10)),
-            ],
-          ])),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(point.label, style: proTitle(size: 12)),
+                const SizedBox(height: 4),
+                Row(children: [
+                  ProStatusPill(
+                      label: point.status.label, color: _statusColor()),
+                  const SizedBox(width: 8),
+                  Text('${point.channel.label} · ${point.position.label}',
+                      style: proLabel(
+                          size: 9, color: Colors.white38, spacing: 0.3)),
+                  const SizedBox(width: 8),
+                  Text(
+                      '${point.distanceCm.toStringAsFixed(0)} cm · ${point.angleDeg.toStringAsFixed(0)}°',
+                      style: proLabel(
+                          size: 9, color: Colors.white24, spacing: 0.3)),
+                ]),
+                if (_pointStatusGuidance(point.status) != null) ...[
+                  const SizedBox(height: 6),
+                  Text(_pointStatusGuidance(point.status)!,
+                      style: proSubtitle(size: 10)),
+                ],
+              ])),
           if (!readOnly)
             PopupMenuButton<String>(
               color: kProPanel,
@@ -962,7 +1116,10 @@ class _PointCard extends StatelessWidget {
                 if (v == 'delete') onDelete();
               },
               itemBuilder: (_) => const [
-                PopupMenuItem(value: 'delete', child: Text('Delete', style: TextStyle(color: kProRed, fontSize: 12))),
+                PopupMenuItem(
+                    value: 'delete',
+                    child: Text('Delete',
+                        style: TextStyle(color: kProRed, fontSize: 12))),
               ],
             ),
         ]),
@@ -977,18 +1134,24 @@ class _PointCard extends StatelessWidget {
               border: Border.all(color: kProBorder),
               borderRadius: BorderRadius.circular(3),
             ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                Text('CAPTURE RESULT', style: proLabel(size: 8, color: kProAccent, spacing: 1.5)),
+                Text('CAPTURE RESULT',
+                    style: proLabel(size: 8, color: kProAccent, spacing: 1.5)),
                 const Spacer(),
-                Text('Confidence: ${(result.confidence * 100).toStringAsFixed(0)}%',
-                    style: proLabel(size: 8, color: Colors.white38, spacing: 0.3)),
+                Text(
+                    'Confidence: ${(result.confidence * 100).toStringAsFixed(0)}%',
+                    style:
+                        proLabel(size: 8, color: Colors.white38, spacing: 0.3)),
               ]),
               const SizedBox(height: 6),
               Row(children: [
-                _ResultItem('PEAK', '${result.peakLevelDb.toStringAsFixed(1)} dBFS'),
+                _ResultItem(
+                    'PEAK', '${result.peakLevelDb.toStringAsFixed(1)} dBFS'),
                 const SizedBox(width: 16),
-                _ResultItem('NOISE FLOOR', '${result.noiseFloorDb.toStringAsFixed(1)} dBFS'),
+                _ResultItem('NOISE FLOOR',
+                    '${result.noiseFloorDb.toStringAsFixed(1)} dBFS'),
                 const SizedBox(width: 16),
                 _ResultItem('USABLE RANGE', result.usableRange),
               ]),
@@ -1032,11 +1195,12 @@ class _ResultItem extends StatelessWidget {
   const _ResultItem(this.label, this.value);
 
   @override
-  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text(label, style: proLabel(size: 8, spacing: 0.8)),
-    const SizedBox(height: 2),
-    Text(value, style: proValue(size: 10, color: Colors.white60)),
-  ]);
+  Widget build(BuildContext context) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: proLabel(size: 8, spacing: 0.8)),
+        const SizedBox(height: 2),
+        Text(value, style: proValue(size: 10, color: Colors.white60)),
+      ]);
 }
 
 class _PointActionButton extends StatelessWidget {
@@ -1047,17 +1211,17 @@ class _PointActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(label, style: TextStyle(color: color, fontSize: 10)),
-    ),
-  );
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(label, style: TextStyle(color: color, fontSize: 10)),
+        ),
+      );
 }
 
 // ── New Session Dialog ────────────────────────────────────────────────────────
@@ -1068,7 +1232,8 @@ class _NewSessionArgs {
   final SweepType sweepType;
   final String micProfile;
   final String notes;
-  const _NewSessionArgs(this.name, this.sampleRate, this.sweepType, this.micProfile, this.notes);
+  const _NewSessionArgs(
+      this.name, this.sampleRate, this.sweepType, this.micProfile, this.notes);
 }
 
 class _NewSessionDialog extends StatefulWidget {
@@ -1078,15 +1243,21 @@ class _NewSessionDialog extends StatefulWidget {
 }
 
 class _NewSessionDialogState extends State<_NewSessionDialog> {
-  final _nameCtrl  = TextEditingController(text: 'Measurement Session 1');
+  final _nameCtrl = TextEditingController(text: 'Measurement Session 1');
   final _notesCtrl = TextEditingController();
-  int _sampleRate  = 48000;
+  int _sampleRate = 48000;
   SweepType _sweepType = SweepType.placeholder;
   String _micProfile = 'Default';
 
-  static const _sampleRates  = [44100, 48000, 96000];
-  static const _sweepTypes   = SweepType.values;
-  static const _micProfiles  = ['Default', 'Calibrated', 'UMIK-1', 'ECM8000', 'Manual'];
+  static const _sampleRates = [44100, 48000, 96000];
+  static const _sweepTypes = SweepType.values;
+  static const _micProfiles = [
+    'Default',
+    'Calibrated',
+    'UMIK-1',
+    'ECM8000',
+    'Manual'
+  ];
 
   @override
   void dispose() {
@@ -1124,36 +1295,42 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
             ]),
           ),
 
-          Flexible(child: SingleChildScrollView(
+          Flexible(
+              child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const _DlgLabel('Session Name'),
               _ProTextField(controller: _nameCtrl, autofocus: true),
               const SizedBox(height: 14),
-
               Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const _DlgLabel('Sample Rate'),
-                  _ProDropdown<int>(
-                    value: _sampleRate,
-                    items: _sampleRates,
-                    labelOf: (v) => '${(v / 1000).toStringAsFixed(0)} kHz',
-                    onChanged: (v) => setState(() => _sampleRate = v),
-                  ),
-                ])),
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      const _DlgLabel('Sample Rate'),
+                      _ProDropdown<int>(
+                        value: _sampleRate,
+                        items: _sampleRates,
+                        labelOf: (v) => '${(v / 1000).toStringAsFixed(0)} kHz',
+                        onChanged: (v) => setState(() => _sampleRate = v),
+                      ),
+                    ])),
                 const SizedBox(width: 12),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const _DlgLabel('Sweep Type'),
-                  _ProDropdown<SweepType>(
-                    value: _sweepType,
-                    items: _sweepTypes,
-                    labelOf: (v) => v.label,
-                    onChanged: (v) => setState(() => _sweepType = v),
-                  ),
-                ])),
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      const _DlgLabel('Sweep Type'),
+                      _ProDropdown<SweepType>(
+                        value: _sweepType,
+                        items: _sweepTypes,
+                        labelOf: (v) => v.label,
+                        onChanged: (v) => setState(() => _sweepType = v),
+                      ),
+                    ])),
               ]),
               const SizedBox(height: 14),
-
               const _DlgLabel('Mic Profile'),
               _ProDropdown<String>(
                 value: _micProfile,
@@ -1162,7 +1339,6 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
                 onChanged: (v) => setState(() => _micProfile = v),
               ),
               const SizedBox(height: 14),
-
               const _DlgLabel('Notes (optional)'),
               _ProTextField(controller: _notesCtrl, maxLines: 3),
               const SizedBox(height: 18),
@@ -1181,17 +1357,26 @@ class _NewSessionDialogState extends State<_NewSessionDialog> {
               ),
               const Spacer(),
               GestureDetector(
-                onTap: () => Navigator.pop(context, _NewSessionArgs(
-                  _nameCtrl.text, _sampleRate, _sweepType, _micProfile, _notesCtrl.text,
-                )),
+                onTap: () => Navigator.pop(
+                    context,
+                    _NewSessionArgs(
+                      _nameCtrl.text,
+                      _sampleRate,
+                      _sweepType,
+                      _micProfile,
+                      _notesCtrl.text,
+                    )),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
                   decoration: BoxDecoration(
                     color: kProAccent.withValues(alpha: 0.12),
-                    border: Border.all(color: kProAccent.withValues(alpha: 0.5)),
+                    border:
+                        Border.all(color: kProAccent.withValues(alpha: 0.5)),
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: const Text('Create Session', style: TextStyle(color: kProAccent, fontSize: 12)),
+                  child: const Text('Create Session',
+                      style: TextStyle(color: kProAccent, fontSize: 12)),
                 ),
               ),
             ]),
@@ -1211,8 +1396,8 @@ class _NewPointArgs {
   final double distanceCm;
   final double angleDeg;
   final String notes;
-  const _NewPointArgs(this.label, this.channel, this.position,
-      this.distanceCm, this.angleDeg, this.notes);
+  const _NewPointArgs(this.label, this.channel, this.position, this.distanceCm,
+      this.angleDeg, this.notes);
 }
 
 class _AddPointDialog extends StatefulWidget {
@@ -1224,22 +1409,26 @@ class _AddPointDialog extends StatefulWidget {
 
 class _AddPointDialogState extends State<_AddPointDialog> {
   late final TextEditingController _labelCtrl;
-  final _distCtrl  = TextEditingController(text: '100');
+  final _distCtrl = TextEditingController(text: '100');
   final _angleCtrl = TextEditingController(text: '0');
   final _notesCtrl = TextEditingController();
-  MeasurementChannel  _channel  = MeasurementChannel.left;
+  MeasurementChannel _channel = MeasurementChannel.left;
   MeasurementPosition _position = MeasurementPosition.listeningPosition;
 
   static const _defaultLabels = [
-    'Listening Position L', 'Listening Position R',
-    'Nearfield Woofer', 'Nearfield Tweeter', 'Center Seat',
+    'Listening Position L',
+    'Listening Position R',
+    'Nearfield Woofer',
+    'Nearfield Tweeter',
+    'Center Seat',
   ];
 
   @override
   void initState() {
     super.initState();
     final i = widget.existingCount;
-    final label = i < _defaultLabels.length ? _defaultLabels[i] : 'Point ${i + 1}';
+    final label =
+        i < _defaultLabels.length ? _defaultLabels[i] : 'Point ${i + 1}';
     _labelCtrl = TextEditingController(text: label);
   }
 
@@ -1254,117 +1443,144 @@ class _AddPointDialogState extends State<_AddPointDialog> {
 
   @override
   Widget build(BuildContext context) => Dialog(
-    backgroundColor: kProPanel,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(6),
-      side: const BorderSide(color: kProBorder),
-    ),
-    child: SizedBox(
-      width: 400,
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(20, 16, 16, 14),
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
-          ),
-          child: Row(children: [
-            Text('Add Measurement Point', style: proTitle(size: 14)),
-            const Spacer(),
-            IconButton(
-              icon: const Icon(Icons.close, color: Colors.white38, size: 16),
-              onPressed: () => Navigator.pop(context),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-          ]),
+        backgroundColor: kProPanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+          side: const BorderSide(color: kProBorder),
         ),
-
-        Flexible(child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const _DlgLabel('Label'),
-            _ProTextField(controller: _labelCtrl, autofocus: true),
-            const SizedBox(height: 12),
-
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const _DlgLabel('Channel'),
-                _ProDropdown<MeasurementChannel>(
-                  value: _channel,
-                  items: MeasurementChannel.values,
-                  labelOf: (v) => v.label,
-                  onChanged: (v) => setState(() => _channel = v),
-                ),
-              ])),
-              const SizedBox(width: 12),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const _DlgLabel('Position'),
-                _ProDropdown<MeasurementPosition>(
-                  value: _position,
-                  items: MeasurementPosition.values,
-                  labelOf: (v) => v.label,
-                  onChanged: (v) => setState(() => _position = v),
-                ),
-              ])),
-            ]),
-            const SizedBox(height: 12),
-
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const _DlgLabel('Distance (cm)'),
-                _ProTextField(controller: _distCtrl, numeric: true),
-              ])),
-              const SizedBox(width: 12),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const _DlgLabel('Angle (°)'),
-                _ProTextField(controller: _angleCtrl, numeric: true),
-              ])),
-            ]),
-            const SizedBox(height: 12),
-
-            const _DlgLabel('Notes (optional)'),
-            _ProTextField(controller: _notesCtrl, maxLines: 2),
-            const SizedBox(height: 16),
-          ]),
-        )),
-
-        Container(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-          decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: kProBorder, width: 0.5)),
-          ),
-          child: Row(children: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancel', style: proSubtitle(size: 12)),
-            ),
-            const Spacer(),
-            GestureDetector(
-              onTap: () {
-                final label = _labelCtrl.text.trim();
-                if (label.isEmpty) return;
-                Navigator.pop(context, _NewPointArgs(
-                  label, _channel, _position,
-                  double.tryParse(_distCtrl.text) ?? 100.0,
-                  double.tryParse(_angleCtrl.text) ?? 0.0,
-                  _notesCtrl.text,
-                ));
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                decoration: BoxDecoration(
-                  color: kProAccent.withValues(alpha: 0.12),
-                  border: Border.all(color: kProAccent.withValues(alpha: 0.5)),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text('Add Point', style: TextStyle(color: kProAccent, fontSize: 12)),
+        child: SizedBox(
+          width: 400,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 16, 14),
+              decoration: const BoxDecoration(
+                border:
+                    Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
               ),
+              child: Row(children: [
+                Text('Add Measurement Point', style: proTitle(size: 14)),
+                const Spacer(),
+                IconButton(
+                  icon:
+                      const Icon(Icons.close, color: Colors.white38, size: 16),
+                  onPressed: () => Navigator.pop(context),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ]),
+            ),
+            Flexible(
+                child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _DlgLabel('Label'),
+                    _ProTextField(controller: _labelCtrl, autofocus: true),
+                    const SizedBox(height: 12),
+                    Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                const _DlgLabel('Channel'),
+                                _ProDropdown<MeasurementChannel>(
+                                  value: _channel,
+                                  items: MeasurementChannel.values,
+                                  labelOf: (v) => v.label,
+                                  onChanged: (v) =>
+                                      setState(() => _channel = v),
+                                ),
+                              ])),
+                          const SizedBox(width: 12),
+                          Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                const _DlgLabel('Position'),
+                                _ProDropdown<MeasurementPosition>(
+                                  value: _position,
+                                  items: MeasurementPosition.values,
+                                  labelOf: (v) => v.label,
+                                  onChanged: (v) =>
+                                      setState(() => _position = v),
+                                ),
+                              ])),
+                        ]),
+                    const SizedBox(height: 12),
+                    Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                const _DlgLabel('Distance (cm)'),
+                                _ProTextField(
+                                    controller: _distCtrl, numeric: true),
+                              ])),
+                          const SizedBox(width: 12),
+                          Expanded(
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                const _DlgLabel('Angle (°)'),
+                                _ProTextField(
+                                    controller: _angleCtrl, numeric: true),
+                              ])),
+                        ]),
+                    const SizedBox(height: 12),
+                    const _DlgLabel('Notes (optional)'),
+                    _ProTextField(controller: _notesCtrl, maxLines: 2),
+                    const SizedBox(height: 16),
+                  ]),
+            )),
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: kProBorder, width: 0.5)),
+              ),
+              child: Row(children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('Cancel', style: proSubtitle(size: 12)),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () {
+                    final label = _labelCtrl.text.trim();
+                    if (label.isEmpty) return;
+                    Navigator.pop(
+                        context,
+                        _NewPointArgs(
+                          label,
+                          _channel,
+                          _position,
+                          double.tryParse(_distCtrl.text) ?? 100.0,
+                          double.tryParse(_angleCtrl.text) ?? 0.0,
+                          _notesCtrl.text,
+                        ));
+                  },
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: kProAccent.withValues(alpha: 0.12),
+                      border:
+                          Border.all(color: kProAccent.withValues(alpha: 0.5)),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('Add Point',
+                        style: TextStyle(color: kProAccent, fontSize: 12)),
+                  ),
+                ),
+              ]),
             ),
           ]),
         ),
-      ]),
-    ),
-  );
+      );
 }
 
 // ── Shared dialog widgets ─────────────────────────────────────────────────────
@@ -1374,9 +1590,10 @@ class _DlgLabel extends StatelessWidget {
   const _DlgLabel(this.text);
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 5),
-    child: Text(text, style: proLabel(size: 10, color: Colors.white38, spacing: 1)),
-  );
+        padding: const EdgeInsets.only(bottom: 5),
+        child: Text(text,
+            style: proLabel(size: 10, color: Colors.white38, spacing: 1)),
+      );
 }
 
 class _ProTextField extends StatelessWidget {
@@ -1393,20 +1610,24 @@ class _ProTextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => TextField(
-    controller: controller,
-    autofocus: autofocus,
-    maxLines: maxLines,
-    keyboardType: numeric ? const TextInputType.numberWithOptions(decimal: true) : null,
-    style: proTitle(size: 12),
-    decoration: const InputDecoration(
-      isDense: true,
-      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-      enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: kProBorder)),
-      focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: kProAccent)),
-      filled: true,
-      fillColor: kProSurface,
-    ),
-  );
+        controller: controller,
+        autofocus: autofocus,
+        maxLines: maxLines,
+        keyboardType: numeric
+            ? const TextInputType.numberWithOptions(decimal: true)
+            : null,
+        style: proTitle(size: 12),
+        decoration: const InputDecoration(
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          enabledBorder:
+              OutlineInputBorder(borderSide: BorderSide(color: kProBorder)),
+          focusedBorder:
+              OutlineInputBorder(borderSide: BorderSide(color: kProAccent)),
+          filled: true,
+          fillColor: kProSurface,
+        ),
+      );
 }
 
 class _ProDropdown<T> extends StatelessWidget {
@@ -1423,26 +1644,30 @@ class _ProDropdown<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: DropdownButton<T>(
-      value: value,
-      isExpanded: true,
-      dropdownColor: kProPanel,
-      underline: const SizedBox.shrink(),
-      style: proTitle(size: 11),
-      iconEnabledColor: Colors.white38,
-      items: items.map((i) => DropdownMenuItem(
-        value: i,
-        child: Text(labelOf(i), style: proTitle(size: 11)),
-      )).toList(),
-      onChanged: (v) { if (v != null) onChanged(v); },
-    ),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: DropdownButton<T>(
+          value: value,
+          isExpanded: true,
+          dropdownColor: kProPanel,
+          underline: const SizedBox.shrink(),
+          style: proTitle(size: 11),
+          iconEnabledColor: Colors.white38,
+          items: items
+              .map((i) => DropdownMenuItem(
+                    value: i,
+                    child: Text(labelOf(i), style: proTitle(size: 11)),
+                  ))
+              .toList(),
+          onChanged: (v) {
+            if (v != null) onChanged(v);
+          },
+        ),
+      );
 }
 
 // ── Phase C: Driver Readiness Bar ─────────────────────────────────────────────
@@ -1452,37 +1677,42 @@ class _DriverReadinessBar extends StatelessWidget {
   const _DriverReadinessBar({required this.acoustic});
 
   Color _statusColor(MeasurementStatus s) => switch (s) {
-    MeasurementStatus.validated   => kProGreen,
-    MeasurementStatus.imported    => kProAccent,
-    MeasurementStatus.needsReview => kProAmber,
-    MeasurementStatus.missingFile => kProRed,
-    MeasurementStatus.empty       => const Color(0xFF6B7280),
-  };
+        MeasurementStatus.validated => kProGreen,
+        MeasurementStatus.imported => kProAccent,
+        MeasurementStatus.needsReview => kProAmber,
+        MeasurementStatus.missingFile => kProRed,
+        MeasurementStatus.empty => const Color(0xFF6B7280),
+      };
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-    decoration: const BoxDecoration(
-      color: kProPanel,
-      border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Text('DRIVER CHANNELS', style: proLabel(size: 9, color: Colors.white24, spacing: 2)),
-        const Spacer(),
-        Text(acoustic.readinessLabel, style: proSubtitle(size: 9)),
-      ]),
-      const SizedBox(height: 8),
-      Row(
-        children: acoustic.driverChannels.map((ch) => Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: _ChannelPill(channel: ch, color: _statusColor(ch.measurementStatus)),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        decoration: const BoxDecoration(
+          color: kProPanel,
+          border: Border(bottom: BorderSide(color: kProBorder, width: 0.5)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('DRIVER CHANNELS',
+                style: proLabel(size: 9, color: Colors.white24, spacing: 2)),
+            const Spacer(),
+            Text(acoustic.readinessLabel, style: proSubtitle(size: 9)),
+          ]),
+          const SizedBox(height: 8),
+          Row(
+            children: acoustic.driverChannels
+                .map((ch) => Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: _ChannelPill(
+                            channel: ch,
+                            color: _statusColor(ch.measurementStatus)),
+                      ),
+                    ))
+                .toList(),
           ),
-        )).toList(),
-      ),
-    ]),
-  );
+        ]),
+      );
 }
 
 class _ChannelPill extends StatelessWidget {
@@ -1492,50 +1722,57 @@ class _ChannelPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.06),
-      border: Border.all(color: color.withValues(alpha: 0.3)),
-      borderRadius: BorderRadius.circular(3),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Text(channel.role.short,
-            style: TextStyle(color: color, fontSize: 9, letterSpacing: 1, fontWeight: FontWeight.w500)),
-        const Spacer(),
-        Text(channel.side.label, style: proLabel(size: 8, color: Colors.white24, spacing: 0.5)),
-      ]),
-      const SizedBox(height: 3),
-      Text(channel.name, style: proTitle(size: 10, color: Colors.white60), overflow: TextOverflow.ellipsis),
-      const SizedBox(height: 4),
-      Row(children: [
-        _FileIndicator(
-          label: 'FRD',
-          present: channel.hasFrd,
-          parsed: channel.hasParsedFrd,
-          hasPhase: channel.frdData?.hasPhase ?? false,
-          color: kProAccent,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.06),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+          borderRadius: BorderRadius.circular(3),
         ),
-        const SizedBox(width: 4),
-        _FileIndicator(
-          label: 'ZMA',
-          present: channel.hasZma,
-          parsed: channel.hasParsedZma,
-          hasPhase: channel.zmaData?.hasImpedance ?? false,
-          color: kProAmber,
-        ),
-      ]),
-      if (channel.hasParsedFrd) ...[
-        const SizedBox(height: 3),
-        Text(
-          '${channel.frdData!.pointCount} pts  ${channel.frdData!.freqRangeLabel}'
-          '${channel.frdData!.hasPhase ? "" : "  no phase"}',
-          style: const TextStyle(color: Colors.white24, fontSize: 8),
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
-    ]),
-  );
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text(channel.role.short,
+                style: TextStyle(
+                    color: color,
+                    fontSize: 9,
+                    letterSpacing: 1,
+                    fontWeight: FontWeight.w500)),
+            const Spacer(),
+            Text(channel.side.label,
+                style: proLabel(size: 8, color: Colors.white24, spacing: 0.5)),
+          ]),
+          const SizedBox(height: 3),
+          Text(channel.name,
+              style: proTitle(size: 10, color: Colors.white60),
+              overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 4),
+          Row(children: [
+            _FileIndicator(
+              label: 'FRD',
+              present: channel.hasFrd,
+              parsed: channel.hasParsedFrd,
+              hasPhase: channel.frdData?.hasPhase ?? false,
+              color: kProAccent,
+            ),
+            const SizedBox(width: 4),
+            _FileIndicator(
+              label: 'ZMA',
+              present: channel.hasZma,
+              parsed: channel.hasParsedZma,
+              hasPhase: channel.zmaData?.hasImpedance ?? false,
+              color: kProAmber,
+            ),
+          ]),
+          if (channel.hasParsedFrd) ...[
+            const SizedBox(height: 3),
+            Text(
+              '${channel.frdData!.pointCount} pts  ${channel.frdData!.freqRangeLabel}'
+              '${channel.frdData!.hasPhase ? "" : "  no phase"}',
+              style: const TextStyle(color: Colors.white24, fontSize: 8),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ]),
+      );
 }
 
 class _FileIndicator extends StatelessWidget {
