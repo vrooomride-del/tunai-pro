@@ -314,6 +314,10 @@ class _DeployTabState extends ConsumerState<DeployTab> {
             onResult: (result) {
               if (!mounted) return;
               setState(() => _lastHardwareResult = result);
+              // Shared so other tabs (Measure's live After-measurement mode)
+              // can gate on the same real write result instead of a weaker,
+              // local-only "apply succeeded" signal.
+              ref.read(lastHardwareWriteResultProvider.notifier).state = result;
             },
           ),
           if (_lastHardwareResult != null) ...[

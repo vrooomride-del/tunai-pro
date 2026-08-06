@@ -12,6 +12,7 @@ import '../transport/icp5_bluetooth_windows_driver.dart';
 import '../transport/icp5_transports.dart';
 import 'pro_adau1701_hardware_context.dart';
 import 'pro_hardware_capability.dart';
+import 'pro_hardware_write_executor.dart' show HardwareWriteExecutionResult;
 
 /// Shared ADAU1701 ICP5 USB hardware context. Lazily constructed once per
 /// ProviderScope so the Hardware tab and the Deploy Apply flow act on the same
@@ -60,3 +61,17 @@ final adau1701Icp5BleWindowsContextProvider =
   ref.onDispose(transport.close);
   return ctx;
 });
+
+/// The most recent real hardware write result from Deploy tab's
+/// HardwareApplyFlow. Null until an apply has actually executed this
+/// session.
+///
+/// Deploy tab already gates its own "Load After-Measurement FRD" button on
+/// `result.allWritten` — this provider exposes that same result so other
+/// tabs (Measure's live After-measurement mode) can apply the identical
+/// gate instead of re-deriving "was hardware actually written" from a
+/// weaker, local-only signal (e.g. the Guided AI candidate-apply result,
+/// which only means the local PEQ state was updated, not that anything
+/// reached the DSP).
+final lastHardwareWriteResultProvider =
+    StateProvider<HardwareWriteExecutionResult?>((ref) => null);

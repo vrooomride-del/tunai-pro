@@ -524,11 +524,39 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                   _LoopPhaseCard(phase: aiState.loopPhase!),
                 ],
                 // "Add After Measurement" — shown when apply succeeded and no
-                // after FRD cycle is in progress or complete yet.
+                // after FRD cycle is in progress or complete yet. Two paths
+                // to the same awaitingAfterFrd state: file import (stays on
+                // this screen) or live capture (Measure tab's Live
+                // Measurement section, gated there on the real hardware
+                // write result, not just this local apply).
                 if (aiState.loopPhase ==
                         ProClosedLoopPhase.awaitingMeasurement &&
                     aiState.applyResult?.status == TuningApplyStatus.ok) ...[
                   const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: project == null
+                          ? null
+                          : () {
+                              ref
+                                  .read(guidedAiProvider.notifier)
+                                  .enterAwaitingAfterFrd();
+                              ref
+                                  .read(workbenchTabProvider.notifier)
+                                  .go(kTabMeasure);
+                            },
+                      icon: const Icon(Icons.mic, size: 16),
+                      label: const Text('Measure 탭에서 After 측정하기'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF2A2A2A),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
@@ -536,7 +564,7 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
                           ? null
                           : () => _beginAfterFrd(project),
                       icon: const Icon(Icons.upload_file, size: 16),
-                      label: const Text('After 측정 FRD 불러오기'),
+                      label: const Text('After 측정 FRD 파일 불러오기'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.white70,
                         side: const BorderSide(color: Colors.white24),

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/deploy/pro_hardware_context_provider.dart';
+import '../../core/orchestrator/pro_guided_ai_controller.dart';
+import '../../core/orchestrator/pro_release_progress.dart';
 import '../../core/pro_project.dart';
 import '../../core/pro_project_store.dart';
 import '../../shared/pro_widgets.dart';
+import 'tabs/live_measurement_controller.dart';
 import 'widgets/deploy_dialog.dart';
 
 class ProjectStatusBar extends ConsumerWidget {
@@ -61,6 +64,26 @@ class ProjectStatusBar extends ConsumerWidget {
         hasLiveContext &&
         project.acousticState.driverChannels.isNotEmpty;
 
+    // Single release-flow progress model — combines existing state
+    // (frdReadiness, the live Guided AI state, the shared hardware-write
+    // result, and how many After channels have been accepted so far) rather
+    // than tracking a duplicate "what stage am I in" flag anywhere.
+    final guidedAiState = ref.watch(guidedAiProvider);
+    final lastHardwareWrite = ref.watch(lastHardwareWriteResultProvider);
+    ref.watch(liveMeasurementControllerProvider(projectId));
+    final afterAcceptedCount = ref
+        .read(liveMeasurementControllerProvider(projectId).notifier)
+        .afterByChannel
+        .length;
+    final progress = project == null
+        ? null
+        : ReleaseProgress.compute(
+            project: project,
+            guidedAiState: guidedAiState,
+            lastHardwareWrite: lastHardwareWrite,
+            afterAcceptedCount: afterAcceptedCount,
+          );
+
     return Container(
       decoration: const BoxDecoration(
         color: kProPanel,
@@ -95,12 +118,14 @@ class ProjectStatusBar extends ConsumerWidget {
                   _StatusItem(
                     label: 'TRANSPORT',
                     value: transportStatusLabel,
-                    valueColor: isLiveConnected ? kProGreen : const Color(0xFF6B7280),
+                    valueColor:
+                        isLiveConnected ? kProGreen : const Color(0xFF6B7280),
                   ),
                   const _Div(),
                   _StatusItem(label: 'SAMPLE RATE', value: sampleRate),
                   const _Div(),
-                  _StatusItem(label: 'DSP TARGET', value: dspTarget, maxWidth: 100),
+                  _StatusItem(
+                      label: 'DSP TARGET', value: dspTarget, maxWidth: 100),
                   const _Div(),
                   _StatusItem(
                     label: 'PROFILE',
@@ -114,6 +139,15 @@ class ProjectStatusBar extends ConsumerWidget {
                     valueColor: _safetyColor(project?.safetyStatus),
                     maxWidth: 110,
                   ),
+                  if (progress != null) ...[
+                    const _Div(),
+                    _StatusItem(
+                      label: 'RELEASE',
+                      value: progress.label(),
+                      valueColor: _releaseStageColor(progress.stage),
+                      maxWidth: 130,
+                    ),
+                  ],
                   if (project != null && project.measurementCount > 0) ...[
                     const _Div(),
                     _StatusItem(
@@ -142,30 +176,41 @@ class ProjectStatusBar extends ConsumerWidget {
   }
 
   Color _profileColor(ProfileStatus? s) => switch (s) {
-    ProfileStatus.draft => const Color(0xFF6B7280),
-    ProfileStatus.measured => kProAmber,
-    ProfileStatus.tuned => kProAccent,
-    ProfileStatus.verified => kProGreen,
-    ProfileStatus.deployed => kProGreen,
-    null => const Color(0xFF6B7280),
-  };
+        ProfileStatus.draft => const Color(0xFF6B7280),
+        ProfileStatus.measured => kProAmber,
+        ProfileStatus.tuned => kProAccent,
+        ProfileStatus.verified => kProGreen,
+        ProfileStatus.deployed => kProGreen,
+        null => const Color(0xFF6B7280),
+      };
 
   Color _safetyColor(SafetyStatus? s) => switch (s) {
-    SafetyStatus.notVerified => const Color(0xFF6B7280),
-    SafetyStatus.verified => kProGreen,
-    SafetyStatus.warning => kProAmber,
-    SafetyStatus.blocked => kProRed,
-    null => const Color(0xFF6B7280),
-  };
+        SafetyStatus.notVerified => const Color(0xFF6B7280),
+        SafetyStatus.verified => kProGreen,
+        SafetyStatus.warning => kProAmber,
+        SafetyStatus.blocked => kProRed,
+        null => const Color(0xFF6B7280),
+      };
+
+  Color _releaseStageColor(ReleaseStage s) => switch (s) {
+        ReleaseStage.noProject => const Color(0xFF6B7280),
+        ReleaseStage.measuring => kProAmber,
+        ReleaseStage.frdReady => kProAccent,
+        ReleaseStage.awaitingApproval => kProAmber,
+        ReleaseStage.deployReady => kProAccent,
+        ReleaseStage.applied => kProGreen,
+        ReleaseStage.afterInProgress => kProAmber,
+        ReleaseStage.closedLoopComplete => kProGreen,
+      };
 
   String _nextStepFor(ProfileStatus? s) => switch (s) {
-    ProfileStatus.draft => 'Take your first measurements',
-    ProfileStatus.measured => 'Start tuning your profile',
-    ProfileStatus.tuned => 'Verify your tuning is safe',
-    ProfileStatus.verified => 'Ready to deploy — see Deploy →',
-    ProfileStatus.deployed => 'Review or refine anytime',
-    null => '—',
-  };
+        ProfileStatus.draft => 'Take your first measurements',
+        ProfileStatus.measured => 'Start tuning your profile',
+        ProfileStatus.tuned => 'Verify your tuning is safe',
+        ProfileStatus.verified => 'Ready to deploy — see Deploy →',
+        ProfileStatus.deployed => 'Review or refine anytime',
+        null => '—',
+      };
 }
 
 class _PrimaryContextRow extends StatelessWidget {
@@ -203,7 +248,8 @@ class _PrimaryContextRow extends StatelessWidget {
         const SizedBox(width: 10),
         Text(
           profileStatus?.label ?? '—',
-          style: TextStyle(fontSize: 10, color: profileColor, fontWeight: FontWeight.w600),
+          style: TextStyle(
+              fontSize: 10, color: profileColor, fontWeight: FontWeight.w600),
         ),
         const SizedBox(width: 10),
         const _Div(),
@@ -228,24 +274,28 @@ class _StatusItem extends StatelessWidget {
   final String value;
   final Color? valueColor;
   final double? maxWidth;
-  const _StatusItem({required this.label, required this.value, this.valueColor, this.maxWidth});
+  const _StatusItem(
+      {required this.label,
+      required this.value,
+      this.valueColor,
+      this.maxWidth});
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 12),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Text(label, style: proLabel(size: 9, spacing: 1)),
-      const SizedBox(width: 6),
-      ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth ?? 200),
-        child: Text(
-          value,
-          style: proValue(size: 10, color: valueColor ?? Colors.white54),
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
-    ]),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(label, style: proLabel(size: 9, spacing: 1)),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth ?? 200),
+            child: Text(
+              value,
+              style: proValue(size: 10, color: valueColor ?? Colors.white54),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ]),
+      );
 }
 
 class _Div extends StatelessWidget {
@@ -268,9 +318,7 @@ class _DeployButton extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
             border: Border.all(
-              color: enabled
-                  ? kProAccent.withValues(alpha: 0.7)
-                  : kProBorder,
+              color: enabled ? kProAccent.withValues(alpha: 0.7) : kProBorder,
             ),
             borderRadius: BorderRadius.circular(3),
             color: enabled
