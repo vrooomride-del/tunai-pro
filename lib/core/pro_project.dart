@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'factory_sound_profile.dart';
 import 'pro_acoustic_data.dart';
 import 'pro_correction_cycle.dart';
@@ -12,49 +13,52 @@ import 'pro_deploy_package_data.dart';
 import 'pro_address_validation_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
+
 enum SafetyStatus { notVerified, verified, warning, blocked }
+
 enum HardwareConnection { disconnected, connected, simulation, error }
 
 extension ProfileStatusX on ProfileStatus {
   String get label => switch (this) {
-    ProfileStatus.draft => 'Draft',
-    ProfileStatus.measured => 'Measured',
-    ProfileStatus.tuned => 'Tuned',
-    ProfileStatus.verified => 'Verified',
-    ProfileStatus.deployed => 'Deployed',
-  };
+        ProfileStatus.draft => 'Draft',
+        ProfileStatus.measured => 'Measured',
+        ProfileStatus.tuned => 'Tuned',
+        ProfileStatus.verified => 'Verified',
+        ProfileStatus.deployed => 'Deployed',
+      };
 
   bool isAtLeast(ProfileStatus other) => index >= other.index;
 
   String toJson() => name;
-  static ProfileStatus fromJson(String s) =>
-      ProfileStatus.values.firstWhere((e) => e.name == s, orElse: () => ProfileStatus.draft);
+  static ProfileStatus fromJson(String s) => ProfileStatus.values
+      .firstWhere((e) => e.name == s, orElse: () => ProfileStatus.draft);
 }
 
 extension SafetyStatusX on SafetyStatus {
   String get label => switch (this) {
-    SafetyStatus.notVerified => 'Not verified',
-    SafetyStatus.verified => 'Verified',
-    SafetyStatus.warning => 'Warning',
-    SafetyStatus.blocked => 'Blocked',
-  };
+        SafetyStatus.notVerified => 'Not verified',
+        SafetyStatus.verified => 'Verified',
+        SafetyStatus.warning => 'Warning',
+        SafetyStatus.blocked => 'Blocked',
+      };
 
   String toJson() => name;
-  static SafetyStatus fromJson(String s) =>
-      SafetyStatus.values.firstWhere((e) => e.name == s, orElse: () => SafetyStatus.notVerified);
+  static SafetyStatus fromJson(String s) => SafetyStatus.values
+      .firstWhere((e) => e.name == s, orElse: () => SafetyStatus.notVerified);
 }
 
 extension HardwareConnectionX on HardwareConnection {
   String get label => switch (this) {
-    HardwareConnection.disconnected => 'Not connected',
-    HardwareConnection.connected => 'Connected',
-    HardwareConnection.simulation => 'Simulation',
-    HardwareConnection.error => 'Error',
-  };
+        HardwareConnection.disconnected => 'Not connected',
+        HardwareConnection.connected => 'Connected',
+        HardwareConnection.simulation => 'Simulation',
+        HardwareConnection.error => 'Error',
+      };
 
   String toJson() => name;
   static HardwareConnection fromJson(String s) =>
-      HardwareConnection.values.firstWhere((e) => e.name == s, orElse: () => HardwareConnection.disconnected);
+      HardwareConnection.values.firstWhere((e) => e.name == s,
+          orElse: () => HardwareConnection.disconnected);
 }
 
 class ProProject {
@@ -118,15 +122,20 @@ class ProProject {
     AddressValidationProjectState? addressValidationState,
     this.correctionCycles = const [],
     this.factoryProfiles = const [],
-  }) : acousticState = acousticState ?? MeasurementProjectState.createDefault(),
-       tuningState = tuningState ?? TuningProjectState.createDefault(),
-       protectionState = protectionState ?? ProtectionProjectState.createDefault(),
-       optimizerState = optimizerState ?? OptimizerProjectState.createDefault(),
-       exportState = exportState ?? ExportProjectState.createDefault(),
-       simulationState = simulationState ?? SimulationProjectState.createDefault(),
-       hardwareState = hardwareState ?? HardwareProjectState.createDefault(),
-       deployState = deployState ?? DeployProjectState.createDefault(),
-       addressValidationState = addressValidationState ?? AddressValidationProjectState.createDefault();
+  })  : acousticState =
+            acousticState ?? MeasurementProjectState.createDefault(),
+        tuningState = tuningState ?? TuningProjectState.createDefault(),
+        protectionState =
+            protectionState ?? ProtectionProjectState.createDefault(),
+        optimizerState =
+            optimizerState ?? OptimizerProjectState.createDefault(),
+        exportState = exportState ?? ExportProjectState.createDefault(),
+        simulationState =
+            simulationState ?? SimulationProjectState.createDefault(),
+        hardwareState = hardwareState ?? HardwareProjectState.createDefault(),
+        deployState = deployState ?? DeployProjectState.createDefault(),
+        addressValidationState = addressValidationState ??
+            AddressValidationProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -175,34 +184,36 @@ class ProProject {
     AddressValidationProjectState? addressValidationState,
     List<CorrectionCycle>? correctionCycles,
     List<FactorySoundProfile>? factoryProfiles,
-  }) => ProProject(
-    id: id,
-    name: name ?? this.name,
-    speakerModel: speakerModel ?? this.speakerModel,
-    roomName: roomName ?? this.roomName,
-    createdAt: createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-    sampleRate: sampleRate ?? this.sampleRate,
-    dspTarget: dspTarget ?? this.dspTarget,
-    channelConfig: channelConfig ?? this.channelConfig,
-    profileStatus: profileStatus ?? this.profileStatus,
-    safetyStatus: safetyStatus ?? this.safetyStatus,
-    connection: connection ?? this.connection,
-    notes: notes ?? this.notes,
-    measurementCount: measurementCount ?? this.measurementCount,
-    activeProfileName: activeProfileName ?? this.activeProfileName,
-    acousticState: acousticState ?? this.acousticState,
-    tuningState: tuningState ?? this.tuningState,
-    protectionState: protectionState ?? this.protectionState,
-    optimizerState: optimizerState ?? this.optimizerState,
-    exportState: exportState ?? this.exportState,
-    simulationState: simulationState ?? this.simulationState,
-    hardwareState: hardwareState ?? this.hardwareState,
-    deployState: deployState ?? this.deployState,
-    addressValidationState: addressValidationState ?? this.addressValidationState,
-    correctionCycles: correctionCycles ?? this.correctionCycles,
-    factoryProfiles: factoryProfiles ?? this.factoryProfiles,
-  );
+  }) =>
+      ProProject(
+        id: id,
+        name: name ?? this.name,
+        speakerModel: speakerModel ?? this.speakerModel,
+        roomName: roomName ?? this.roomName,
+        createdAt: createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+        sampleRate: sampleRate ?? this.sampleRate,
+        dspTarget: dspTarget ?? this.dspTarget,
+        channelConfig: channelConfig ?? this.channelConfig,
+        profileStatus: profileStatus ?? this.profileStatus,
+        safetyStatus: safetyStatus ?? this.safetyStatus,
+        connection: connection ?? this.connection,
+        notes: notes ?? this.notes,
+        measurementCount: measurementCount ?? this.measurementCount,
+        activeProfileName: activeProfileName ?? this.activeProfileName,
+        acousticState: acousticState ?? this.acousticState,
+        tuningState: tuningState ?? this.tuningState,
+        protectionState: protectionState ?? this.protectionState,
+        optimizerState: optimizerState ?? this.optimizerState,
+        exportState: exportState ?? this.exportState,
+        simulationState: simulationState ?? this.simulationState,
+        hardwareState: hardwareState ?? this.hardwareState,
+        deployState: deployState ?? this.deployState,
+        addressValidationState:
+            addressValidationState ?? this.addressValidationState,
+        correctionCycles: correctionCycles ?? this.correctionCycles,
+        factoryProfiles: factoryProfiles ?? this.factoryProfiles,
+      );
 
   ProProject touch() => copyWith(updatedAt: DateTime.now());
 
@@ -210,104 +221,133 @@ class ProProject {
   String get deviceName => connection.label;
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'speakerModel': speakerModel,
-    'roomName': roomName,
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
-    'sampleRate': sampleRate,
-    'dspTarget': dspTarget,
-    'channelConfig': channelConfig,
-    'profileStatus': profileStatus.toJson(),
-    'safetyStatus': safetyStatus.toJson(),
-    'connection': connection.toJson(),
-    if (notes != null) 'notes': notes,
-    'measurementCount': measurementCount,
-    if (activeProfileName != null) 'activeProfileName': activeProfileName,
-    'acousticState': acousticState.toJson(),
-    'tuningState': tuningState.toJson(),
-    'protectionState': protectionState.toJson(),
-    'optimizerState': optimizerState.toJson(),
-    'exportState': exportState.toJson(),
-    'simulationState': simulationState.toJson(),
-    'hardwareState': hardwareState.toJson(),
-    'deployState': deployState.toJson(),
-    'addressValidationState': addressValidationState.toJson(),
-    if (correctionCycles.isNotEmpty)
-      'correctionCycles':
-          correctionCycles.map((c) => c.toJson()).toList(),
-    if (factoryProfiles.isNotEmpty)
-      'factoryProfiles':
-          factoryProfiles.map((p) => p.toJson()).toList(),
-  };
+        'id': id,
+        'name': name,
+        'speakerModel': speakerModel,
+        'roomName': roomName,
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'sampleRate': sampleRate,
+        'dspTarget': dspTarget,
+        'channelConfig': channelConfig,
+        'profileStatus': profileStatus.toJson(),
+        'safetyStatus': safetyStatus.toJson(),
+        'connection': connection.toJson(),
+        if (notes != null) 'notes': notes,
+        'measurementCount': measurementCount,
+        if (activeProfileName != null) 'activeProfileName': activeProfileName,
+        'acousticState': acousticState.toJson(),
+        'tuningState': tuningState.toJson(),
+        'protectionState': protectionState.toJson(),
+        'optimizerState': optimizerState.toJson(),
+        'exportState': exportState.toJson(),
+        'simulationState': simulationState.toJson(),
+        'hardwareState': hardwareState.toJson(),
+        'deployState': deployState.toJson(),
+        'addressValidationState': addressValidationState.toJson(),
+        if (correctionCycles.isNotEmpty)
+          'correctionCycles': correctionCycles.map((c) => c.toJson()).toList(),
+        if (factoryProfiles.isNotEmpty)
+          'factoryProfiles': factoryProfiles.map((p) => p.toJson()).toList(),
+      };
 
   factory ProProject.fromJson(Map<String, dynamic> j) => ProProject(
-    id: j['id'] as String,
-    name: j['name'] as String? ?? 'Untitled',
-    speakerModel: j['speakerModel'] as String? ?? 'TUNAI ONE',
-    roomName: j['roomName'] as String? ?? 'Desk',
-    createdAt: DateTime.tryParse(j['createdAt'] as String? ?? '') ?? DateTime.now(),
-    updatedAt: DateTime.tryParse(j['updatedAt'] as String? ?? '') ?? DateTime.now(),
-    sampleRate: j['sampleRate'] as int? ?? 48000,
-    dspTarget: j['dspTarget'] as String? ?? 'ADAU1701',
-    channelConfig: j['channelConfig'] as String? ?? '2-way stereo',
-    profileStatus: ProfileStatusX.fromJson(j['profileStatus'] as String? ?? 'draft'),
-    safetyStatus: SafetyStatusX.fromJson(j['safetyStatus'] as String? ?? 'notVerified'),
-    connection: HardwareConnectionX.fromJson(j['connection'] as String? ?? 'disconnected'),
-    notes: j['notes'] as String?,
-    measurementCount: j['measurementCount'] as int? ?? 0,
-    activeProfileName: j['activeProfileName'] as String?,
-    acousticState: j['acousticState'] != null
-        ? MeasurementProjectState.fromJson(Map<String, dynamic>.from(j['acousticState'] as Map))
-        : null,
-    tuningState: j['tuningState'] != null
-        ? TuningProjectState.fromJson(Map<String, dynamic>.from(j['tuningState'] as Map))
-        : null,
-    protectionState: j['protectionState'] != null
-        ? ProtectionProjectState.fromJson(Map<String, dynamic>.from(j['protectionState'] as Map))
-        : null,
-    optimizerState: j['optimizerState'] != null
-        ? OptimizerProjectState.fromJson(Map<String, dynamic>.from(j['optimizerState'] as Map))
-        : null,
-    exportState: j['exportState'] != null
-        ? ExportProjectState.fromJson(Map<String, dynamic>.from(j['exportState'] as Map))
-        : null,
-    simulationState: j['simulationState'] != null
-        ? SimulationProjectState.fromJson(
-            Map<String, dynamic>.from(j['simulationState'] as Map))
-        : null,
-    hardwareState: j['hardwareState'] != null
-        ? HardwareProjectState.fromJson(
-            Map<String, dynamic>.from(j['hardwareState'] as Map))
-        : null,
-    deployState: j['deployState'] != null
-        ? DeployProjectState.fromJson(
-            Map<String, dynamic>.from(j['deployState'] as Map))
-        : null,
-    addressValidationState: j['addressValidationState'] != null
-        ? AddressValidationProjectState.fromJson(
-            Map<String, dynamic>.from(j['addressValidationState'] as Map))
-        : null,
-    correctionCycles: (j['correctionCycles'] as List? ?? [])
-        .map((e) =>
-            CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList(),
-    factoryProfiles: (j['factoryProfiles'] as List? ?? [])
-        .map((e) =>
-            FactorySoundProfile.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList(),
-  );
+        id: j['id'] as String,
+        name: j['name'] as String? ?? 'Untitled',
+        speakerModel: j['speakerModel'] as String? ?? 'TUNAI ONE',
+        roomName: j['roomName'] as String? ?? 'Desk',
+        createdAt: DateTime.tryParse(j['createdAt'] as String? ?? '') ??
+            DateTime.now(),
+        updatedAt: DateTime.tryParse(j['updatedAt'] as String? ?? '') ??
+            DateTime.now(),
+        sampleRate: j['sampleRate'] as int? ?? 48000,
+        dspTarget: j['dspTarget'] as String? ?? 'ADAU1701',
+        channelConfig: j['channelConfig'] as String? ?? '2-way stereo',
+        profileStatus:
+            ProfileStatusX.fromJson(j['profileStatus'] as String? ?? 'draft'),
+        safetyStatus: SafetyStatusX.fromJson(
+            j['safetyStatus'] as String? ?? 'notVerified'),
+        connection: HardwareConnectionX.fromJson(
+            j['connection'] as String? ?? 'disconnected'),
+        notes: j['notes'] as String?,
+        measurementCount: j['measurementCount'] as int? ?? 0,
+        activeProfileName: j['activeProfileName'] as String?,
+        acousticState: j['acousticState'] != null
+            ? MeasurementProjectState.fromJson(
+                Map<String, dynamic>.from(j['acousticState'] as Map))
+            : null,
+        tuningState: j['tuningState'] != null
+            ? TuningProjectState.fromJson(
+                Map<String, dynamic>.from(j['tuningState'] as Map))
+            : null,
+        protectionState: j['protectionState'] != null
+            ? ProtectionProjectState.fromJson(
+                Map<String, dynamic>.from(j['protectionState'] as Map))
+            : null,
+        optimizerState: j['optimizerState'] != null
+            ? OptimizerProjectState.fromJson(
+                Map<String, dynamic>.from(j['optimizerState'] as Map))
+            : null,
+        exportState: j['exportState'] != null
+            ? ExportProjectState.fromJson(
+                Map<String, dynamic>.from(j['exportState'] as Map))
+            : null,
+        simulationState: j['simulationState'] != null
+            ? SimulationProjectState.fromJson(
+                Map<String, dynamic>.from(j['simulationState'] as Map))
+            : null,
+        hardwareState: j['hardwareState'] != null
+            ? HardwareProjectState.fromJson(
+                Map<String, dynamic>.from(j['hardwareState'] as Map))
+            : null,
+        deployState: j['deployState'] != null
+            ? DeployProjectState.fromJson(
+                Map<String, dynamic>.from(j['deployState'] as Map))
+            : null,
+        addressValidationState: j['addressValidationState'] != null
+            ? AddressValidationProjectState.fromJson(
+                Map<String, dynamic>.from(j['addressValidationState'] as Map))
+            : null,
+        correctionCycles: (j['correctionCycles'] as List? ?? [])
+            .map((e) =>
+                CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList(),
+        factoryProfiles: (j['factoryProfiles'] as List? ?? [])
+            .map((e) => FactorySoundProfile.fromJson(
+                Map<String, dynamic>.from(e as Map)))
+            .toList(),
+      );
 
   static String encodeList(List<ProProject> list) =>
       jsonEncode(list.map((p) => p.toJson()).toList());
 
+  /// Decodes a persisted project list, isolating each entry's parse so one
+  /// corrupt or pre-migration project cannot wipe every other saved project.
+  /// Unparsable entries are skipped and logged (no raw JSON/PII in the log).
   static List<ProProject> decodeList(String raw) {
+    final Object? decoded;
     try {
-      final list = jsonDecode(raw) as List;
-      return list.map((e) => ProProject.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-    } catch (_) {
+      decoded = jsonDecode(raw);
+    } catch (e) {
+      debugPrint(
+          'ProProject.decodeList: invalid JSON root, returning empty list ($e)');
       return [];
     }
+    if (decoded is! List) {
+      debugPrint(
+          'ProProject.decodeList: root is not a list (${decoded.runtimeType}), returning empty list');
+      return [];
+    }
+    final result = <ProProject>[];
+    for (var i = 0; i < decoded.length; i++) {
+      try {
+        result.add(
+            ProProject.fromJson(Map<String, dynamic>.from(decoded[i] as Map)));
+      } catch (e) {
+        debugPrint(
+            'ProProject.decodeList: skipping unparsable project at index $i ($e)');
+      }
+    }
+    return result;
   }
 }

@@ -36,7 +36,6 @@ import '../pro_tuning_data.dart';
 import '../acoustic/closed_loop_evaluator.dart';
 import '../pro_project.dart';
 import '../pro_export_data.dart';
-import '../spectrum_snapshot.dart';
 import 'correction_cycle_evaluator.dart';
 import 'pro_acoustic_intent.dart';
 import 'pro_guided_ai_state.dart';
@@ -589,51 +588,6 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
       beforeArtifact: beforeArtifact,
       beforeRef: beforeRef,
       afterArtifact: afterArtifact,
-      afterRef: afterRef,
-    );
-    if (result == null) return;
-
-    state = ProGuidedAiCompleted(
-      outcome: current.outcome,
-      explanation: current.explanation,
-      loopVerdict: result.verdict,
-      applyResult: current.applyResult,
-      beforeMeasurementRef: beforeRef,
-      loopPhase: ProClosedLoopPhase.evaluated,
-      hardwareWritePlan: current.hardwareWritePlan,
-    );
-  }
-
-  /// Receives live-mic bins and transitions the state from
-  /// [ProClosedLoopPhase.awaitingMeasurement] to [ProClosedLoopPhase.evaluated].
-  ///
-  /// Parallel to [submitAfterMeasurement] but accepts a [List<FrequencyBin>]
-  /// (e.g. converted from [MicMeasurementState.frequencyResponse]) instead of
-  /// a [MeasurementArtifact]. No-op unless conditions in [submitAfterMeasurement]
-  /// are met. No fake verdict is ever produced.
-  void submitAfterMeasurementFromBins({
-    required List<FrequencyBin> afterBins,
-    required String afterRef,
-  }) {
-    final current = state;
-    if (current is! ProGuidedAiCompleted) return;
-    if (current.loopPhase != ProClosedLoopPhase.awaitingMeasurement) return;
-    final beforeRef = current.beforeMeasurementRef;
-    final store = _sessionStore;
-    final pid = _sessionProjectId;
-    if (beforeRef == null || store == null || pid == null) return;
-
-    MeasurementArtifact beforeArtifact;
-    try {
-      beforeArtifact = store.getTyped<MeasurementArtifact>(pid, beforeRef);
-    } catch (_) {
-      return;
-    }
-
-    final result = ProClosedLoopMeasurementBridge.evaluateWithBins(
-      beforeArtifact: beforeArtifact,
-      beforeRef: beforeRef,
-      afterBins: afterBins,
       afterRef: afterRef,
     );
     if (result == null) return;

@@ -765,23 +765,43 @@ class Icp5UsbTransport
     }
   }
 
-  // Peripheral-initiated disconnect: synchronously reset all transport state so
-  // the next open() is not blocked by stale references. Mirrors close() field
-  // by field; driver-level teardown (setNotifyValue / device.disconnect) is
+  // Peripheral-initiated disconnect (remote error OR a clean remote close):
+  // synchronously reset all transport state so the next open() is not
+  // blocked by stale references. Mirrors close() field by field;
+  // driver-level teardown (setNotifyValue / device.disconnect) is
   // fire-and-forget with errors suppressed — the peripheral already dropped
-  // the GATT link, so GATT operations may fail and that is expected.
+  // the link, so GATT/serial teardown operations may fail and that is
+  // expected.
   //
-  // Neither _handshakeResponse nor _pendingResponse is completed here.
-  // Both are invoked from sync: true stream callbacks which means
-  // _onConnectionError may fire synchronously inside write() — before
+  // Shared by both _onConnectionError (onError) and _onConnectionClosed
+  // (onDone) — a link drop can surface through either callback depending on
+  // platform/driver, and prior to this both were handled inconsistently:
+  // only the onError path performed this reset, so a disconnect that
+  // surfaced via onDone left _state/_connection/_handshakeComplete/
+  // _selectedPort stale, isConnected kept reporting true, and _open()
+  // refused to reopen ("already exclusively owned") until the app was
+  // restarted.
+  //
+  // Neither _handshakeResponse nor _pendingResponse is completed here. Both
+  // onError and onDone are invoked from sync: true stream callbacks, which
+  // means this may fire synchronously inside write() — before
   // _open()/_exchange() have armed their await on the future. Completing the
   // Completer synchronously in that window causes the error to escape the
-  // enclosing try/catch (FakeAsync zone delivers it before the await resumes).
-  // Clearing the reference (without completing) is sufficient: _onBytes can no
-  // longer route frames to either Completer, and the in-flight
-  // timeout(readTimeout) eventually fires and completes them safely via
-  // TimeoutException, which the caller already handles.
-  void _onConnectionError(Object error, StackTrace stackTrace) {
+  // enclosing try/catch (FakeAsync zone delivers it before the await
+  // resumes). Clearing the reference (without completing) is sufficient:
+  // _onBytes can no longer route frames to either Completer, and the
+  // in-flight timeout(readTimeout) eventually fires and completes them
+  // safely via TimeoutException, which the caller already handles. Clearing
+  // _activeGeneration also ensures a late/stale ACK or notify from the
+  // connection generation that just dropped can never be routed to (and
+  // thus complete) whatever new connection request comes next.
+  //
+  // Idempotent by construction: every field read here is captured into a
+  // local (sub/conn) and nulled before use, so a second call — e.g. a
+  // user-initiated close() racing a remote onDone for the same drop — finds
+  // _subscription/_connection already null and performs no second
+  // cancel()/close() call.
+  void _resetStateAfterDisconnect() {
     _activeGeneration = -1;
     final sub = _subscription;
     _subscription = null;
@@ -799,8 +819,12 @@ class Icp5UsbTransport
     conn?.close().ignore();
   }
 
+  void _onConnectionError(Object error, StackTrace stackTrace) {
+    _resetStateAfterDisconnect();
+  }
+
   void _onConnectionClosed() {
-    _activeGeneration = -1;
+    _resetStateAfterDisconnect();
   }
 
   /// Releases generation/completer ownership, mirroring
@@ -868,8 +892,8 @@ class Icp5UsbTransport
       timeoutTimer = Timer(readTimeout, () {
         if (response.isCompleted) return;
         _clearApplicationRequest(generation, response);
-        response.completeError(
-            TimeoutException('ICP5 ACK timeout', readTimeout));
+        response
+            .completeError(TimeoutException('ICP5 ACK timeout', readTimeout));
       });
       final frame = await response.future;
       timeoutTimer.cancel();
@@ -1001,6 +1025,12 @@ class Icp5BluetoothTransport extends Icp5UsbTransport {
   void _onConnectionError(Object error, StackTrace stackTrace) {
     _stopHeartbeat();
     super._onConnectionError(error, stackTrace);
+  }
+
+  @override
+  void _onConnectionClosed() {
+    _stopHeartbeat();
+    super._onConnectionClosed();
   }
 
   void _startHeartbeat() {

@@ -25,19 +25,20 @@ class ProProjectStore {
     this.currentProjectId,
   });
 
-  ProProject? get currentProject =>
-      currentProjectId == null
-          ? null
-          : projects.where((p) => p.id == currentProjectId).firstOrNull;
+  ProProject? get currentProject => currentProjectId == null
+      ? null
+      : projects.where((p) => p.id == currentProjectId).firstOrNull;
 
   ProProjectStore copyWith({
     List<ProProject>? projects,
     String? currentProjectId,
     bool clearCurrentId = false,
-  }) => ProProjectStore(
-    projects: projects ?? this.projects,
-    currentProjectId: clearCurrentId ? null : (currentProjectId ?? this.currentProjectId),
-  );
+  }) =>
+      ProProjectStore(
+        projects: projects ?? this.projects,
+        currentProjectId:
+            clearCurrentId ? null : (currentProjectId ?? this.currentProjectId),
+      );
 }
 
 class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
@@ -58,7 +59,13 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     final raw = prefs.getString(_kProjectsKey);
     final currentId = prefs.getString(_kCurrentIdKey);
     final projects = raw != null ? ProProject.decodeList(raw) : <ProProject>[];
-    state = ProProjectStore(projects: projects, currentProjectId: currentId);
+    // A project referenced by the persisted current-id may have been dropped
+    // by decodeList (corrupt/unparsable entry) — don't carry a dangling id
+    // forward, or it would be re-persisted by the next _persist() call.
+    final resolvedCurrentId =
+        projects.any((p) => p.id == currentId) ? currentId : null;
+    state = ProProjectStore(
+        projects: projects, currentProjectId: resolvedCurrentId);
   }
 
   Future<void> _persist() async {
@@ -81,7 +88,8 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
 
   Future<void> updateProject(ProProject project) async {
     state = state.copyWith(
-      projects: state.projects.map((p) => p.id == project.id ? project : p).toList(),
+      projects:
+          state.projects.map((p) => p.id == project.id ? project : p).toList(),
     );
     await _persist();
   }
@@ -91,7 +99,8 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     final newCurrentId = state.currentProjectId == id
         ? (remaining.isNotEmpty ? remaining.last.id : null)
         : state.currentProjectId;
-    state = ProProjectStore(projects: remaining, currentProjectId: newCurrentId);
+    state =
+        ProProjectStore(projects: remaining, currentProjectId: newCurrentId);
     await _persist();
   }
 
@@ -134,17 +143,20 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
 
   Future<void> renameProject(String id, String newName) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(project.copyWith(name: newName, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(name: newName, updatedAt: DateTime.now()));
   }
 
   Future<void> updateProfileStatus(String id, ProfileStatus status) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(project.copyWith(profileStatus: status, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(profileStatus: status, updatedAt: DateTime.now()));
   }
 
   Future<void> updateSafetyStatus(String id, SafetyStatus status) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(project.copyWith(safetyStatus: status, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(safetyStatus: status, updatedAt: DateTime.now()));
   }
 
   // Called unawaited from hardware_tab.dart's BLE PASS_HANDSHAKE/disconnect
@@ -152,49 +164,61 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
   // loaded when a stale BLE transport fires its reconnect callback) must be a
   // silent no-op — an unawaited throw here would leave project.connection
   // stale while activeAdau1701ContextProvider has already been updated.
-  Future<void> updateHardwareConnection(String id, HardwareConnection conn) async {
+  Future<void> updateHardwareConnection(
+      String id, HardwareConnection conn) async {
     final project = state.projects.where((p) => p.id == id).firstOrNull;
     if (project == null) return;
-    await updateProject(project.copyWith(connection: conn, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(connection: conn, updatedAt: DateTime.now()));
   }
 
-  Future<void> updateAcousticState(String id, MeasurementProjectState acousticState) async {
+  Future<void> updateAcousticState(
+      String id, MeasurementProjectState acousticState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(project.copyWith(acousticState: acousticState, updatedAt: DateTime.now()));
+    await updateProject(project.copyWith(
+        acousticState: acousticState, updatedAt: DateTime.now()));
   }
 
-  Future<void> updateTuningState(String id, TuningProjectState tuningState) async {
+  Future<void> updateTuningState(
+      String id, TuningProjectState tuningState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(project.copyWith(tuningState: tuningState, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(tuningState: tuningState, updatedAt: DateTime.now()));
   }
 
-  Future<void> updateProtectionState(String id, ProtectionProjectState protectionState) async {
+  Future<void> updateProtectionState(
+      String id, ProtectionProjectState protectionState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(project.copyWith(protectionState: protectionState, updatedAt: DateTime.now()));
+    await updateProject(project.copyWith(
+        protectionState: protectionState, updatedAt: DateTime.now()));
   }
 
-  Future<void> updateOptimizerState(String id, OptimizerProjectState optimizerState) async {
+  Future<void> updateOptimizerState(
+      String id, OptimizerProjectState optimizerState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(project.copyWith(optimizerState: optimizerState, updatedAt: DateTime.now()));
+    await updateProject(project.copyWith(
+        optimizerState: optimizerState, updatedAt: DateTime.now()));
   }
 
-  Future<void> updateExportState(String id, ExportProjectState exportState) async {
+  Future<void> updateExportState(
+      String id, ExportProjectState exportState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(project.copyWith(exportState: exportState, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(exportState: exportState, updatedAt: DateTime.now()));
   }
 
   Future<void> updateSimulationState(
       String id, SimulationProjectState simulationState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(
-        project.copyWith(simulationState: simulationState, updatedAt: DateTime.now()));
+    await updateProject(project.copyWith(
+        simulationState: simulationState, updatedAt: DateTime.now()));
   }
 
   Future<void> updateHardwareState(
       String id, HardwareProjectState hardwareState) async {
     final project = state.projects.firstWhere((p) => p.id == id);
-    await updateProject(
-        project.copyWith(hardwareState: hardwareState, updatedAt: DateTime.now()));
+    await updateProject(project.copyWith(
+        hardwareState: hardwareState, updatedAt: DateTime.now()));
   }
 
   Future<void> updateDeployState(
@@ -263,8 +287,8 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
       ...project.correctionCycles,
       cycle,
     ];
-    await updateProject(project.copyWith(
-        correctionCycles: updated, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(correctionCycles: updated, updatedAt: DateTime.now()));
   }
 
   /// Replaces the [CorrectionCycle] at [cycleNumber] with [cycle] and persists.
@@ -273,8 +297,8 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     final updated = project.correctionCycles
         .map((c) => c.cycleNumber == cycle.cycleNumber ? cycle : c)
         .toList();
-    await updateProject(project.copyWith(
-        correctionCycles: updated, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(correctionCycles: updated, updatedAt: DateTime.now()));
   }
 
   /// Software-only rollback of a [CorrectionCycleDecision.worsened] cycle:
@@ -322,11 +346,11 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
         updatedAt: now,
       );
 
-      final newProfileStatus = (project.profileStatus ==
-                  ProfileStatus.verified ||
-              project.profileStatus == ProfileStatus.deployed)
-          ? ProfileStatus.tuned
-          : project.profileStatus;
+      final newProfileStatus =
+          (project.profileStatus == ProfileStatus.verified ||
+                  project.profileStatus == ProfileStatus.deployed)
+              ? ProfileStatus.tuned
+              : project.profileStatus;
 
       final staleDeployPackages = project.deployState.packages
           .map((pkg) => (pkg.status == DeployPackageStatus.ready ||
@@ -361,8 +385,8 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
   Future<void> addFactoryProfile(String id, FactorySoundProfile profile) async {
     final project = state.projects.firstWhere((p) => p.id == id);
     final updated = [...project.factoryProfiles, profile];
-    await updateProject(project.copyWith(
-        factoryProfiles: updated, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(factoryProfiles: updated, updatedAt: DateTime.now()));
   }
 
   /// Replaces the [FactorySoundProfile] matching [profile.profileId] and persists.
@@ -372,8 +396,8 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     final updated = project.factoryProfiles
         .map((p) => p.profileId == profile.profileId ? profile : p)
         .toList();
-    await updateProject(project.copyWith(
-        factoryProfiles: updated, updatedAt: DateTime.now()));
+    await updateProject(
+        project.copyWith(factoryProfiles: updated, updatedAt: DateTime.now()));
   }
 }
 

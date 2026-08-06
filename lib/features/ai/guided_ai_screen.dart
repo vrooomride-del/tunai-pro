@@ -32,10 +32,8 @@ import '../../core/pro_acoustic_data.dart' show DriverChannel;
 import '../../core/pro_correction_cycle.dart';
 import '../../core/pro_project_store.dart';
 import '../../core/pro_project.dart';
-import '../../core/spectrum_snapshot.dart';
 import '../../core/workbench_tab_provider.dart';
 import '../../shared/components/section_header.dart';
-import '../mic/mic_measurement_controller.dart';
 
 class GuidedAiScreen extends ConsumerStatefulWidget {
   final String projectId;
@@ -210,25 +208,6 @@ class _GuidedAiScreenState extends ConsumerState<GuidedAiScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // When a mic measurement completes while awaiting closed-loop after data,
-    // convert the raw frequency response to FrequencyBin and forward to the
-    // AI controller. The map keys ('frequency', 'db') come from MicMeasurementController.
-    ref.listen(micMeasurementProvider, (prev, next) {
-      if (next.status != MeasurementStatus.done) return;
-      final aiState = ref.read(guidedAiProvider);
-      if (aiState is! ProGuidedAiCompleted) return;
-      if (aiState.loopPhase != ProClosedLoopPhase.awaitingMeasurement) return;
-      final bins = [
-        for (final m in next.frequencyResponse)
-          if (m['frequency'] != null && m['db'] != null)
-            FrequencyBin(frequency: m['frequency']!, magnitude: m['db']!),
-      ];
-      ref.read(guidedAiProvider.notifier).submitAfterMeasurementFromBins(
-            afterBins: bins,
-            afterRef: 'mic_after_${DateTime.now().millisecondsSinceEpoch}',
-          );
-    });
-
     // Resolve the project the same way ProjectStatusBar does: look up by
     // widget.projectId in the projects list. This avoids depending on
     // currentProjectId, which may not be in sync when opening via the

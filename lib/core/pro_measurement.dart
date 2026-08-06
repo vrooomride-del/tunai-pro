@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -6,16 +7,15 @@ enum MeasurementSessionStatus { draft, ready, running, completed, reviewed }
 
 extension MeasurementSessionStatusX on MeasurementSessionStatus {
   String get label => switch (this) {
-    MeasurementSessionStatus.draft     => 'Draft',
-    MeasurementSessionStatus.ready     => 'Ready',
-    MeasurementSessionStatus.running   => 'Running',
-    MeasurementSessionStatus.completed => 'Completed',
-    MeasurementSessionStatus.reviewed  => 'Reviewed',
-  };
+        MeasurementSessionStatus.draft => 'Draft',
+        MeasurementSessionStatus.ready => 'Ready',
+        MeasurementSessionStatus.running => 'Running',
+        MeasurementSessionStatus.completed => 'Completed',
+        MeasurementSessionStatus.reviewed => 'Reviewed',
+      };
   String toJson() => name;
   static MeasurementSessionStatus fromJson(String s) =>
-      MeasurementSessionStatus.values.firstWhere(
-          (e) => e.name == s,
+      MeasurementSessionStatus.values.firstWhere((e) => e.name == s,
           orElse: () => MeasurementSessionStatus.draft);
 }
 
@@ -23,55 +23,64 @@ enum MeasurementPointStatus { pending, ready, captured, rejected, accepted }
 
 extension MeasurementPointStatusX on MeasurementPointStatus {
   String get label => switch (this) {
-    MeasurementPointStatus.pending   => 'Pending',
-    MeasurementPointStatus.ready     => 'Ready',
-    MeasurementPointStatus.captured  => 'Captured',
-    MeasurementPointStatus.rejected  => 'Rejected',
-    MeasurementPointStatus.accepted  => 'Accepted',
-  };
+        MeasurementPointStatus.pending => 'Pending',
+        MeasurementPointStatus.ready => 'Ready',
+        MeasurementPointStatus.captured => 'Captured',
+        MeasurementPointStatus.rejected => 'Rejected',
+        MeasurementPointStatus.accepted => 'Accepted',
+      };
   String toJson() => name;
   static MeasurementPointStatus fromJson(String s) =>
-      MeasurementPointStatus.values.firstWhere(
-          (e) => e.name == s,
+      MeasurementPointStatus.values.firstWhere((e) => e.name == s,
           orElse: () => MeasurementPointStatus.pending);
 }
 
-enum MeasurementChannel { left, right, mono, woofer, tweeter, midrange, subwoofer }
+enum MeasurementChannel {
+  left,
+  right,
+  mono,
+  woofer,
+  tweeter,
+  midrange,
+  subwoofer
+}
 
 extension MeasurementChannelX on MeasurementChannel {
   String get label => switch (this) {
-    MeasurementChannel.left      => 'Left',
-    MeasurementChannel.right     => 'Right',
-    MeasurementChannel.mono      => 'Mono',
-    MeasurementChannel.woofer    => 'Woofer',
-    MeasurementChannel.tweeter   => 'Tweeter',
-    MeasurementChannel.midrange  => 'Midrange',
-    MeasurementChannel.subwoofer => 'Subwoofer',
-  };
+        MeasurementChannel.left => 'Left',
+        MeasurementChannel.right => 'Right',
+        MeasurementChannel.mono => 'Mono',
+        MeasurementChannel.woofer => 'Woofer',
+        MeasurementChannel.tweeter => 'Tweeter',
+        MeasurementChannel.midrange => 'Midrange',
+        MeasurementChannel.subwoofer => 'Subwoofer',
+      };
   String toJson() => name;
-  static MeasurementChannel fromJson(String s) =>
-      MeasurementChannel.values.firstWhere(
-          (e) => e.name == s,
-          orElse: () => MeasurementChannel.left);
+  static MeasurementChannel fromJson(String s) => MeasurementChannel.values
+      .firstWhere((e) => e.name == s, orElse: () => MeasurementChannel.left);
 }
 
 enum MeasurementPosition {
-  listeningPosition, nearfield, leftSeat, rightSeat, center, custom
+  listeningPosition,
+  nearfield,
+  leftSeat,
+  rightSeat,
+  center,
+  custom
 }
 
 extension MeasurementPositionX on MeasurementPosition {
   String get label => switch (this) {
-    MeasurementPosition.listeningPosition => 'Listening Position',
-    MeasurementPosition.nearfield         => 'Nearfield',
-    MeasurementPosition.leftSeat          => 'Left Seat',
-    MeasurementPosition.rightSeat         => 'Right Seat',
-    MeasurementPosition.center            => 'Center',
-    MeasurementPosition.custom            => 'Custom',
-  };
+        MeasurementPosition.listeningPosition => 'Listening Position',
+        MeasurementPosition.nearfield => 'Nearfield',
+        MeasurementPosition.leftSeat => 'Left Seat',
+        MeasurementPosition.rightSeat => 'Right Seat',
+        MeasurementPosition.center => 'Center',
+        MeasurementPosition.custom => 'Custom',
+      };
   String toJson() => name;
   static MeasurementPosition fromJson(String s) =>
-      MeasurementPosition.values.firstWhere(
-          (e) => e.name == s,
+      MeasurementPosition.values.firstWhere((e) => e.name == s,
           orElse: () => MeasurementPosition.listeningPosition);
 }
 
@@ -79,16 +88,14 @@ enum SweepType { logSweep, pinkNoise, manualImport, placeholder }
 
 extension SweepTypeX on SweepType {
   String get label => switch (this) {
-    SweepType.logSweep      => 'Log Sweep',
-    SweepType.pinkNoise     => 'Pink Noise',
-    SweepType.manualImport  => 'Manual Import',
-    SweepType.placeholder   => 'Placeholder',
-  };
+        SweepType.logSweep => 'Log Sweep',
+        SweepType.pinkNoise => 'Pink Noise',
+        SweepType.manualImport => 'Manual Import',
+        SweepType.placeholder => 'Placeholder',
+      };
   String toJson() => name;
-  static SweepType fromJson(String s) =>
-      SweepType.values.firstWhere(
-          (e) => e.name == s,
-          orElse: () => SweepType.placeholder);
+  static SweepType fromJson(String s) => SweepType.values
+      .firstWhere((e) => e.name == s, orElse: () => SweepType.placeholder);
 }
 
 // ── MeasurementResult ─────────────────────────────────────────────────────────
@@ -110,28 +117,31 @@ class MeasurementResult {
 
   /// Placeholder result generated on simulate-capture
   factory MeasurementResult.placeholder() => const MeasurementResult(
-    peakLevelDb: -6.0,
-    noiseFloorDb: -78.0,
-    usableRange: '40 Hz – 18 kHz',
-    confidence: 0.72,
-    issues: ['Placeholder capture — real measurement engine not connected.'],
-  );
+        peakLevelDb: -6.0,
+        noiseFloorDb: -78.0,
+        usableRange: '40 Hz – 18 kHz',
+        confidence: 0.72,
+        issues: [
+          'Placeholder capture — real measurement engine not connected.'
+        ],
+      );
 
   Map<String, dynamic> toJson() => {
-    'peakLevelDb': peakLevelDb,
-    'noiseFloorDb': noiseFloorDb,
-    'usableRange': usableRange,
-    'confidence': confidence,
-    'issues': issues,
-  };
+        'peakLevelDb': peakLevelDb,
+        'noiseFloorDb': noiseFloorDb,
+        'usableRange': usableRange,
+        'confidence': confidence,
+        'issues': issues,
+      };
 
-  factory MeasurementResult.fromJson(Map<String, dynamic> j) => MeasurementResult(
-    peakLevelDb:  (j['peakLevelDb']  as num?)?.toDouble() ?? 0.0,
-    noiseFloorDb: (j['noiseFloorDb'] as num?)?.toDouble() ?? -90.0,
-    usableRange:  j['usableRange']   as String? ?? '—',
-    confidence:   (j['confidence']   as num?)?.toDouble() ?? 0.0,
-    issues: (j['issues'] as List?)?.cast<String>() ?? [],
-  );
+  factory MeasurementResult.fromJson(Map<String, dynamic> j) =>
+      MeasurementResult(
+        peakLevelDb: (j['peakLevelDb'] as num?)?.toDouble() ?? 0.0,
+        noiseFloorDb: (j['noiseFloorDb'] as num?)?.toDouble() ?? -90.0,
+        usableRange: j['usableRange'] as String? ?? '—',
+        confidence: (j['confidence'] as num?)?.toDouble() ?? 0.0,
+        issues: (j['issues'] as List?)?.cast<String>() ?? [],
+      );
 }
 
 // ── MeasurementPoint ──────────────────────────────────────────────────────────
@@ -171,46 +181,53 @@ class MeasurementPoint {
     DateTime? capturedAt,
     String? notes,
     MeasurementResult? result,
-  }) => MeasurementPoint(
-    id: id,
-    label: label ?? this.label,
-    channel: channel ?? this.channel,
-    position: position ?? this.position,
-    distanceCm: distanceCm ?? this.distanceCm,
-    angleDeg: angleDeg ?? this.angleDeg,
-    status: status ?? this.status,
-    capturedAt: capturedAt ?? this.capturedAt,
-    notes: notes ?? this.notes,
-    result: result ?? this.result,
-  );
+  }) =>
+      MeasurementPoint(
+        id: id,
+        label: label ?? this.label,
+        channel: channel ?? this.channel,
+        position: position ?? this.position,
+        distanceCm: distanceCm ?? this.distanceCm,
+        angleDeg: angleDeg ?? this.angleDeg,
+        status: status ?? this.status,
+        capturedAt: capturedAt ?? this.capturedAt,
+        notes: notes ?? this.notes,
+        result: result ?? this.result,
+      );
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'label': label,
-    'channel': channel.toJson(),
-    'position': position.toJson(),
-    'distanceCm': distanceCm,
-    'angleDeg': angleDeg,
-    'status': status.toJson(),
-    if (capturedAt != null) 'capturedAt': capturedAt!.toIso8601String(),
-    if (notes != null) 'notes': notes,
-    if (result != null) 'result': result!.toJson(),
-  };
+        'id': id,
+        'label': label,
+        'channel': channel.toJson(),
+        'position': position.toJson(),
+        'distanceCm': distanceCm,
+        'angleDeg': angleDeg,
+        'status': status.toJson(),
+        if (capturedAt != null) 'capturedAt': capturedAt!.toIso8601String(),
+        if (notes != null) 'notes': notes,
+        if (result != null) 'result': result!.toJson(),
+      };
 
   factory MeasurementPoint.fromJson(Map<String, dynamic> j) => MeasurementPoint(
-    id:         j['id'] as String,
-    label:      j['label'] as String? ?? 'Point',
-    channel:    MeasurementChannelX.fromJson(j['channel'] as String? ?? 'left'),
-    position:   MeasurementPositionX.fromJson(j['position'] as String? ?? 'listeningPosition'),
-    distanceCm: (j['distanceCm'] as num?)?.toDouble() ?? 100.0,
-    angleDeg:   (j['angleDeg']   as num?)?.toDouble() ?? 0.0,
-    status:     MeasurementPointStatusX.fromJson(j['status'] as String? ?? 'pending'),
-    capturedAt: j['capturedAt'] != null ? DateTime.tryParse(j['capturedAt'] as String) : null,
-    notes:      j['notes'] as String?,
-    result:     j['result'] != null
-        ? MeasurementResult.fromJson(Map<String, dynamic>.from(j['result'] as Map))
-        : null,
-  );
+        id: j['id'] as String,
+        label: j['label'] as String? ?? 'Point',
+        channel:
+            MeasurementChannelX.fromJson(j['channel'] as String? ?? 'left'),
+        position: MeasurementPositionX.fromJson(
+            j['position'] as String? ?? 'listeningPosition'),
+        distanceCm: (j['distanceCm'] as num?)?.toDouble() ?? 100.0,
+        angleDeg: (j['angleDeg'] as num?)?.toDouble() ?? 0.0,
+        status: MeasurementPointStatusX.fromJson(
+            j['status'] as String? ?? 'pending'),
+        capturedAt: j['capturedAt'] != null
+            ? DateTime.tryParse(j['capturedAt'] as String)
+            : null,
+        notes: j['notes'] as String?,
+        result: j['result'] != null
+            ? MeasurementResult.fromJson(
+                Map<String, dynamic>.from(j['result'] as Map))
+            : null,
+      );
 }
 
 // ── MeasurementSession ────────────────────────────────────────────────────────
@@ -264,10 +281,13 @@ class MeasurementSession {
     );
   }
 
-  int get acceptedCount => points.where((p) => p.status == MeasurementPointStatus.accepted).length;
-  int get capturedCount => points.where((p) =>
-      p.status == MeasurementPointStatus.captured ||
-      p.status == MeasurementPointStatus.accepted).length;
+  int get acceptedCount =>
+      points.where((p) => p.status == MeasurementPointStatus.accepted).length;
+  int get capturedCount => points
+      .where((p) =>
+          p.status == MeasurementPointStatus.captured ||
+          p.status == MeasurementPointStatus.accepted)
+      .length;
   bool get hasAnyData => points.any((p) => p.result != null);
 
   String get sampleRateLabel => '${(sampleRate / 1000).toStringAsFixed(0)} kHz';
@@ -281,62 +301,89 @@ class MeasurementSession {
     String? micProfile,
     String? notes,
     List<MeasurementPoint>? points,
-  }) => MeasurementSession(
-    id: id,
-    projectId: projectId,
-    name: name ?? this.name,
-    createdAt: createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-    status: status ?? this.status,
-    sampleRate: sampleRate ?? this.sampleRate,
-    sweepType: sweepType ?? this.sweepType,
-    micProfile: micProfile ?? this.micProfile,
-    notes: notes ?? this.notes,
-    points: points ?? this.points,
-  );
+  }) =>
+      MeasurementSession(
+        id: id,
+        projectId: projectId,
+        name: name ?? this.name,
+        createdAt: createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+        status: status ?? this.status,
+        sampleRate: sampleRate ?? this.sampleRate,
+        sweepType: sweepType ?? this.sweepType,
+        micProfile: micProfile ?? this.micProfile,
+        notes: notes ?? this.notes,
+        points: points ?? this.points,
+      );
 
   MeasurementSession touch() => copyWith(updatedAt: DateTime.now());
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'projectId': projectId,
-    'name': name,
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
-    'status': status.toJson(),
-    'sampleRate': sampleRate,
-    'sweepType': sweepType.toJson(),
-    'micProfile': micProfile,
-    if (notes != null) 'notes': notes,
-    'points': points.map((p) => p.toJson()).toList(),
-  };
+        'id': id,
+        'projectId': projectId,
+        'name': name,
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'status': status.toJson(),
+        'sampleRate': sampleRate,
+        'sweepType': sweepType.toJson(),
+        'micProfile': micProfile,
+        if (notes != null) 'notes': notes,
+        'points': points.map((p) => p.toJson()).toList(),
+      };
 
-  factory MeasurementSession.fromJson(Map<String, dynamic> j) => MeasurementSession(
-    id:          j['id'] as String,
-    projectId:   j['projectId'] as String? ?? '',
-    name:        j['name'] as String? ?? 'Session',
-    createdAt:   DateTime.tryParse(j['createdAt'] as String? ?? '') ?? DateTime.now(),
-    updatedAt:   DateTime.tryParse(j['updatedAt'] as String? ?? '') ?? DateTime.now(),
-    status:      MeasurementSessionStatusX.fromJson(j['status'] as String? ?? 'draft'),
-    sampleRate:  j['sampleRate'] as int? ?? 48000,
-    sweepType:   SweepTypeX.fromJson(j['sweepType'] as String? ?? 'placeholder'),
-    micProfile:  j['micProfile'] as String? ?? 'Default',
-    notes:       j['notes'] as String?,
-    points: (j['points'] as List? ?? [])
-        .map((e) => MeasurementPoint.fromJson(Map<String, dynamic>.from(e as Map)))
-        .toList(),
-  );
+  factory MeasurementSession.fromJson(Map<String, dynamic> j) =>
+      MeasurementSession(
+        id: j['id'] as String,
+        projectId: j['projectId'] as String? ?? '',
+        name: j['name'] as String? ?? 'Session',
+        createdAt: DateTime.tryParse(j['createdAt'] as String? ?? '') ??
+            DateTime.now(),
+        updatedAt: DateTime.tryParse(j['updatedAt'] as String? ?? '') ??
+            DateTime.now(),
+        status: MeasurementSessionStatusX.fromJson(
+            j['status'] as String? ?? 'draft'),
+        sampleRate: j['sampleRate'] as int? ?? 48000,
+        sweepType:
+            SweepTypeX.fromJson(j['sweepType'] as String? ?? 'placeholder'),
+        micProfile: j['micProfile'] as String? ?? 'Default',
+        notes: j['notes'] as String?,
+        points: (j['points'] as List? ?? [])
+            .map((e) =>
+                MeasurementPoint.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList(),
+      );
 
   static String encodeList(List<MeasurementSession> list) =>
       jsonEncode(list.map((s) => s.toJson()).toList());
 
+  /// Decodes a persisted session list, isolating each entry's parse so one
+  /// corrupt or pre-migration session cannot wipe every other saved session.
+  /// Unparsable entries are skipped and logged (no raw JSON/PII in the log).
   static List<MeasurementSession> decodeList(String raw) {
+    final Object? decoded;
     try {
-      final list = jsonDecode(raw) as List;
-      return list.map((e) => MeasurementSession.fromJson(
-          Map<String, dynamic>.from(e as Map))).toList();
-    } catch (_) {
+      decoded = jsonDecode(raw);
+    } catch (e) {
+      debugPrint(
+          'MeasurementSession.decodeList: invalid JSON root, returning empty list ($e)');
       return [];
     }
+    if (decoded is! List) {
+      debugPrint(
+          'MeasurementSession.decodeList: root is not a list (${decoded.runtimeType}), returning empty list');
+      return [];
+    }
+    final result = <MeasurementSession>[];
+    for (var i = 0; i < decoded.length; i++) {
+      try {
+        result.add(MeasurementSession.fromJson(
+            Map<String, dynamic>.from(decoded[i] as Map)));
+      } catch (e) {
+        debugPrint(
+            'MeasurementSession.decodeList: skipping unparsable session at index $i ($e)');
+      }
+    }
+    return result;
   }
 }
