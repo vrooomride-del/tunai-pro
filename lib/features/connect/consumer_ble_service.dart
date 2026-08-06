@@ -68,6 +68,7 @@ class ConsumerBleService extends ChangeNotifier {
 
   ConsumerBleState get state => _state;
   bool get bluetoothAvailable => _transport.driver.platformSupported;
+  Icp5BluetoothTransport get transport => _transport;
 
   Future<void> scan() async {
     if (_state.busy || _state.connected) return;
