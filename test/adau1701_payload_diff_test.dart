@@ -104,33 +104,53 @@ void main() {
       expect(dspOffsetAnnotation(78), 'Ch1 Band10 prop08 [band-cand]');
     });
 
-    // Ch1 base 79 — channel layout candidate.
-    test('offset 79 → Ch2 Band1 freq-lo [ch-cand]', () {
-      expect(dspOffsetAnnotation(79), 'Ch2 Band1 freq-lo [ch-cand]');
+    // Ch1 base 102 — scanner-discovered stride-83 offset.
+    // Old stride-60 offset 79 is now between Ch0 and Ch1 → unknown.
+    test('offset 79 → unknown (between Ch0 end 78 and Ch1 base 102)', () {
+      expect(dspOffsetAnnotation(79), '— (unknown)');
     });
 
-    test('offset 81 → Ch2 Band1 gain [ch-cand]', () {
-      expect(dspOffsetAnnotation(81), 'Ch2 Band1 gain [ch-cand]');
+    test('offset 102 → Ch2 Band1 freq-lo [ch-cand]', () {
+      expect(dspOffsetAnnotation(102), 'Ch2 Band1 freq-lo [ch-cand]');
     });
 
-    // Ch2 base 139.
-    test('offset 139 → Ch3 Band1 freq-lo [ch-cand]', () {
-      expect(dspOffsetAnnotation(139), 'Ch3 Band1 freq-lo [ch-cand]');
+    test('offset 104 → Ch2 Band1 gain [ch-cand]', () {
+      expect(dspOffsetAnnotation(104), 'Ch2 Band1 gain [ch-cand]');
     });
 
-    // Ch3 base 199.
-    test('offset 199 → Ch4 Band1 freq-lo [ch-cand]', () {
-      expect(dspOffsetAnnotation(199), 'Ch4 Band1 freq-lo [ch-cand]');
+    // Ch2 base 185 — scanner-found Woofer L Band1 at this offset.
+    test('offset 185 → Ch3 Band1 freq-lo [ch-cand]', () {
+      expect(dspOffsetAnnotation(185), 'Ch3 Band1 freq-lo [ch-cand]');
     });
 
-    // Offset 154 is inside Ch3 candidate range [139..199), so it is annotated
-    // as a band byte — the page-marker check in the source is unreachable here.
-    test('offset 154 → Ch3 Band3 pad (inside ch-cand range, page marker unreachable)', () {
-      expect(dspOffsetAnnotation(154), 'Ch3 Band3 pad [ch-cand]');
+    // offset 139 is now inside Ch1 range [102..161]: rel=37, band=6, field=1.
+    test('offset 139 → Ch2 Band7 freq-hi [ch-cand]', () {
+      expect(dspOffsetAnnotation(139), 'Ch2 Band7 freq-hi [ch-cand]');
     });
 
-    test('offset 308 → page-3 marker', () {
-      expect(dspOffsetAnnotation(308), 'page-3 marker');
+    // Ch3 base 268 — scanner-found Woofer R Band1 at this offset.
+    test('offset 268 → Ch4 Band1 freq-lo [ch-cand]', () {
+      expect(dspOffsetAnnotation(268), 'Ch4 Band1 freq-lo [ch-cand]');
+    });
+
+    // Old stride-60 offset 199 is now inside Ch2 range [185..244]: rel=14, band=2, field=2.
+    test('offset 199 → Ch3 Band3 gain [ch-cand]', () {
+      expect(dspOffsetAnnotation(199), 'Ch3 Band3 gain [ch-cand]');
+    });
+
+    // Ch3 Band10 last byte: 268 + 9*6 + 5 = 327.
+    test('offset 327 → Ch4 Band10 prop08 [ch-cand]', () {
+      expect(dspOffsetAnnotation(327), 'Ch4 Band10 prop08 [ch-cand]');
+    });
+
+    // offset 328 is just past Ch3 range end → unknown.
+    test('offset 328 → unknown (past Ch3 range end 327)', () {
+      expect(dspOffsetAnnotation(328), '— (unknown)');
+    });
+
+    // offset 308 is now inside Ch3 range [268..327]: rel=40, band=6, field=4 → Q.
+    test('offset 308 → Ch4 Band7 Q [ch-cand] (was page-3 marker, now inside Ch3)', () {
+      expect(dspOffsetAnnotation(308), 'Ch4 Band7 Q [ch-cand]');
     });
 
     test('offset 462 → page-4 marker', () {

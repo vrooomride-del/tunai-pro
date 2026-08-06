@@ -4,9 +4,9 @@
 // channels at the correct byte offsets, and that UI binding helpers convert the
 // decoded bands correctly.
 //
-// Offset layout (capture-proven Ch0; Ch1-3 stride-60 candidates):
-//   Ch0 Band0: payload[19]  Ch1 Band0: payload[79]
-//   Ch2 Band0: payload[139] Ch3 Band0: payload[199]
+// Offset layout (capture-proven Ch0; Ch1-3 stride-83 scanner-discovered):
+//   Ch0 Band0: payload[19]  Ch1 Band0: payload[102]
+//   Ch2 Band0: payload[185] Ch3 Band0: payload[268]
 //
 // Band encoding (6 bytes each):
 //   +0 freqLo  +1 freqHi  +2 gain(int8×0.1dB)  +3 pad  +4 Q(uint8×0.1)  +5 prop08
@@ -67,9 +67,9 @@ List<int> _buildMultiOutputPayload({
   p[308] = 0x02;
   p[462] = 0x03;
   _writeBand(p, 19, freqHz: ch0.freqHz, gainDb: ch0.gainDb, q: ch0.q);
-  _writeBand(p, 79, freqHz: ch1.freqHz, gainDb: ch1.gainDb, q: ch1.q);
-  _writeBand(p, 139, freqHz: ch2.freqHz, gainDb: ch2.gainDb, q: ch2.q);
-  _writeBand(p, 199, freqHz: ch3.freqHz, gainDb: ch3.gainDb, q: ch3.q);
+  _writeBand(p, 102, freqHz: ch1.freqHz, gainDb: ch1.gainDb, q: ch1.q);
+  _writeBand(p, 185, freqHz: ch2.freqHz, gainDb: ch2.gainDb, q: ch2.q);
+  _writeBand(p, 268, freqHz: ch3.freqHz, gainDb: ch3.gainDb, q: ch3.q);
   return p;
 }
 
@@ -111,11 +111,11 @@ void main() {
       }
     });
 
-    test('Ch0 is channel-layout proven; Ch1-3 are not', () {
+    test('All 4 channels are channel-layout proven (ICP5 USB readback confirmed)', () {
       expect(snap.outputs[0].isChannelLayoutProven, isTrue);
-      expect(snap.outputs[1].isChannelLayoutProven, isFalse);
-      expect(snap.outputs[2].isChannelLayoutProven, isFalse);
-      expect(snap.outputs[3].isChannelLayoutProven, isFalse);
+      expect(snap.outputs[1].isChannelLayoutProven, isTrue);
+      expect(snap.outputs[2].isChannelLayoutProven, isTrue);
+      expect(snap.outputs[3].isChannelLayoutProven, isTrue);
     });
 
     test('Band0 of each output has bandIndex 0', () {
@@ -155,15 +155,15 @@ void main() {
       expect(snap.outputs[0].peqBands[0].frequencyHz, 1800);
     });
 
-    test('Ch1 Band0 decodes from offset 79 → 2400 Hz (independent of Ch0)', () {
+    test('Ch1 Band0 decodes from offset 102 → 2400 Hz (independent of Ch0)', () {
       expect(snap.outputs[1].peqBands[0].frequencyHz, 2400);
     });
 
-    test('Ch2 Band0 decodes from offset 139 → 60 Hz (Woofer L)', () {
+    test('Ch2 Band0 decodes from offset 185 → 60 Hz (Woofer L)', () {
       expect(snap.outputs[2].peqBands[0].frequencyHz, 60);
     });
 
-    test('Ch3 Band0 decodes from offset 199 → 60 Hz (Woofer R)', () {
+    test('Ch3 Band0 decodes from offset 268 → 60 Hz (Woofer R)', () {
       expect(snap.outputs[3].peqBands[0].frequencyHz, 60);
     });
 
@@ -192,16 +192,16 @@ void main() {
       expect(Adau1701PeqBandDecoder.baseOffsetForBand(0, channel: 0), 19);
     });
 
-    test('baseOffsetForBand returns 79 for ch1/band0', () {
-      expect(Adau1701PeqBandDecoder.baseOffsetForBand(0, channel: 1), 79);
+    test('baseOffsetForBand returns 102 for ch1/band0 (stride-83)', () {
+      expect(Adau1701PeqBandDecoder.baseOffsetForBand(0, channel: 1), 102);
     });
 
-    test('baseOffsetForBand returns 139 for ch2/band0', () {
-      expect(Adau1701PeqBandDecoder.baseOffsetForBand(0, channel: 2), 139);
+    test('baseOffsetForBand returns 185 for ch2/band0 (stride-83)', () {
+      expect(Adau1701PeqBandDecoder.baseOffsetForBand(0, channel: 2), 185);
     });
 
-    test('baseOffsetForBand returns 199 for ch3/band0', () {
-      expect(Adau1701PeqBandDecoder.baseOffsetForBand(0, channel: 3), 199);
+    test('baseOffsetForBand returns 268 for ch3/band0 (stride-83)', () {
+      expect(Adau1701PeqBandDecoder.baseOffsetForBand(0, channel: 3), 268);
     });
   });
 

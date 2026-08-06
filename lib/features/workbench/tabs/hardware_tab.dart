@@ -48,6 +48,7 @@ import 'sigma_verification_console.dart';
 import 'operational_master_volume_control.dart';
 import 'transport_connection_panel.dart';
 import 'adau1701_icp5_tuning_panel.dart';
+import '../widgets/adau1701_dsp_state_read_card.dart';
 import '../../../core/transport/icp5_transports.dart';
 import '../../../core/deploy/pro_hardware_context_provider.dart';
 import '../../../core/deploy/pro_adau1701_hardware_context.dart';
@@ -570,6 +571,14 @@ class _HardwareTabState extends ConsumerState<HardwareTab> {
           key: ValueKey(_activeTuningTransport.identity),
           transport: _activeTuningTransport,
         ),
+        const SizedBox(height: 20),
+
+        // ADAU1701 BLE Live Readback Test — read-only, no DSP/project state change
+        const ProSectionHeader(
+            title: 'ADAU1701 DSP STATE READ — BLE READBACK TEST',
+            icon: Icons.download_outlined),
+        const SizedBox(height: 8),
+        Adau1701DspStateReadCard(transport: _adau1701BleTransport),
         const SizedBox(height: 20),
 
         // A: Connection State Panel

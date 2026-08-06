@@ -57,11 +57,12 @@ abstract final class Adau1701PeqResponse {
     return [for (var i = 0; i < count; i++) math.exp(logMin + step * i)];
   }
 
-  /// Peaking-biquad magnitude (dB) of a single [band] at frequency [f] (Hz).
-  /// Returns 0 dB for a disabled band or zero gain.
-  static double peakingMagnitudeDb(PeqResponseBand band, double f) {
-    if (!band.enabled || band.gainDb == 0) return 0;
-    final a = math.pow(10, band.gainDb / 40).toDouble(); // amplitude sqrt(gain)
+  /// Linear magnitude |H(f)| of a single peaking-biquad [band] at [f] Hz.
+  /// Returns 1.0 (multiplicative identity = 0 dB) for a disabled band or
+  /// zero gain — a passthrough filter has H(f) = 1 everywhere.
+  static double _peakingLinear(PeqResponseBand band, double f) {
+    if (!band.enabled || band.gainDb == 0) return 1.0;
+    final a = math.pow(10, band.gainDb / 40).toDouble();
     final q = band.q <= 0 ? 0.0001 : band.q;
     final w0 = 2 * math.pi * band.frequencyHz / sampleRateHz;
     final cosW0 = math.cos(w0);
@@ -85,17 +86,25 @@ abstract final class Adau1701PeqResponse {
 
     final numMag = math.sqrt(numRe * numRe + numIm * numIm);
     final denMag = math.sqrt(denRe * denRe + denIm * denIm);
-    if (denMag == 0) return 0;
-    return 20 * (math.log(numMag / denMag) / math.ln10);
+    return denMag > 0 ? numMag / denMag : 1.0;
   }
 
-  /// Combined magnitude (dB) at [f] summing only the ENABLED bands.
+  /// Peaking-biquad magnitude (dB) of a single [band] at frequency [f] (Hz).
+  /// Returns 0 dB for a disabled band or zero gain.
+  static double peakingMagnitudeDb(PeqResponseBand band, double f) {
+    final linear = _peakingLinear(band, f);
+    return linear > 0 ? 20 * math.log(linear) / math.ln10 : 0;
+  }
+
+  /// Combined magnitude (dB) at [f]: linear product of all bands' |H(f)|,
+  /// then 20·log10. All enabled bands contribute; passthrough bands (disabled
+  /// or gainDb == 0) multiply by 1 (identity) and leave the result unchanged.
   static double combinedMagnitudeDb(Iterable<PeqResponseBand> bands, double f) {
-    var sum = 0.0;
+    var response = 1.0;
     for (final band in bands) {
-      if (band.enabled) sum += peakingMagnitudeDb(band, f);
+      response *= _peakingLinear(band, f);
     }
-    return sum;
+    return response > 0 ? 20 * math.log(response) / math.ln10 : 0;
   }
 
   /// Combined curve (dB per point) over [freqPoints], enabled bands only.

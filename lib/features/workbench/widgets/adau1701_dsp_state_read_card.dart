@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../core/adau1701_peq_response.dart';
 import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
+import '../../../core/transport/adau1701_peq_band_decoder.dart';
 import '../../../core/transport/icp5_raw_state_read.dart';
 import '../../../core/dsp/adau1701/readback/adau1701_state_decoder.dart';
 import '../../../core/dsp/adau1701/readback/adau1701_output_role.dart';
@@ -109,6 +110,26 @@ List<PeqResponseBand> peqReferenceToBands(List<PeqBandReference> refs) => [
         ),
     ];
 
+// ── Channel offset scan result ────────────────────────────────────────────────
+
+class _ChannelScanHit {
+  final int offset;
+  final bool isWoofer;
+  final String label;
+  final bool band2match;
+  final bool band3match;
+
+  bool get fullyConfirmed => isWoofer ? (band2match && band3match) : true;
+
+  const _ChannelScanHit({
+    required this.offset,
+    required this.isWoofer,
+    required this.label,
+    required this.band2match,
+    required this.band3match,
+  });
+}
+
 // ── Payload diff helpers ──────────────────────────────────────────────────────
 
 typedef PayloadDiffEntry = ({int offset, int before, int after});
@@ -129,8 +150,11 @@ List<PayloadDiffEntry> computePayloadDiff(
 
 // Known PEQ band layout inside the 513-byte 0x2202 payload.
 // Ch0 base=19 is hardware-confirmed (MiUMAX Band1 capture-proven).
-// Ch1-3 use stride-60 candidate offsets — not yet verified by hardware capture.
-const _kDspChBases = [19, 79, 139, 199];
+// Ch1-3 use stride-83 scanner-discovered offsets:
+//   Woofer L (Ch2) Band1 (60Hz/+0.5dB/Q1.0) scanner-found at offset 185.
+//   Woofer R (Ch3) Band1 scanner-found at offset 268.  Stride = 268−185 = 83.
+//   Ch1 = 19+83=102, Ch2 = 19+166=185, Ch3 = 19+249=268.
+const _kDspChBases = [19, 102, 185, 268];
 const _kDspBandStride = 6;
 const _kDspBandCount = 10;
 const _kDspFieldNames = ['freq-lo', 'freq-hi', 'gain', 'pad', 'Q', 'prop08'];
@@ -156,8 +180,8 @@ String dspOffsetAnnotation(int offset) {
       return 'Ch${ch + 1} Band${band + 1} $fieldName [$confidence]';
     }
   }
-  if (offset == 154) return 'page-2 marker';
-  if (offset == 308) return 'page-3 marker';
+  // Note: page-2 marker (154) is now inside Ch1 range [102..161] and unreachable.
+  // Note: page-3 marker (308) is now inside Ch3 range [268..327] and unreachable.
   if (offset == 462) return 'page-4 marker';
   return '— (unknown)';
 }
@@ -224,6 +248,10 @@ class _Adau1701DspStateReadCardState
   // Hex diff: baseline snapshot payload + computed diff after next READ.
   List<int>? _baselinePayload;
   List<PayloadDiffEntry>? _payloadDiff;
+
+  // MiUMAX channel offset scan results — populated after each READ.
+  List<_ChannelScanHit> _channelScanHits = [];
+  bool _wooferSignatureFound = false;
 
   bool get _isReading => _result?.status == _ReadStatus.reading;
 
@@ -346,6 +374,10 @@ class _Adau1701DspStateReadCardState
       }
     }
 
+    // MiUMAX channel offset scan — searches the raw payload for known EQ
+    // signatures from hardware screenshots to find actual Ch2/Ch3 base offsets.
+    final scanHits = _scanMiuMaxChannelOffsets(snapshot.payload);
+
     // Compute byte diff against captured baseline (if any).
     final diff = _baselinePayload != null
         ? computePayloadDiff(_baselinePayload!, snapshot.payload)
@@ -370,8 +402,116 @@ class _Adau1701DspStateReadCardState
       setState(() {
         _result = _DspReadResult.success(stateSnapshot);
         _payloadDiff = diff;
+        _channelScanHits = scanHits;
+        _wooferSignatureFound = scanHits.any((h) => h.isWoofer);
       });
     }
+  }
+
+  // Scans the 513-byte payload for known MiUMAX PEQ signatures from hardware
+  // screenshots, to discover the actual byte offsets for Ch1-Ch3.
+  //
+  // Confirmed from MiUMAX software screenshots:
+  //   Tweeter L (Ch0 offset 19): Band1 = 1800 Hz / 0.0 dB / Q 1.2
+  //   Woofer L  (Ch2 offset ??): Band1 = 60 Hz   / +0.5 dB / Q 1.0
+  //                               Band2 = 120 Hz  / 0.0 dB  / Q 1.0
+  //                               Band3 = 220 Hz  / 0.0 dB  / Q 0.8
+  //
+  // Returns structured hits for display in the read card UI.
+  List<_ChannelScanHit> _scanMiuMaxChannelOffsets(List<int> payload) {
+    final hits = <_ChannelScanHit>[];
+
+    // Verify Ch0 (Tweeter L) at confirmed offset 19.
+    if (payload.length > 23) {
+      final f = payload[19] | (payload[20] << 8);
+      final rawG = payload[21];
+      final g = rawG >= 0x80 ? rawG - 256 : rawG;
+      final q10 = payload[23];
+      debugPrint('[DSP SCAN] Ch0 @ 19: ${f}Hz / ${(g / 10.0).toStringAsFixed(1)}dB'
+          ' / Q${(q10 / 10.0).toStringAsFixed(1)}  (expect 1800Hz/0.0dB/Q1.2)');
+      hits.add(_ChannelScanHit(
+        offset: 19,
+        isWoofer: false,
+        label: 'Tweeter L (Ch0) @ offset 19  ✓ confirmed',
+        band2match: true,
+        band3match: true,
+      ));
+    }
+
+    // Search for Woofer L Band1: 60Hz (0x3C,0x00) / +0.5dB (0x05) / Q1.0 (0x0A).
+    bool wooferFound = false;
+    for (var i = 0; i + 4 < payload.length; i++) {
+      if (payload[i] == 0x3C &&
+          payload[i + 1] == 0x00 &&
+          payload[i + 2] == 0x05 &&
+          payload[i + 4] == 0x0A) {
+        wooferFound = true;
+        bool band2ok = false;
+        bool band3ok = false;
+        if (i + 10 < payload.length) {
+          final b2 = i + 6;
+          final f2 = payload[b2] | (payload[b2 + 1] << 8);
+          final rawG2 = payload[b2 + 2];
+          final g2 = rawG2 >= 0x80 ? rawG2 - 256 : rawG2;
+          final q2 = payload[b2 + 4];
+          band2ok = f2 == 120 && g2 == 0 && q2 == 0x0A;
+          debugPrint('[DSP SCAN] WOOFER Band2 @ ${i + 6}: ${f2}Hz'
+              ' / ${(g2 / 10.0).toStringAsFixed(1)}dB'
+              ' / Q${(q2 / 10.0).toStringAsFixed(1)}'
+              '  ${band2ok ? "✓ MATCH" : "✗ expect 120Hz/0.0dB/Q1.0"}');
+        }
+        if (i + 16 < payload.length) {
+          final b3 = i + 12;
+          final f3 = payload[b3] | (payload[b3 + 1] << 8);
+          final rawG3 = payload[b3 + 2];
+          final g3 = rawG3 >= 0x80 ? rawG3 - 256 : rawG3;
+          final q3 = payload[b3 + 4];
+          band3ok = f3 == 220 && g3 == 0 && q3 == 0x08;
+          debugPrint('[DSP SCAN] WOOFER Band3 @ ${i + 12}: ${f3}Hz'
+              ' / ${(g3 / 10.0).toStringAsFixed(1)}dB'
+              ' / Q${(q3 / 10.0).toStringAsFixed(1)}'
+              '  ${band3ok ? "✓ MATCH" : "✗ expect 220Hz/0.0dB/Q0.8"}');
+        }
+        final confirmed = band2ok && band3ok;
+        debugPrint('[DSP SCAN] WOOFER Band1 @ offset $i'
+            '  ${confirmed ? "→ Ch2 CONFIRMED" : "→ partial match"}');
+        hits.add(_ChannelScanHit(
+          offset: i,
+          isWoofer: true,
+          label: confirmed
+              ? 'Woofer L (Ch2) @ offset $i  ✓ Band1+2+3 match'
+              : 'Woofer Band1 @ offset $i  ⚠ Band2/3 mismatch',
+          band2match: band2ok,
+          band3match: band3ok,
+        ));
+      }
+    }
+
+    if (!wooferFound) {
+      debugPrint('[DSP SCAN] WOOFER Band1 (60Hz/+0.5dB/Q1.0) — NOT FOUND');
+      debugPrint('[DSP SCAN] → Use hex diff: CAPTURE BASELINE → change Woofer band'
+          ' in MiUMAX → READ → diff shows Ch2 offset');
+    }
+
+    // Search for Tweeter R (Ch1) — same Band1 as Tweeter L but different offset.
+    for (var i = 0; i + 4 < payload.length; i++) {
+      if (i == 19) continue;
+      if (payload[i] == 0x08 &&
+          payload[i + 1] == 0x07 &&
+          payload[i + 2] == 0x00 &&
+          payload[i + 4] == 0x0C) {
+        debugPrint('[DSP SCAN] TWEETER duplicate @ offset $i  ← Ch1 (Tweeter R) candidate');
+        hits.add(_ChannelScanHit(
+          offset: i,
+          isWoofer: false,
+          label: 'Tweeter R (Ch1) candidate @ offset $i  (1800Hz/0dB/Q1.2)',
+          band2match: false,
+          band3match: false,
+        ));
+      }
+    }
+
+    return hits;
   }
 
   Future<void> _copyHexDump() async {
@@ -524,6 +664,16 @@ class _Adau1701DspStateReadCardState
                 graphMode: _graphMode,
                 onGraphModeChanged: (m) => setState(() => _graphMode = m),
               ),
+              // Channel offset scan results — always shown after a READ.
+              if (_channelScanHits.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                const Divider(color: Color(0xFF1E2832), height: 1),
+                const SizedBox(height: 10),
+                _ChannelScanSection(
+                  hits: _channelScanHits,
+                  wooferFound: _wooferSignatureFound,
+                ),
+              ],
               // Hex diff section — only when a baseline is captured.
               if (_baselinePayload != null) ...[
                 const SizedBox(height: 14),
@@ -1086,7 +1236,8 @@ class _ChannelLayoutWarningBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = 19 + 60 * outputIndex;
+    final base = Adau1701PeqBandDecoder.band0BaseOffset +
+        Adau1701PeqBandDecoder.candidateChannelStride * outputIndex;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1444,6 +1595,136 @@ class _ClearBaselineButton extends StatelessWidget {
                 letterSpacing: 0.4, color: Colors.white30)),
       ),
     );
+  }
+}
+
+// ── Channel offset scan section ───────────────────────────────────────────────
+
+class _ChannelScanSection extends StatelessWidget {
+  final List<_ChannelScanHit> hits;
+  final bool wooferFound;
+
+  const _ChannelScanSection({
+    required this.hits,
+    required this.wooferFound,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final wooferHit =
+        hits.where((h) => h.isWoofer && h.fullyConfirmed).firstOrNull;
+    final wooferPartial =
+        hits.where((h) => h.isWoofer && !h.fullyConfirmed).firstOrNull;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(Icons.radar_outlined,
+            size: 12, color: Colors.white.withValues(alpha: 0.6)),
+        const SizedBox(width: 6),
+        Text('CHANNEL OFFSET SCAN',
+            style: proTitle(size: 11, color: Colors.white70)),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+          decoration: BoxDecoration(
+            color: wooferFound
+                ? kProGreen.withValues(alpha: 0.15)
+                : kProAmber.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(3),
+            border: Border.all(
+              color:
+                  wooferFound ? kProGreen.withValues(alpha: 0.4) : kProAmber.withValues(alpha: 0.4),
+            ),
+          ),
+          child: Text(
+            wooferFound ? 'WOOFER SIGNATURE FOUND' : 'WOOFER NOT FOUND',
+            style: proSubtitle(
+              size: 8,
+              color: wooferFound ? kProGreen : kProAmber,
+            ),
+          ),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      if (wooferHit != null) ...[
+        _ScanResultRow(
+          icon: Icons.check_circle_outline,
+          iconColor: kProGreen,
+          text: wooferHit.label,
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.only(left: 18),
+          child: Text(
+            '→ Update candidateChannelStride or _kDspChBases with offset ${wooferHit.offset}',
+            style: proSubtitle(size: 9, color: kProGreen.withValues(alpha: 0.8)),
+          ),
+        ),
+      ] else if (wooferPartial != null) ...[
+        _ScanResultRow(
+          icon: Icons.warning_amber_outlined,
+          iconColor: kProAmber,
+          text: wooferPartial.label,
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.only(left: 18),
+          child: Text(
+            'Band2/Band3 mismatch — offset may be wrong or band stride differs',
+            style: proSubtitle(size: 9, color: kProAmber.withValues(alpha: 0.8)),
+          ),
+        ),
+      ] else ...[
+        _ScanResultRow(
+          icon: Icons.help_outline,
+          iconColor: Colors.white38,
+          text: 'Woofer L Band1 (60Hz/+0.5dB/Q1.0) not found in payload',
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.only(left: 18),
+          child: Text(
+            'Use hex diff: CAPTURE BASELINE → change a Woofer band in MiUMAX → READ',
+            style: proSubtitle(size: 9, color: Colors.white38),
+          ),
+        ),
+      ],
+      // Tweeter R hits (Ch1).
+      for (final h in hits.where((h) => !h.isWoofer && h.offset != 19)) ...[
+        const SizedBox(height: 4),
+        _ScanResultRow(
+          icon: Icons.radio_button_unchecked,
+          iconColor: kProAmber,
+          text: h.label,
+        ),
+      ],
+    ]);
+  }
+}
+
+class _ScanResultRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String text;
+
+  const _ScanResultRow({
+    required this.icon,
+    required this.iconColor,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 11, color: iconColor),
+      const SizedBox(width: 5),
+      Expanded(
+        child: Text(
+          text,
+          style: proSubtitle(size: 9.5, color: Colors.white70),
+        ),
+      ),
+    ]);
   }
 }
 

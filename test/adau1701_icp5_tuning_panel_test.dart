@@ -14,13 +14,31 @@ import 'package:tunai_pro/features/workbench/widgets/adau1701_peq_response_graph
 const _kProfile = Icp5FrameCodec.expectedProfile;
 
 List<int> _payload({int freqLo = 0xD0, int freqHi = 0x07, int gainByte = 0xF6}) {
-  // freq 0x07D0 = 2000, gain 0xF6 = -10 tenths = -1.0 dB, Q 20 tenths = 2.0
+  // Ch0 Band1: freq 0x07D0 = 2000 Hz, gain 0xF6 = -10 tenths = -1.0 dB, Q=2.0
+  // Ch0 Bands 2-10 + Ch1-3 all bands: 1000 Hz / 0 dB / Q1.0
+  // (fills all 4 channel areas so output selection doesn't hit freq=0 validation)
   final p = List<int>.filled(513, 0x00);
+
+  // Ch0 Band 1 (capture-proven).
   p[19] = freqLo;
   p[20] = freqHi;
   p[21] = gainByte;
-  p[23] = 0x14;
-  p[24] = 0x01;
+  p[23] = 0x14; // Q = 2.0
+  p[24] = 0x01; // property08
+
+  // Ch0 Bands 2-10 + all 10 bands of Ch1..Ch3 — 1000 Hz / 0 dB / Q1.0.
+  // Ch bases: 19, 102, 185, 268 (stride 83 — scanner-discovered).
+  const chBases = [19, 102, 185, 268];
+  for (final chBase in chBases) {
+    final startBand = chBase == 19 ? 1 : 0; // Ch0 band0 already written above
+    for (var i = startBand; i < 10; i++) {
+      final base = chBase + i * 6;
+      p[base] = 0xE8;     // 1000 Hz lo
+      p[base + 1] = 0x03; // 1000 Hz hi
+      p[base + 2] = 0x00; // 0.0 dB
+      p[base + 4] = 0x0A; // Q = 1.0
+    }
+  }
   return p;
 }
 
@@ -378,8 +396,8 @@ void main() {
       await tester.pumpAndSettle(const Duration(seconds: 2));
 
       expect(find.byType(Adau1701PeqResponseGraph), findsOneWidget);
-      expect(find.textContaining('PEQ RESPONSE — OUTPUT 1'), findsOneWidget);
-      // Output selector chips 1..4 exist.
+      expect(find.textContaining('PEQ RESPONSE  4 ch × 10 bands'), findsOneWidget);
+      // Output selector chips 1..4 exist (in the EDIT TARGET section).
       expect(find.byKey(const ValueKey('peq_output_0')), findsOneWidget);
       expect(find.byKey(const ValueKey('peq_output_3')), findsOneWidget);
     });
@@ -406,7 +424,8 @@ void main() {
       expect(transport.lastFreqChannel, 2);
       // Non-Output-1 → no readback verification card.
       expect(find.textContaining('VERIFICATION'), findsNothing);
-      expect(find.textContaining('PEQ RESPONSE — OUTPUT 3'), findsOneWidget);
+      // After selecting Output 3, the EDIT TARGET header shows Woofer L.
+      expect(find.textContaining('Woofer L'), findsWidgets);
     });
 
     testWidgets('Output 1 (default) writes channel 0 with verification',
@@ -439,14 +458,14 @@ void main() {
       await tester.tap(find.text('READ DSP STATE'));
       await tester.pumpAndSettle(const Duration(seconds: 2));
 
-      // After READ, Band 1 is enabled → "1 / 10 bands".
-      expect(find.textContaining('1 / 10 bands'), findsOneWidget);
+      // After READ, all 10 bands are enabled (full readback recovery).
+      expect(find.textContaining('10 / 10 bands'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('peq_band_enable_toggle')));
       await tester.pump();
 
-      // Now zero enabled bands contribute to the curve.
-      expect(find.textContaining('0 / 10 bands'), findsOneWidget);
+      // Disabling Band 1 leaves 9 of 10 bands contributing to the curve.
+      expect(find.textContaining('9 / 10 bands'), findsOneWidget);
     });
 
     testWidgets('editing frequency immediately updates the graph bands',
@@ -495,7 +514,7 @@ void main() {
         (tester) async {
       await pumpAfterRead(tester);
       expect(find.text('PEQ PRESET'), findsOneWidget);
-      expect(find.text('PEQ APPLY'), findsOneWidget);
+      expect(find.textContaining('PEQ APPLY —'), findsOneWidget);
       expect(find.text('RUN PREFLIGHT + APPLY'), findsOneWidget);
       expect(find.byKey(const ValueKey('peq_preset_warm')), findsOneWidget);
       expect(find.byKey(const ValueKey('peq_preset_custom')), findsOneWidget);

@@ -12,6 +12,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/adau1701_peq_preset.dart';
 import '../../../core/adau1701_peq_response.dart';
+import '../../../core/dsp/adau1701/readback/adau1701_output_role.dart';
+import '../../../core/dsp/adau1701/readback/adau1701_state_decoder.dart';
 import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
 import '../../../core/transport/adau1701_peq_band.dart';
 import '../../../core/transport/adau1701_peq_deployment_gate.dart';
@@ -19,6 +21,7 @@ import '../../../core/transport/adau1701_tuning_transport.dart';
 import '../../../core/transport/icp5_frame_codec.dart';
 import '../../../shared/pro_widgets.dart';
 import '../widgets/adau1701_peq_response_graph.dart';
+import '../widgets/graph_overlay_models.dart';
 
 class Adau1701Icp5TuningPanel extends StatefulWidget {
   final Adau1701TuningTransport transport;
@@ -64,6 +67,9 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   Adau1701Ch0Band0OriginalState? _qVerifyState;
   String? _qApplyError;
 
+  // MiUMAX channel offset scan — set after each READ.
+  String? _wooferScanResult;
+
   // Selected PEQ band index (0 = Band 1). Only Band 1 is capture-proven and
   // has a readback path (the confirmed decoder reads Ch0 Band 0); bands 2..10
   // reuse the confirmed band payload byte but are hardware-unverified.
@@ -78,6 +84,10 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
   // band contributes to the rendered curve.
   static const int _outputCount = 4;
   int _selectedOutput = 0;
+  // Graph rendering mode — overlay shows all 4 channels simultaneously;
+  // single shows the selected channel with band marker. Defaults to overlay
+  // after READ so the engineer immediately sees the full 4-channel picture.
+  PeqGraphMode _graphMode = PeqGraphMode.overlay;
   // Global voicing preset (model/UI only — no DSP write). Flips to `custom` on
   // any manual band edit or after a hardware read.
   Adau1701PeqPreset _selectedPreset = Adau1701PeqPreset.flat;
@@ -207,36 +217,121 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
       _qApplyError = null;
     });
     try {
-      final svc = Adau1701Ch0Band0ReadService(transport: widget.transport);
-      final result = await svc.readOriginalState();
+      // Read the raw 513-byte snapshot (same BLE call, no transport changes).
+      final snapshot = await widget.transport.readRawDspState();
       if (!mounted) return;
-      if (result.succeeded) {
-        final s = result.originalState!;
-        setState(() {
-          _readState = s;
-          // The verified read is Output 1 / Band 1 (Ch0 Band0). Load it into the
-          // model, enable it, select it, and snapshot the baseline curve.
-          _selectedOutput = 0;
-          _selectedBand = 0;
-          _peqModel[0][0] = PeqResponseBand(
-            frequencyHz: s.frequencyHz.toDouble(),
-            gainDb: s.gainDb,
-            q: s.q,
-            enabled: true,
-          );
-          // Device state does not correspond to a preset curve.
-          _selectedPreset = Adau1701PeqPreset.custom;
-          _baselineModel = _cloneModel();
-          _repopulateControllers();
-        });
-      } else {
-        setState(() => _readError = result.message);
+
+      if (snapshot.payload.length != 513) {
+        if (mounted) setState(() => _readError = 'Payload not 513 bytes (got ${snapshot.payload.length}).');
+        return;
       }
+
+      // Decode all 4 outputs × 10 bands using the multi-output decoder.
+      final stateSnapshot = Adau1701StateDecoder.decode(snapshot);
+      final output1Bands = stateSnapshot.outputs[0].peqBands;
+
+      // Build Adau1701Ch0Band0OriginalState from Ch0 Band0 — same values that
+      // readOriginalState() returned, used by _OriginalStateCard and preflight.
+      final ch0Band0 = output1Bands[0];
+      final readState = Adau1701Ch0Band0OriginalState(
+        deviceId: snapshot.deviceId,
+        capturedAt: snapshot.timestamp,
+        frequencyHz: ch0Band0.frequencyHz,
+        gainDb: ch0Band0.gainDb,
+        q: ch0Band0.q,
+        property08State: ch0Band0.property08,
+      );
+
+      // Debug: all 4 outputs.
+      for (var ch = 0; ch < stateSnapshot.outputs.length; ch++) {
+        final output = stateSnapshot.outputs[ch];
+        final role = miuMaxOutputRoles[ch].shortLabel;
+        final layoutLabel = output.isChannelLayoutProven ? 'confirmed' : 'candidate';
+        debugPrint('[DSP READBACK] Output${ch + 1} ($role) [$layoutLabel]');
+        for (final band in output.peqBands) {
+          debugPrint(
+            '  Band${band.bandIndex + 1}  ${band.frequencyHz}Hz  '
+            '${band.gainDb.toStringAsFixed(1)}dB  '
+            'Q${band.q.toStringAsFixed(2)}'
+            '${band.withinVerifiedRanges ? '' : '  [out-of-range]'}',
+          );
+        }
+      }
+
+      // Scan payload for Woofer L Band1 signature (60Hz/+0.5dB/Q1.0) to find
+      // the actual Ch2 base offset. Reports result directly in the UI.
+      final wooferScan = _scanForWooferOffset(snapshot.payload);
+
+      if (!mounted) return;
+      setState(() {
+        _readState = readState;
+        _wooferScanResult = wooferScan;
+        _selectedOutput = 0;
+        _selectedBand = 0;
+        // Populate ALL 4 outputs × 10 bands from hardware readback.
+        // Ch0: layout confirmed — enable all 10 bands.
+        // Ch1-3: layout candidate — only enable bands with valid-range values
+        //   (withinVerifiedRanges); out-of-range bytes likely indicate the
+        //   offset assumption is wrong for that position.
+        for (var ch = 0; ch < stateSnapshot.outputs.length; ch++) {
+          final bands = stateSnapshot.outputs[ch].peqBands;
+          final layoutProven = stateSnapshot.outputs[ch].isChannelLayoutProven;
+          for (var i = 0; i < bands.length; i++) {
+            final b = bands[i];
+            _peqModel[ch][i] = PeqResponseBand(
+              frequencyHz: b.frequencyHz.toDouble(),
+              gainDb: b.gainDb,
+              q: b.q,
+              enabled: layoutProven ? true : b.withinVerifiedRanges,
+            );
+          }
+        }
+        _selectedPreset = Adau1701PeqPreset.custom;
+        _graphMode = PeqGraphMode.overlay;
+        _baselineModel = _cloneModel();
+        _repopulateControllers();
+      });
     } catch (e) {
       if (mounted) setState(() => _readError = '$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  // Searches the 513-byte payload for Woofer L Band1 signature from MiUMAX
+  // screenshots: 60Hz (0x3C,0x00) / +0.5dB (0x05) / Q1.0 (0x0A at +4).
+  // Verifies Band2 (120Hz/0dB/Q1.0) and Band3 (220Hz/0dB/Q0.8) at +6/+12.
+  // Returns a one-line result string for display in the UI.
+  static String _scanForWooferOffset(List<int> payload) {
+    final candidates = <int>[];
+    for (var i = 0; i + 4 < payload.length; i++) {
+      if (payload[i] == 0x3C &&
+          payload[i + 1] == 0x00 &&
+          payload[i + 2] == 0x05 &&
+          payload[i + 4] == 0x0A) {
+        candidates.add(i);
+      }
+    }
+    if (candidates.isEmpty) return 'NOT FOUND — use hex diff to locate Ch2';
+    final buf = StringBuffer();
+    for (final base in candidates) {
+      bool b2ok = false, b3ok = false;
+      if (base + 10 < payload.length) {
+        final f2 = payload[base + 6] | (payload[base + 7] << 8);
+        final g2 = payload[base + 8];
+        final q2 = payload[base + 10];
+        b2ok = f2 == 120 && g2 == 0 && q2 == 0x0A;
+      }
+      if (base + 16 < payload.length) {
+        final f3 = payload[base + 12] | (payload[base + 13] << 8);
+        final g3 = payload[base + 14];
+        final q3 = payload[base + 16];
+        b3ok = f3 == 220 && g3 == 0 && q3 == 0x0A;
+      }
+      final confirmed = b2ok && b3ok;
+      buf.write('offset $base ${confirmed ? "✓ CONFIRMED" : "⚠ partial"}  ');
+    }
+    return buf.toString().trim();
   }
 
   Future<void> _apply() async {
@@ -428,41 +523,90 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
         if (_readState != null) ...[
           const SizedBox(height: 12),
 
-          // ── PEQ RESPONSE — primary tuning panel (full width, above cards) ──
+          // ── PEQ RESPONSE — 4채널 × 10밴드 그래프 ─────────────────────────────
           Row(children: [
-            Text('PEQ RESPONSE — OUTPUT ${_selectedOutput + 1}',
-                style: proSubtitle(size: 9)),
+            Text('PEQ RESPONSE  4 ch × 10 bands', style: proSubtitle(size: 9)),
             const Spacer(),
             Text(
-                '${Adau1701PeqResponse.enabledCount(_peqModel[_selectedOutput])}'
-                ' / ${Icp5FrameCodec.peqBandCount} bands',
-                style: proSubtitle(size: 9)),
+              '${miuMaxOutputRoles[_selectedOutput].shortLabel}  '
+              '${Adau1701PeqResponse.enabledCount(_peqModel[_selectedOutput])}'
+              ' / ${Icp5FrameCodec.peqBandCount} bands',
+              style: proSubtitle(size: 9),
+            ),
           ]),
-          const SizedBox(height: 6),
-          _OutputSelector(
-            outputCount: _outputCount,
-            selectedOutput: _selectedOutput,
-            onSelected: (o) => setState(() {
-              _syncSelectedBandFromControllers();
-              _selectedOutput = o;
-              _repopulateControllers();
-            }),
-          ),
           const SizedBox(height: 8),
           Adau1701PeqResponseGraph(
-            // Pass an immutable point-in-time snapshot so the graph detects
-            // per-edit changes (the model is edited in place).
             bands: List.of(_peqModel[_selectedOutput]),
-            selectedBandIndex: _selectedBand,
-            baselineBands: _baselineModel?[_selectedOutput],
+            selectedBandIndex:
+                _graphMode == PeqGraphMode.single ? _selectedBand : null,
+            baselineBands:
+                _graphMode == PeqGraphMode.single ? (_baselineModel?[_selectedOutput]) : null,
+            overlayCurves: [
+              for (var ch = 0; ch < _outputCount; ch++)
+                PeqGraphCurve(
+                  label: miuMaxOutputRoles[ch].shortLabel,
+                  bands: List.of(_peqModel[ch]),
+                  color: peqGraphOverlayPalette[ch],
+                ),
+            ],
+            mode: _graphMode,
+            onModeChanged: (m) => setState(() => _graphMode = m),
             height: 400,
           ),
           const SizedBox(height: 6),
           Text(
-              'Combined curve of enabled bands (peaking model @ '
-              '${(Adau1701PeqResponse.sampleRateHz / 1000).toStringAsFixed(0)} kHz). '
-              'Editing model — only Output 1 / Band 1 readback is hardware-verified.',
-              style: proSubtitle(size: 8)),
+            'Overlay: 4채널 각 10밴드 combined curve. '
+            'Single: 선택 채널 + 밴드 마커. '
+            'Output 1 confirmed / Output 2-4 candidate offset.',
+            style: proSubtitle(size: 8),
+          ),
+
+          // ── WOOFER CHANNEL OFFSET SCAN ─────────────────────────────────────
+          if (_wooferScanResult != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: (_wooferScanResult!.contains('CONFIRMED')
+                        ? kProGreen
+                        : _wooferScanResult!.contains('partial')
+                            ? kProAmber
+                            : Colors.white24)
+                    .withValues(alpha: 0.08),
+                border: Border.all(
+                  color: (_wooferScanResult!.contains('CONFIRMED')
+                          ? kProGreen
+                          : _wooferScanResult!.contains('partial')
+                              ? kProAmber
+                              : Colors.white24)
+                      .withValues(alpha: 0.3),
+                ),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Row(children: [
+                Icon(
+                  _wooferScanResult!.contains('CONFIRMED')
+                      ? Icons.check_circle_outline
+                      : _wooferScanResult!.contains('partial')
+                          ? Icons.warning_amber_outlined
+                          : Icons.radar_outlined,
+                  size: 11,
+                  color: _wooferScanResult!.contains('CONFIRMED')
+                      ? kProGreen
+                      : _wooferScanResult!.contains('partial')
+                          ? kProAmber
+                          : Colors.white38,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Woofer offset scan:  $_wooferScanResult',
+                    style: proSubtitle(size: 9),
+                  ),
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 16),
 
           _OriginalStateCard(state: _readState!),
@@ -477,14 +621,30 @@ class _Adau1701Icp5TuningPanelState extends State<Adau1701Icp5TuningPanel> {
           ),
           const SizedBox(height: 16),
 
+          // ── CHANNEL / BAND SELECTOR (for APPLY target) ───────────────────
+          Text('EDIT TARGET', style: proSubtitle(size: 9)),
+          const SizedBox(height: 6),
+          _OutputSelector(
+            outputCount: _outputCount,
+            selectedOutput: _selectedOutput,
+            readStateAvailable: _readState != null,
+            onSelected: (o) => setState(() {
+              _syncSelectedBandFromControllers();
+              _selectedOutput = o;
+              _repopulateControllers();
+              // Single 모드로 전환해서 편집 중인 채널 커브를 강조 표시.
+              _graphMode = PeqGraphMode.single;
+            }),
+          ),
+          const SizedBox(height: 16),
+
           // ── PEQ APPLY (above bands — existing hardware safety gates) ──────
-          Text('PEQ APPLY', style: proSubtitle(size: 9)),
+          Text('PEQ APPLY — ${miuMaxOutputRoles[_selectedOutput].shortLabel} · Band ${_selectedBand + 1}',
+              style: proSubtitle(size: 9)),
           const SizedBox(height: 6),
           Text(
-              'Runs preflight, then writes the selected band '
-              '(Output ${_selectedOutput + 1} / Band ${_selectedBand + 1}) to the '
-              'speaker. Rollback-guarded — nothing is written unless preflight '
-              'passes.',
+              'Runs preflight, then writes the selected band to the speaker. '
+              'Rollback-guarded — nothing is written unless preflight passes.',
               style: proSubtitle(size: 8)),
           const SizedBox(height: 8),
           _ActionButton(
@@ -743,7 +903,14 @@ class _OriginalStateCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('CURRENT STATE (from hardware)', style: proSubtitle(size: 9)),
+        Row(children: [
+          Text('CURRENT STATE — Output 1 · Tweeter L · Band 1',
+              style: proSubtitle(size: 9)),
+          const SizedBox(width: 6),
+          const Icon(Icons.check_circle_outline, size: 10, color: kProGreen),
+          const SizedBox(width: 3),
+          Text('hardware-confirmed', style: proSubtitle(size: 8, color: kProGreen)),
+        ]),
         const SizedBox(height: 8),
         _StateRow('Frequency', '${state.frequencyHz} Hz'),
         _StateRow('Gain', '${state.gainDb.toStringAsFixed(1)} dB'),
@@ -982,15 +1149,17 @@ class _BandSelector extends StatelessWidget {
       );
 }
 
-// ── Output selector (Output 1 .. 4) ─────────────────────────────────────────────
+// ── Output selector (Tweeter L / Tweeter R / Woofer L / Woofer R) ────────────
 
 class _OutputSelector extends StatelessWidget {
   final int outputCount;
   final int selectedOutput;
+  final bool readStateAvailable;
   final ValueChanged<int> onSelected;
   const _OutputSelector({
     required this.outputCount,
     required this.selectedOutput,
+    required this.readStateAvailable,
     required this.onSelected,
   });
 
@@ -1002,8 +1171,22 @@ class _OutputSelector extends StatelessWidget {
           for (var output = 0; output < outputCount; output++)
             ChoiceChip(
               key: ValueKey('peq_output_$output'),
-              label: Text('Output ${output + 1}${output == 0 ? '' : ' *'}',
-                  style: const TextStyle(fontSize: 10)),
+              label: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(
+                  miuMaxOutputRoles[output].shortLabel,
+                  style: const TextStyle(fontSize: 10),
+                ),
+                if (readStateAvailable) ...[
+                  const SizedBox(width: 4),
+                  Icon(
+                    output == 0
+                        ? Icons.check_circle_outline
+                        : Icons.radio_button_unchecked,
+                    size: 9,
+                    color: output == 0 ? kProGreen : kProAmber,
+                  ),
+                ],
+              ]),
               selected: output == selectedOutput,
               onSelected: (_) => onSelected(output),
             ),

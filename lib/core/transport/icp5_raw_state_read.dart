@@ -156,6 +156,23 @@ class RawDspStateSnapshot {
           payload.length, 'payload.length', 'Must be 513.');
     }
   }
+
+  // Returns the 513-byte payload as a formatted hex dump for comparison.
+  // Format: 16 bytes per row with a 3-digit hex offset prefix.
+  // Example: "0x000: e8 03 1e 00 0a 00 ..."
+  String rawHexDump() {
+    const bytesPerRow = 16;
+    final buf = StringBuffer();
+    for (var offset = 0; offset < payload.length; offset += bytesPerRow) {
+      final end = (offset + bytesPerRow).clamp(0, payload.length);
+      final row = payload.sublist(offset, end);
+      final prefix = '0x${offset.toRadixString(16).padLeft(3, '0')}';
+      final hex =
+          row.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+      buf.writeln('$prefix: $hex');
+    }
+    return buf.toString().trimRight();
+  }
 }
 
 typedef Icp5ReadExchange = Future<List<int>> Function(List<int> request);

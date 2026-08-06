@@ -42,13 +42,13 @@ List<int> _buildCh0RefPayload() {
 }
 
 // Builds a payload encoding both Tweeter L (Ch0) and Tweeter R (Ch1) reference
-// values so that overall match score can reach 100% for Tweeter outputs.
+// values.
 List<int> _buildTweeterRefPayload() {
   final p = _buildCh0RefPayload();
-  // Ch1 at stride-60 offset: base = 19 + 60 = 79
+  // Ch1 at stride-83 offset: base = 19 + 83 = 102
   final refs = Adau1701MiuMaxPeqReference.ch1Bands;
   for (var i = 0; i < refs.length; i++) {
-    final base = 79 + 6 * i;
+    final base = 102 + 6 * i;
     final ref = refs[i];
     p[base] = ref.frequencyHz & 0xFF;
     p[base + 1] = (ref.frequencyHz >> 8) & 0xFF;
@@ -56,6 +56,27 @@ List<int> _buildTweeterRefPayload() {
     p[base + 2] = gainRaw < 0 ? gainRaw + 256 : gainRaw;
     p[base + 4] = (ref.q * 10).round();
   }
+  return p;
+}
+
+// Builds a payload encoding all 4 channel reference values (Ch0–Ch3).
+// Used for 100% match score tests across all outputs.
+List<int> _buildAllRefPayload() {
+  final p = _buildTweeterRefPayload(); // Ch0 (offset 19) + Ch1 (offset 102)
+  // Ch2 at stride-83 offset: base = 19 + 83*2 = 185
+  void _writeChannel(List<int> buf, int chBase, List<PeqBandReference> refs) {
+    for (var i = 0; i < refs.length; i++) {
+      final base = chBase + 6 * i;
+      final ref = refs[i];
+      buf[base] = ref.frequencyHz & 0xFF;
+      buf[base + 1] = (ref.frequencyHz >> 8) & 0xFF;
+      final gainRaw = (ref.gainDb * 10).round();
+      buf[base + 2] = gainRaw < 0 ? gainRaw + 256 : gainRaw;
+      buf[base + 4] = (ref.q * 10).round();
+    }
+  }
+  _writeChannel(p, 185, Adau1701MiuMaxPeqReference.ch2Bands);
+  _writeChannel(p, 268, Adau1701MiuMaxPeqReference.ch3Bands);
   return p;
 }
 
@@ -68,6 +89,7 @@ RawDspStateSnapshot _snap(List<int> payload) => RawDspStateSnapshot(
 
 RawDspStateSnapshot _ch0RefSnap() => _snap(_buildCh0RefPayload());
 RawDspStateSnapshot _tweeterRefSnap() => _snap(_buildTweeterRefPayload());
+RawDspStateSnapshot _allRefSnap() => _snap(_buildAllRefPayload());
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -204,11 +226,11 @@ void main() {
       }
     });
 
-    test('Ch2 all bands are unknown (Gain/Q not yet captured)', () {
+    test('Ch2 all bands are candidateMapping (hardware-read via channel candidate)', () {
       for (var i = 0; i < 10; i++) {
         expect(Adau1701MiuMaxPeqReference.ch2Bands[i].confidence,
-            equals(DataConfidence.unknown),
-            reason: 'Ch2 Band $i must be unknown');
+            equals(DataConfidence.candidateMapping),
+            reason: 'Ch2 Band $i must be candidateMapping');
       }
     });
 
@@ -289,65 +311,79 @@ void main() {
   // ── 4. 4-output comparison ────────────────────────────────────────────────
 
   group('4-output comparison', () {
-    late DspComparisonSummary comp;
+    late DspComparisonSummary compTweeterOnly;
+    late DspComparisonSummary compAll;
 
     setUp(() {
-      final decoded = Adau1701StateDecoder.decode(_tweeterRefSnap());
-      comp = Adau1701DspComparison.compare(decoded);
+      compTweeterOnly = Adau1701DspComparison.compare(
+          Adau1701StateDecoder.decode(_tweeterRefSnap()));
+      compAll = Adau1701DspComparison.compare(
+          Adau1701StateDecoder.decode(_allRefSnap()));
     });
 
     test('Ch1 (Tweeter R) has comparable reference', () {
-      expect(comp.outputs[1].hasComparableReference, isTrue);
+      expect(compAll.outputs[1].hasComparableReference, isTrue);
     });
 
     test('Ch1 has 10 comparable bands (candidateMapping)', () {
-      expect(comp.outputs[1].totalComparable, equals(10));
+      expect(compAll.outputs[1].totalComparable, equals(10));
     });
 
     test('Ch1 match score is 100% when payload encodes Tweeter R reference values', () {
-      expect(comp.outputs[1].matchScorePercent, closeTo(100.0, 0.01));
+      expect(compAll.outputs[1].matchScorePercent, closeTo(100.0, 0.01));
     });
 
-    test('Ch2 (Woofer L) has no comparable reference (all unknown)', () {
-      expect(comp.outputs[2].hasComparableReference, isFalse);
+    test('Ch2 (Woofer L) has comparable reference (candidateMapping)', () {
+      expect(compAll.outputs[2].hasComparableReference, isTrue);
     });
 
-    test('Ch2 totalComparable is 0 (Woofer Gain/Q excluded)', () {
-      expect(comp.outputs[2].totalComparable, equals(0));
+    test('Ch2 totalComparable is 10 (Woofer Gain/Q now captured)', () {
+      expect(compAll.outputs[2].totalComparable, equals(10));
     });
 
-    test('Ch2 matchCount is 0', () {
-      expect(comp.outputs[2].matchCount, equals(0));
+    test('Ch2 matchCount is 10 when payload encodes Woofer reference values', () {
+      expect(compAll.outputs[2].matchCount, equals(10));
     });
 
-    test('Ch3 (Woofer R) has no comparable reference', () {
-      expect(comp.outputs[3].hasComparableReference, isFalse);
+    test('Ch3 (Woofer R) has comparable reference', () {
+      expect(compAll.outputs[3].hasComparableReference, isTrue);
     });
 
-    test('totalComparableBands across 4 outputs is 20 (Ch0+Ch1 only)', () {
-      expect(comp.totalComparableBands, equals(20));
+    test('totalComparableBands across 4 outputs is 40', () {
+      expect(compAll.totalComparableBands, equals(40));
     });
 
-    test('matchedBands is 20 when both Tweeter payloads match reference', () {
-      expect(comp.matchedBands, equals(20));
+    test('matchedBands is 40 when all 4 channel payloads match reference', () {
+      expect(compAll.matchedBands, equals(40));
     });
 
-    test('overall matchScorePercent is 100% when both Tweeters match', () {
-      expect(comp.matchScorePercent, closeTo(100.0, 0.01));
+    test('overall matchScorePercent is 100% when all 4 channels match', () {
+      expect(compAll.matchScorePercent, closeTo(100.0, 0.01));
+    });
+
+    test('tweeterOnly snap: totalComparableBands is still 40 (all channels comparable)', () {
+      expect(compTweeterOnly.totalComparableBands, equals(40));
+    });
+
+    test('tweeterOnly snap: matchedBands is 20 (only Ch0+Ch1 match)', () {
+      expect(compTweeterOnly.matchedBands, equals(20));
     });
   });
 
-  // ── 5. Unknown confidence — Woofer ───────────────────────────────────────
+  // ── 5. Woofer candidateMapping — comparable and scoreable ────────────────
 
-  group('Unknown confidence band handling', () {
+  group('Woofer candidateMapping band handling', () {
     late DspComparisonSummary comp;
 
     setUp(() {
+      // ch0RefSnap has Ch0 data; Ch2/Ch3 payload bytes are zero.
+      // Reference is candidateMapping → Woofer bands ARE comparable but freq
+      // mismatch (0 Hz vs 60 Hz) means isMatch = false.
       final decoded = Adau1701StateDecoder.decode(_ch0RefSnap());
       comp = Adau1701DspComparison.compare(decoded);
     });
 
-    test('Ch2 bandComparisons is non-null (reference data exists for freq)', () {
+    test('Ch2 bandComparisons is non-null', () {
       expect(comp.outputs[2].bandComparisons, isNotNull);
     });
 
@@ -355,21 +391,21 @@ void main() {
       expect(comp.outputs[2].bandComparisons!.length, equals(10));
     });
 
-    test('all Ch2 band comparisons have isComparable = false', () {
+    test('all Ch2 band comparisons have isComparable = true (candidateMapping)', () {
       for (final b in comp.outputs[2].bandComparisons!) {
-        expect(b.isComparable, isFalse,
-            reason: 'Ch2 Band ${b.bandIndex} must not be comparable');
+        expect(b.isComparable, isTrue,
+            reason: 'Ch2 Band ${b.bandIndex} must be comparable');
       }
     });
 
-    test('all Ch2 band comparisons have isMatch = false', () {
+    test('all Ch2 band comparisons have isMatch = false (payload has zeros)', () {
       for (final b in comp.outputs[2].bandComparisons!) {
         expect(b.isMatch, isFalse,
-            reason: 'Unknown band must never be isMatch=true');
+            reason: 'Ch2 Band ${b.bandIndex} — payload zero ≠ reference freq');
       }
     });
 
-    test('Ch2 reference frequency is still accessible for display', () {
+    test('Ch2 reference frequency is correct for display', () {
       const expectedFreqs = [60, 120, 220, 350, 550, 750, 1200, 1800, 2400, 3500];
       for (var i = 0; i < 10; i++) {
         expect(comp.outputs[2].bandComparisons![i].reference.frequencyHz,
@@ -378,17 +414,14 @@ void main() {
       }
     });
 
-    test('Ch2 confidence for all bands is unknown', () {
+    test('Ch2 confidence for all bands is candidateMapping', () {
       for (final b in comp.outputs[2].bandComparisons!) {
-        expect(b.reference.confidence, equals(DataConfidence.unknown));
+        expect(b.reference.confidence, equals(DataConfidence.candidateMapping));
       }
     });
 
-    test('Woofer totalComparable is excluded from DspComparisonSummary total', () {
-      // Only Ch0 (10) + Ch1 (10) = 20 comparable, not 40.
-      final decoded = Adau1701StateDecoder.decode(_ch0RefSnap());
-      final c2 = Adau1701DspComparison.compare(decoded);
-      expect(c2.totalComparableBands, lessThanOrEqualTo(20));
+    test('totalComparableBands is 40 (all 4 channels now candidateMapping)', () {
+      expect(comp.totalComparableBands, equals(40));
     });
   });
 
