@@ -266,6 +266,16 @@ class MeasurementMicrophoneProfile {
   final String model;
   final String? serialNumber;
   final String connectionType;
+
+  /// An optional hint recorded at profile-authoring time (e.g. "this mic is
+  /// usually plugged into device X") — NEVER a live OS device handle, and
+  /// never trusted as the device actually in use for any given capture. The
+  /// project's actual current input device is
+  /// `ProProject.selectedInputDevice` (Phase 3-D1,
+  /// `MeasurementInputDeviceSelection`), and what a specific capture
+  /// actually used is `MeasurementInputDeviceSnapshot` — this field is not
+  /// a substitute for either and must never be auto-trusted as the current
+  /// real device.
   final String? inputDeviceId;
   final CalibrationSource calibrationSource;
   final CalibrationCurve? calibrationCurve;

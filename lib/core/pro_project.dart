@@ -13,6 +13,7 @@ import 'pro_deploy_package_data.dart';
 import 'pro_address_validation_data.dart';
 import 'room_measurement_data.dart';
 import 'calibration/calibration_types.dart';
+import 'measurement/measurement_input_device.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 
@@ -113,6 +114,15 @@ class ProProject {
   /// previous value (see [MeasurementMicrophoneSnapshot]).
   final List<MeasurementMicrophoneProfile> microphoneProfiles;
 
+  /// This project's current OS input-device selection (Phase 3-D1
+  /// foundation) — never shared with or inherited by any other project.
+  /// Null means no selection has been made (legacy or never-set project);
+  /// this is distinct from an explicit system-default selection, which is
+  /// represented by a non-null [MeasurementInputDeviceSelection] with
+  /// `useSystemDefault: true`. Not yet consulted by any capture/gate path
+  /// in this phase — persistence only.
+  final MeasurementInputDeviceSelection? selectedInputDevice;
+
   /// Closed-loop correction cycles for this project.
   /// Each entry records one before/apply/deploy/after pass.
   final List<CorrectionCycle> correctionCycles;
@@ -149,6 +159,7 @@ class ProProject {
     RoomMeasurementProjectState? roomState,
     this.selectedMicrophoneProfile,
     this.microphoneProfiles = const [],
+    this.selectedInputDevice,
     this.correctionCycles = const [],
     this.factoryProfiles = const [],
   })  : acousticState =
@@ -216,6 +227,8 @@ class ProProject {
     MeasurementMicrophoneProfile? selectedMicrophoneProfile,
     bool clearSelectedMicrophoneProfile = false,
     List<MeasurementMicrophoneProfile>? microphoneProfiles,
+    MeasurementInputDeviceSelection? selectedInputDevice,
+    bool clearSelectedInputDevice = false,
     List<CorrectionCycle>? correctionCycles,
     List<FactorySoundProfile>? factoryProfiles,
   }) =>
@@ -250,6 +263,9 @@ class ProProject {
             ? null
             : (selectedMicrophoneProfile ?? this.selectedMicrophoneProfile),
         microphoneProfiles: microphoneProfiles ?? this.microphoneProfiles,
+        selectedInputDevice: clearSelectedInputDevice
+            ? null
+            : (selectedInputDevice ?? this.selectedInputDevice),
         correctionCycles: correctionCycles ?? this.correctionCycles,
         factoryProfiles: factoryProfiles ?? this.factoryProfiles,
       );
@@ -290,6 +306,8 @@ class ProProject {
         if (microphoneProfiles.isNotEmpty)
           'microphoneProfiles':
               microphoneProfiles.map((p) => p.toJson()).toList(),
+        if (selectedInputDevice != null)
+          'selectedInputDevice': selectedInputDevice!.toJson(),
         if (correctionCycles.isNotEmpty)
           'correctionCycles': correctionCycles.map((c) => c.toJson()).toList(),
         if (factoryProfiles.isNotEmpty)
@@ -357,6 +375,8 @@ class ProProject {
         selectedMicrophoneProfile:
             _decodeSelectedMicrophoneProfile(j['selectedMicrophoneProfile']),
         microphoneProfiles: _decodeMicrophoneProfiles(j['microphoneProfiles']),
+        selectedInputDevice:
+            _decodeSelectedInputDevice(j['selectedInputDevice']),
         correctionCycles: (j['correctionCycles'] as List? ?? [])
             .map((e) =>
                 CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -414,6 +434,21 @@ class ProProject {
       }
     }
     return result;
+  }
+
+  /// Isolated decode: a corrupt selectedInputDevice must not fail the whole
+  /// project decode, and must never silently become a fabricated selection
+  /// — falls back to null (no input device selected).
+  static MeasurementInputDeviceSelection? _decodeSelectedInputDevice(
+      Object? raw) {
+    if (raw == null) return null;
+    try {
+      return MeasurementInputDeviceSelection.fromJson(
+          Map<String, dynamic>.from(raw as Map));
+    } catch (e) {
+      debugPrint('ProProject: skipping unparsable selectedInputDevice ($e)');
+      return null;
+    }
   }
 
   static String encodeList(List<ProProject> list) =>

@@ -15,6 +15,13 @@ import '../../core/akg/measurement_session.dart';
 import '../../core/calibration/calibration_applicator.dart';
 import '../../core/calibration/calibration_types.dart';
 import '../../core/pro_acoustic_data.dart' show MeasurementDataPoint;
+import '../../core/measurement/measurement_input_device.dart';
+import '../../core/measurement/measurement_input_device_service.dart';
+import '../../core/measurement/measurement_pcm_quality_analyzer.dart';
+import '../../core/measurement/measurement_quality_model.dart';
+import '../../core/measurement/measurement_quality_policy.dart';
+import '../../core/measurement/measurement_setup_capture_result.dart';
+import '../../core/measurement/measurement_wav_parser.dart';
 
 enum MeasurementStatus { idle, playing, recording, analyzing, done, error }
 
@@ -102,6 +109,13 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   // Pre-rolling for this many seconds before starting the recorder captures
   // only the stable portion of the signal.
   static const int _bleWarmupSec = 2;
+
+  /// Overridable seam for tests: the real implementation wraps this
+  /// controller's own [_recorder]. A test fake can override this getter to
+  /// return a service backed by a fake [MeasurementInputDeviceApi] without
+  /// needing a real platform channel.
+  MeasurementInputDeviceService get inputDeviceService =>
+      MeasurementInputDeviceService(RecordPackageInputDeviceApi(_recorder));
 
   static Future<bool> checkAndRequestPermission() async {
     final recorder = AudioRecorder();
@@ -396,6 +410,209 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     try {
       await _player.stop();
     } catch (_) {}
+  }
+
+  // ── Phase 3-D1: setup-check captures ─────────────────────────────────────
+  //
+  // Neither method below touches MicMeasurementState — a setup check is not
+  // a live/FFT measurement and does not participate in that state machine.
+  // Both reuse the existing recorder/player fields and BLE-warmup/lifecycle
+  // ordering already established above (never re-derived here), and both
+  // resolve the input device fresh, immediately before recording — never
+  // trusting a previously cached device list.
+
+  /// Records [MeasurementQualityPolicy.silenceCaptureDuration] of ambient
+  /// silence (no playback) on [inputSelection] and returns its measured RMS
+  /// as [MeasurementQualityMetrics.noiseFloorDbFs] — never a hardcoded
+  /// placeholder. Fails closed on missing permission, an unavailable
+  /// selected device, or a malformed capture.
+  Future<MeasurementSetupCaptureResult> measureNoiseFloor({
+    required MeasurementInputDeviceSelection inputSelection,
+    MeasurementQualityPolicy? policy,
+  }) async {
+    final effectivePolicy = policy ?? MeasurementQualityPolicy.proProvisional();
+    try {
+      final hasPermission = await inputDeviceService.hasPermission();
+      if (!hasPermission) {
+        return MeasurementSetupCaptureResult.failure('MIC_PERMISSION_DENIED');
+      }
+
+      final resolvedDevice =
+          await inputDeviceService.resolveForRecording(inputSelection);
+
+      final dir = await getTemporaryDirectory();
+      final recPath = '${dir.path}/tunai_pro_noise_floor_'
+          '${DateTime.now().millisecondsSinceEpoch}.wav';
+
+      try {
+        await _recorder.start(
+          RecordConfig(
+            encoder: AudioEncoder.wav,
+            sampleRate: sampleRate,
+            numChannels: 1,
+            device: MeasurementInputDeviceService.toRecordConfigDevice(
+                resolvedDevice),
+          ),
+          path: recPath,
+        );
+        await Future.delayed(effectivePolicy.silenceCaptureDuration);
+      } finally {
+        await _safeStopRecorderAndPlayer();
+      }
+
+      return _evaluateSetupCapture(
+        recPath: recPath,
+        policy: effectivePolicy,
+        inputSelection: inputSelection,
+        resolvedDevice: resolvedDevice,
+        priorNoiseFloorDbFs: null,
+        selfIsNoiseFloor: true,
+      );
+    } on MeasurementInputDeviceUnavailable catch (e) {
+      return MeasurementSetupCaptureResult.failure(e.toString());
+    } catch (e) {
+      return MeasurementSetupCaptureResult.failure(e.toString());
+    }
+  }
+
+  /// Plays a short pink-noise test signal (mono, or one channel of a
+  /// stereo pair per [signal] — the same generators
+  /// startMeasurement()/startRoomMeasurement() already use, never a new
+  /// signal engine) and records it on [inputSelection], evaluating actual
+  /// PCM level/clipping and, if [priorNoiseFloorDbFs] is supplied from an
+  /// earlier [measureNoiseFloor] call, SNR. Reuses the exact BLE-warmup
+  /// ordering (play-then-record) vs local/USB ordering (record-then-play)
+  /// established by startMeasurement() — never reordered here.
+  Future<MeasurementSetupCaptureResult> runInputLevelCheck({
+    required MeasurementInputDeviceSelection inputSelection,
+    MeasurementQualityPolicy? policy,
+    MeasurementLevelCheckSignal signal = MeasurementLevelCheckSignal.mono,
+    bool bleWarmup = false,
+    double? priorNoiseFloorDbFs,
+  }) async {
+    final effectivePolicy = policy ?? MeasurementQualityPolicy.proProvisional();
+    try {
+      final hasPermission = await inputDeviceService.hasPermission();
+      if (!hasPermission) {
+        return MeasurementSetupCaptureResult.failure('MIC_PERMISSION_DENIED');
+      }
+
+      final resolvedDevice =
+          await inputDeviceService.resolveForRecording(inputSelection);
+
+      final warmup = bleWarmup ? _bleWarmupSec : 0;
+      final totalSec = warmup + effectivePolicy.levelCheckDuration.inSeconds;
+      final wavFile = signal == MeasurementLevelCheckSignal.mono
+          ? await _generatePinkNoise(totalSec: totalSec)
+          : await _generateStereoPinkNoise(
+              leftActive: signal == MeasurementLevelCheckSignal.leftOnly,
+              totalSec: totalSec,
+            );
+
+      final dir = await getTemporaryDirectory();
+      final recPath = '${dir.path}/tunai_pro_level_check_'
+          '${DateTime.now().millisecondsSinceEpoch}.wav';
+
+      try {
+        final config = RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: sampleRate,
+          numChannels: 1,
+          device: MeasurementInputDeviceService.toRecordConfigDevice(
+              resolvedDevice),
+        );
+        if (bleWarmup) {
+          // Same order as startMeasurement(): play first, wait for BLE A2DP
+          // codec warmup, then start recording.
+          await _player.setFilePath(wavFile.path);
+          await _player.play();
+          await Future.delayed(Duration(seconds: warmup));
+          await _recorder.start(config, path: recPath);
+        } else {
+          // Same order as startMeasurement(): record first, then play.
+          await _recorder.start(config, path: recPath);
+          await _player.setFilePath(wavFile.path);
+          await _player.play();
+        }
+        await Future.delayed(effectivePolicy.levelCheckDuration);
+      } finally {
+        await _safeStopRecorderAndPlayer();
+      }
+
+      return _evaluateSetupCapture(
+        recPath: recPath,
+        policy: effectivePolicy,
+        inputSelection: inputSelection,
+        resolvedDevice: resolvedDevice,
+        priorNoiseFloorDbFs: priorNoiseFloorDbFs,
+        selfIsNoiseFloor: false,
+      );
+    } on MeasurementInputDeviceUnavailable catch (e) {
+      return MeasurementSetupCaptureResult.failure(e.toString());
+    } catch (e) {
+      return MeasurementSetupCaptureResult.failure(e.toString());
+    }
+  }
+
+  /// Shared tail for both setup-check methods: reads the recorded file,
+  /// parses its actual WAV metadata (never assumes byte offset 44), runs
+  /// the PCM quality analyzer, and evaluates against [policy].
+  Future<MeasurementSetupCaptureResult> _evaluateSetupCapture({
+    required String recPath,
+    required MeasurementQualityPolicy policy,
+    required MeasurementInputDeviceSelection inputSelection,
+    required MeasurementInputDeviceDescriptor? resolvedDevice,
+    required double? priorNoiseFloorDbFs,
+    required bool selfIsNoiseFloor,
+  }) async {
+    final Uint8List bytes;
+    try {
+      bytes = await File(recPath).readAsBytes();
+    } catch (e) {
+      return MeasurementSetupCaptureResult.failure(
+          'Failed to read capture file: $e');
+    }
+
+    final wav = MeasurementWavParser.parse(bytes);
+    if (!wav.isSuccess) {
+      return MeasurementSetupCaptureResult.failure(
+          'Malformed capture: ${wav.errors.join('; ')}');
+    }
+
+    final samples = MeasurementWavParser.extractNormalizedSamples(bytes, wav);
+    final pcmResult = MeasurementPcmQualityAnalyzer.analyze(
+      samples: samples,
+      sampleRate: wav.sampleRate!,
+      channelCount: wav.channelCount!,
+      minimumDuration: policy.minimumCaptureDuration,
+      clippingAmplitudeThreshold: policy.clippingAmplitudeThreshold,
+    );
+    if (!pcmResult.isSuccess) {
+      return MeasurementSetupCaptureResult.failure(
+          'Malformed capture: ${pcmResult.errors.join('; ')}');
+    }
+    final pcm = pcmResult.metrics!;
+
+    final deviceSnapshot = MeasurementInputDeviceSnapshot(
+      deviceId: resolvedDevice?.id,
+      label: resolvedDevice?.label ?? inputSelection.labelSnapshot,
+      isSystemDefault: inputSelection.useSystemDefault,
+      platform: Platform.operatingSystem,
+      actualSampleRate: wav.sampleRate,
+      actualChannelCount: wav.channelCount,
+      capturedAt: DateTime.now(),
+    );
+
+    final evaluation = MeasurementQualityEvaluator.evaluate(
+      pcm: pcm,
+      actualSampleRate: wav.sampleRate!,
+      actualChannelCount: wav.channelCount!,
+      noiseFloorDbFs: selfIsNoiseFloor ? pcm.rmsDbFs : priorNoiseFloorDbFs,
+      inputDeviceSnapshot: deviceSnapshot,
+      policy: policy,
+    );
+
+    return MeasurementSetupCaptureResult.success(evaluation);
   }
 
   Float64List _pcmToFloat(Uint8List pcmBytes) {

@@ -14,6 +14,7 @@ import 'pro_deploy_package_data.dart';
 import 'pro_address_validation_data.dart';
 import 'room_measurement_data.dart';
 import 'calibration/calibration_types.dart';
+import 'measurement/measurement_input_device.dart';
 
 const _kProjectsKey = 'tunai_pro_projects';
 const _kCurrentIdKey = 'tunai_pro_current_project_id';
@@ -220,6 +221,19 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     final project = state.projects.firstWhere((p) => p.id == id);
     await updateProject(project.copyWith(
       microphoneProfiles: profiles,
+      updatedAt: DateTime.now(),
+    ));
+  }
+
+  /// Selects (or clears, when [selection] is null) the input device for
+  /// project [id] only — never touches any other project. Foundation-only
+  /// (Phase 3-D1): not yet consulted by any capture/gate path.
+  Future<void> updateSelectedInputDevice(
+      String id, MeasurementInputDeviceSelection? selection) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(project.copyWith(
+      selectedInputDevice: selection,
+      clearSelectedInputDevice: selection == null,
       updatedAt: DateTime.now(),
     ));
   }
