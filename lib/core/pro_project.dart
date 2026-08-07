@@ -14,6 +14,7 @@ import 'pro_address_validation_data.dart';
 import 'room_measurement_data.dart';
 import 'calibration/calibration_types.dart';
 import 'measurement/measurement_input_device.dart';
+import 'measurement/measurement_setup_readiness.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 
@@ -123,6 +124,16 @@ class ProProject {
   /// in this phase — persistence only.
   final MeasurementInputDeviceSelection? selectedInputDevice;
 
+  /// This project's most recent Guided Measurement Setup check (Phase
+  /// 3-D2) — never shared across projects. A snapshot's own `isStaleFor`/
+  /// `isExpired`/`isUsableNow` (see MeasurementSetupReadinessSnapshot) must
+  /// always be re-checked against the project's CURRENT identity before
+  /// treating it as usable — this field may hold a snapshot that has since
+  /// gone stale or expired; storing it does not mean it is still valid.
+  /// Not yet consulted by any Capture gate in this phase — persistence and
+  /// display only (see MicrophoneStatusCard / GuidedMeasurementSetupDialog).
+  final MeasurementSetupReadinessSnapshot? currentSetupReadiness;
+
   /// Closed-loop correction cycles for this project.
   /// Each entry records one before/apply/deploy/after pass.
   final List<CorrectionCycle> correctionCycles;
@@ -160,6 +171,7 @@ class ProProject {
     this.selectedMicrophoneProfile,
     this.microphoneProfiles = const [],
     this.selectedInputDevice,
+    this.currentSetupReadiness,
     this.correctionCycles = const [],
     this.factoryProfiles = const [],
   })  : acousticState =
@@ -229,6 +241,8 @@ class ProProject {
     List<MeasurementMicrophoneProfile>? microphoneProfiles,
     MeasurementInputDeviceSelection? selectedInputDevice,
     bool clearSelectedInputDevice = false,
+    MeasurementSetupReadinessSnapshot? currentSetupReadiness,
+    bool clearCurrentSetupReadiness = false,
     List<CorrectionCycle>? correctionCycles,
     List<FactorySoundProfile>? factoryProfiles,
   }) =>
@@ -266,6 +280,9 @@ class ProProject {
         selectedInputDevice: clearSelectedInputDevice
             ? null
             : (selectedInputDevice ?? this.selectedInputDevice),
+        currentSetupReadiness: clearCurrentSetupReadiness
+            ? null
+            : (currentSetupReadiness ?? this.currentSetupReadiness),
         correctionCycles: correctionCycles ?? this.correctionCycles,
         factoryProfiles: factoryProfiles ?? this.factoryProfiles,
       );
@@ -308,6 +325,8 @@ class ProProject {
               microphoneProfiles.map((p) => p.toJson()).toList(),
         if (selectedInputDevice != null)
           'selectedInputDevice': selectedInputDevice!.toJson(),
+        if (currentSetupReadiness != null)
+          'currentSetupReadiness': currentSetupReadiness!.toJson(),
         if (correctionCycles.isNotEmpty)
           'correctionCycles': correctionCycles.map((c) => c.toJson()).toList(),
         if (factoryProfiles.isNotEmpty)
@@ -377,6 +396,8 @@ class ProProject {
         microphoneProfiles: _decodeMicrophoneProfiles(j['microphoneProfiles']),
         selectedInputDevice:
             _decodeSelectedInputDevice(j['selectedInputDevice']),
+        currentSetupReadiness:
+            _decodeCurrentSetupReadiness(j['currentSetupReadiness']),
         correctionCycles: (j['correctionCycles'] as List? ?? [])
             .map((e) =>
                 CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -447,6 +468,22 @@ class ProProject {
           Map<String, dynamic>.from(raw as Map));
     } catch (e) {
       debugPrint('ProProject: skipping unparsable selectedInputDevice ($e)');
+      return null;
+    }
+  }
+
+  /// Isolated decode: a corrupt currentSetupReadiness must not fail the
+  /// whole project decode, and must never silently become a fabricated
+  /// (worse, falsely-Ready) readiness — falls back to null (no readiness
+  /// on record; the UI treats that identically to "never checked").
+  static MeasurementSetupReadinessSnapshot? _decodeCurrentSetupReadiness(
+      Object? raw) {
+    if (raw == null) return null;
+    try {
+      return MeasurementSetupReadinessSnapshot.fromJson(
+          Map<String, dynamic>.from(raw as Map));
+    } catch (e) {
+      debugPrint('ProProject: skipping unparsable currentSetupReadiness ($e)');
       return null;
     }
   }

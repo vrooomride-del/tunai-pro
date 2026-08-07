@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show visibleForTesting, debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/speaker_profile.dart';
 import '../../core/profiles/system_profile.dart';
@@ -200,9 +200,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       // FFT 분석 — 항상 raw(uncalibrated) 1/3옥타브 응답을 생성한다.
       state = state.copyWith(
           status: MeasurementStatus.analyzing, message: 'FFT 분석 중...');
-      final pcmBytes = await File(recPath).readAsBytes();
-      final rawPcm = Uint8List.sublistView(pcmBytes, 44);
-      final samples = _pcmToFloat(rawPcm);
+      final samples = await _readAndParseRecordedWav(recPath);
       final rawResponse = _analyzeFFT(samples, speakerProfile: speakerProfile);
       final calibration =
           _applyCalibration(rawResponse: rawResponse, curve: calibrationCurve);
@@ -346,9 +344,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       await _safeStopRecorderAndPlayer();
     }
 
-    final pcmBytes = await File(recPath).readAsBytes();
-    final rawPcm = Uint8List.sublistView(pcmBytes, 44);
-    final samples = _pcmToFloat(rawPcm);
+    final samples = await _readAndParseRecordedWav(recPath);
     return _analyzeFFT(samples);
   }
 
@@ -615,13 +611,41 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     return MeasurementSetupCaptureResult.success(evaluation);
   }
 
-  Float64List _pcmToFloat(Uint8List pcmBytes) {
-    final samples = Float64List(pcmBytes.length ~/ 2);
-    final view = ByteData.sublistView(pcmBytes);
-    for (int i = 0; i < samples.length; i++) {
-      samples[i] = view.getInt16(i * 2, Endian.little) / 32768.0;
+  /// The single place every FFT-bound capture (Factory startMeasurement,
+  /// per-channel _measureOnce, Room startRoomMeasurement) reads its
+  /// recorded file. Phase 3-D2 P0: replaces the old hardcoded "data starts
+  /// at byte 44" assumption with MeasurementWavParser's real chunk walk —
+  /// same normalization contract as MeasurementWavParser
+  /// .extractNormalizedSamples (PCM16 / 32768.0), so this is a pure
+  /// plumbing change, not a different analysis. Fails closed (throws) on a
+  /// malformed/unsupported recording rather than misinterpreting bytes;
+  /// every call site already wraps this in its existing try/catch, which
+  /// surfaces the failure as MeasurementStatus.error exactly as before.
+  ///
+  /// Only PCM16 is supported this phase (matches
+  /// kSupportedBitsPerSample) — this codebase's recorder always requests
+  /// AudioEncoder.wav, which is PCM16 on every platform this app ships to.
+  ///
+  /// Sample-rate/channel MISMATCH (actual vs. this controller's expected
+  /// sampleRate/mono) is recorded via debugPrint only — no state field yet
+  /// and no Capture blocking. That enforcement is Phase 3-D3's job, once a
+  /// UI/gate exists to act on it; recording it here would be premature
+  /// plumbing with no consumer.
+  Future<Float64List> _readAndParseRecordedWav(String recPath) async {
+    final pcmBytes = await File(recPath).readAsBytes();
+    final wav = MeasurementWavParser.parse(pcmBytes);
+    if (!wav.isSuccess) {
+      throw StateError('Malformed recording (${recPath.split('/').last}): '
+          '${wav.errors.join('; ')}');
     }
-    return samples;
+    if (wav.sampleRate != sampleRate || wav.channelCount != 1) {
+      debugPrint('MicMeasurementController: recorded WAV actual format '
+          '(${wav.sampleRate}Hz/${wav.channelCount}ch) differs from '
+          'expected (${sampleRate}Hz/1ch).');
+    }
+    final normalized =
+        MeasurementWavParser.extractNormalizedSamples(pcmBytes, wav);
+    return Float64List.fromList(normalized);
   }
 
   List<Map<String, double>> _analyzeFFT(Float64List samples,
@@ -848,9 +872,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
 
       state = state.copyWith(
           status: MeasurementStatus.analyzing, message: 'FFT 분석 중...');
-      final pcmBytes = await File(recPath).readAsBytes();
-      final rawPcm = Uint8List.sublistView(pcmBytes, 44);
-      final samples = _pcmToFloat(rawPcm);
+      final samples = await _readAndParseRecordedWav(recPath);
       final rawResponse = _analyzeFFT(samples);
       final calibration =
           _applyCalibration(rawResponse: rawResponse, curve: calibrationCurve);

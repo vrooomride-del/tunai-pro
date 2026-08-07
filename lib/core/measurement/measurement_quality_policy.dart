@@ -78,6 +78,20 @@ class MeasurementQualityPolicy {
   /// data for a stable RMS/peak read, not full frequency resolution.
   final Duration levelCheckDuration;
 
+  /// How long a successful Guided Setup check remains usable before it must
+  /// be re-run. Provisional: 30 minutes is long enough to cover a full
+  /// Factory 4-channel or Room 2-side session without re-checking between
+  /// every capture, short enough that a stale environment (mic unplugged
+  /// and replugged, room conditions changed) doesn't stay silently trusted
+  /// for an entire work session.
+  final Duration setupCheckValidity;
+
+  /// Identifies which version of this policy's thresholds produced a given
+  /// readiness snapshot — bumping this whenever thresholds change lets
+  /// MeasurementSetupReadinessIdentity invalidate old snapshots computed
+  /// under different (now-stale) rules.
+  final String version;
+
   const MeasurementQualityPolicy({
     required this.expectedSampleRate,
     required this.expectedChannelCount,
@@ -91,6 +105,8 @@ class MeasurementQualityPolicy {
     required this.minimumSignalToNoiseDb,
     required this.silenceCaptureDuration,
     required this.levelCheckDuration,
+    required this.setupCheckValidity,
+    required this.version,
   });
 
   /// The provisional defaults described above. Named `proProvisional()` to
@@ -112,5 +128,7 @@ class MeasurementQualityPolicy {
         minimumSignalToNoiseDb: 20.0,
         silenceCaptureDuration: Duration(seconds: 3),
         levelCheckDuration: Duration(seconds: 3),
+        setupCheckValidity: Duration(minutes: 30),
+        version: 'provisional-1',
       );
 }

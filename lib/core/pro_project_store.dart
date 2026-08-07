@@ -15,6 +15,7 @@ import 'pro_address_validation_data.dart';
 import 'room_measurement_data.dart';
 import 'calibration/calibration_types.dart';
 import 'measurement/measurement_input_device.dart';
+import 'measurement/measurement_setup_readiness.dart';
 
 const _kProjectsKey = 'tunai_pro_projects';
 const _kCurrentIdKey = 'tunai_pro_current_project_id';
@@ -234,6 +235,23 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     await updateProject(project.copyWith(
       selectedInputDevice: selection,
       clearSelectedInputDevice: selection == null,
+      updatedAt: DateTime.now(),
+    ));
+  }
+
+  /// Stores (or clears, when [readiness] is null) project [id]'s most
+  /// recent Guided Measurement Setup check — never touches any other
+  /// project. A new successful check always calls this with a freshly
+  /// generationId'd snapshot (never mutates the previous one in place); a
+  /// failed re-check's caller decides whether to overwrite (see
+  /// GuidedMeasurementSetupDialog — a failed check does NOT silently
+  /// replace a still-valid prior Ready snapshot).
+  Future<void> updateSetupReadiness(
+      String id, MeasurementSetupReadinessSnapshot? readiness) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(project.copyWith(
+      currentSetupReadiness: readiness,
+      clearCurrentSetupReadiness: readiness == null,
       updatedAt: DateTime.now(),
     ));
   }

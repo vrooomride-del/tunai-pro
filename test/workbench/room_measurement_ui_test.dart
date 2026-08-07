@@ -149,11 +149,14 @@ void main() {
 
       expect(_inRoomSection(find.textContaining('0/2')), findsOneWidget);
 
+      await tester.ensureVisible(_roomButton('준비 완료'));
       await tester.tap(_roomButton('준비 완료'));
       await tester.pump();
+      await tester.ensureVisible(_roomButton('Capture'));
       await tester.tap(_roomButton('Capture'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
+      await tester.ensureVisible(_roomButton('Accept'));
       await tester.tap(_roomButton('Accept'));
       await tester.pump();
 
@@ -201,8 +204,10 @@ void main() {
       await tester.tap(find.text('Room Measurement'));
       await tester.pump();
 
+      await tester.ensureVisible(_roomButton('준비 완료'));
       await tester.tap(_roomButton('준비 완료'));
       await tester.pump();
+      await tester.ensureVisible(_roomButton('Capture'));
       await tester.tap(_roomButton('Capture'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
@@ -210,6 +215,7 @@ void main() {
       expect(_inRoomSection(find.text('Retry')), findsOneWidget);
       expect(_inRoomSection(find.text('Accept')), findsOneWidget);
 
+      await tester.ensureVisible(_roomButton('Retry'));
       await tester.tap(_roomButton('Retry'));
       await tester.pump();
       // retry() returns to `ready` (not `idle`) — Capture is immediately

@@ -10,8 +10,10 @@ import 'package:flutter/material.dart';
 
 import '../../../core/calibration/calibration_types.dart';
 import '../../../core/calibration/microphone_profile_edit_rules.dart';
+import '../../../core/measurement/measurement_setup_readiness_project_identity.dart';
 import '../../../core/pro_project.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../mic/guided_measurement_setup_dialog.dart';
 import '../../mic/microphone_profile_manager_dialog.dart';
 
 class MicrophoneStatusCard extends StatelessWidget {
@@ -45,6 +47,8 @@ class MicrophoneStatusCard extends StatelessWidget {
         ),
     };
 
+    final (setupLabel, setupColor) = _setupStatusLabel();
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -53,25 +57,60 @@ class MicrophoneStatusCard extends StatelessWidget {
         border: Border.all(color: kProBorder),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(children: [
-        Icon(Icons.mic_none, size: 16, color: color),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: proValue(size: 12, color: color)),
-              Text(detail, style: proSubtitle(size: 10)),
-            ],
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.mic_none, size: 16, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: proValue(size: 12, color: color)),
+                Text(detail, style: proSubtitle(size: 10)),
+              ],
+            ),
           ),
-        ),
-        OutlinedButton(
-          onPressed: () => showMicrophoneProfileManagerDialog(context,
-              projectId: project.id),
-          child: const Text('Manage Microphone'),
+        ]),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.fact_check_outlined, size: 14, color: setupColor),
+              const SizedBox(width: 6),
+              Text('Setup Check: $setupLabel',
+                  style: proSubtitle(size: 11, color: setupColor)),
+            ]),
+            OutlinedButton(
+              onPressed: () => showMicrophoneProfileManagerDialog(context,
+                  projectId: project.id),
+              child: const Text('Manage Microphone'),
+            ),
+            OutlinedButton(
+              onPressed: () => showGuidedMeasurementSetupDialog(context,
+                  projectId: project.id),
+              child: const Text('Check Measurement Setup'),
+            ),
+          ],
         ),
       ]),
     );
+  }
+
+  (String, Color) _setupStatusLabel() {
+    final readiness = project.currentSetupReadiness;
+    if (readiness == null) return ('Not checked', Colors.white38);
+    final currentIdentity =
+        MeasurementSetupReadinessProjectIdentity.forProject(project);
+    if (readiness.isStaleFor(currentIdentity)) return ('Stale', kProAmber);
+    if (readiness.isExpired()) return ('Expired', kProAmber);
+    if (readiness.isReady) return ('Ready', kProGreen);
+    if (readiness.warnings.isNotEmpty && readiness.blockers.isEmpty) {
+      return ('Warning', kProAmber);
+    }
+    return ('Blocked', kProRed);
   }
 
   static String _rangeLabel(MeasurementMicrophoneProfile profile) {
