@@ -30,7 +30,11 @@ import 'package:tunai_pro/core/workflow/measurement_workflow_readiness.dart';
 import '../support/capture_gate_fixtures.dart';
 
 const _pid = 'wf-1';
-final _now = DateTime.utc(2026, 8, 7, 12);
+// Real wall-clock: withGateReadySetup() stamps its setup readiness with
+// DateTime.now(), so evaluating against a frozen past timestamp makes that
+// fixture look expired (and, worse, makes the result depend on how long the
+// suite has been running). Every relative offset below is taken from this.
+final _now = DateTime.now();
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

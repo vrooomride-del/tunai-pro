@@ -11,6 +11,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../core/hardware/hardware_connection_readiness.dart';
 import '../../../core/workflow/measurement_workflow_presentation.dart';
 import '../../../core/workflow/measurement_workflow_readiness.dart';
 import '../../../shared/design/pro_tokens.dart';
@@ -43,7 +44,7 @@ class SystemReadinessPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = readiness;
-    final hardware = measurementWorkflowHardwareText(r.hardwareConnected);
+    final hardware = measurementWorkflowHardwareText(r.hardwareConnectionState);
 
     return HomePanel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -108,10 +109,19 @@ class SystemReadinessPanel extends StatelessWidget {
           label: '하드웨어',
           value: hardware.title,
           detail: hardware.detail,
-          // null == not checked. Never ok, never a red failure.
-          tone: r.hardwareConnected == null
-              ? _RowTone.unchecked
-              : (r.hardwareConnected! ? _RowTone.ok : _RowTone.attention),
+          // Only a genuinely deploy-ready session is green. "Not checked"
+          // stays neutral grey — it is not a failure.
+          tone: switch (r.hardwareConnectionState) {
+            HardwareConnectionState.readyForDeploy => _RowTone.ok,
+            HardwareConnectionState.unknown => _RowTone.unchecked,
+            HardwareConnectionState.connecting ||
+            HardwareConnectionState.connected =>
+              _RowTone.unchecked,
+            HardwareConnectionState.disconnected ||
+            HardwareConnectionState.incompatible ||
+            HardwareConnectionState.error =>
+              _RowTone.attention,
+          },
           actionLabel: '하드웨어 확인',
           onTap: onOpenHardware,
           last: true,

@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tunai_pro/core/hardware/hardware_connection_readiness.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/workbench_tab_provider.dart';
@@ -202,16 +203,30 @@ void main() {
       expect(find.text('하드웨어'), findsOneWidget);
     });
 
-    testWidgets('unchecked hardware is never Connected/Verified/Ready',
+    testWidgets('hardware with no session is never Connected/Verified/Ready',
         (tester) async {
       final c = await _seed(project: _project('p1', setupReady: true));
       addTearDown(c.dispose);
       await _pump(tester, c);
 
-      expect(c.read(measurementWorkflowReadinessProvider).hardwareConnected,
-          isNull);
-      expect(find.text('확인 필요'), findsWidgets);
-      for (final claim in ['Connected', '연결됨', 'Verified', '검증됨']) {
+      // Phase 3-F1: for an ADAU1701 project with no live session this is a
+      // provable "disconnected", not the old "we cannot tell" placeholder.
+      final r = c.read(measurementWorkflowReadinessProvider);
+      expect(r.hardwareConnectionState, HardwareConnectionState.disconnected);
+      expect(r.hardwareConnected, isFalse);
+      expect(r.hardwareReadyForDeploy, isFalse);
+
+      expect(find.text('하드웨어가 연결되지 않았습니다.'), findsOneWidget);
+      // '준비 완료' on its own belongs to the setup row; what must never
+      // appear is the HARDWARE ready wording.
+      for (final claim in [
+        'Connected',
+        '연결됨',
+        'Verified',
+        '검증됨',
+        '하드웨어 준비 완료',
+        '보정을 적용할 수 있습니다',
+      ]) {
         expect(find.textContaining(claim), findsNothing, reason: claim);
       }
     });

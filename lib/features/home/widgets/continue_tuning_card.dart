@@ -57,6 +57,18 @@ class ContinueTuningCard extends StatelessWidget {
               height: 1.5),
         ),
 
+        // §9 — the Deploy step surfaces a hardware blocker here, on the step
+        // where it first matters, rather than by inserting a "connect
+        // hardware" stage ahead of measurement.
+        if (measurementWorkflowHardwareBlockerText(readiness) != null) ...[
+          const SizedBox(height: ProSpacing.md),
+          _Note(
+            icon: Icons.memory_outlined,
+            color: ProColors.amber,
+            text: measurementWorkflowHardwareBlockerText(readiness)!,
+          ),
+        ],
+
         // Why this is next — shown only when something is actually blocking,
         // so a healthy project stays uncluttered.
         if (blocker != null) ...[

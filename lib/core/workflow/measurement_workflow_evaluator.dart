@@ -20,6 +20,7 @@
 library;
 
 import '../calibration/calibration_frequency_coverage.dart';
+import '../hardware/hardware_connection_readiness.dart';
 import '../calibration/calibration_types.dart';
 import '../calibration/microphone_profile_edit_rules.dart';
 import '../measurement/measurement_capture_gate.dart';
@@ -45,6 +46,7 @@ abstract final class MeasurementWorkflowEvaluator {
     required DateTime now,
     CorrectionCycleDecision? closedLoopDecision,
     RoomBeforeAfterComparisonGateResult? closedLoopComparison,
+    HardwareConnectionReadiness? hardware,
   }) {
     if (project == null) return _noProject();
 
@@ -242,10 +244,19 @@ abstract final class MeasurementWorkflowEvaluator {
       closedLoopComplete: loopComplete,
       closedLoopDecision: loopComplete ? closedLoopDecision : null,
       closedLoopWarnings: closedLoopWarnings,
-      // §8 — no production contract ties a live hardware connection to THIS
-      // project's identity, so connection state is reported as unknown
-      // rather than guessed from a global, possibly stale signal.
-      hardwareConnected: null,
+      // Phase 3-F1 — the live ADAU1701 session, derived by
+      // HardwareConnectionEvaluator from the existing transport/handshake
+      // contract. Still tri-state: "nobody has checked" stays null rather
+      // than becoming a false that reads as "disconnected".
+      hardwareConnected: hardware?.connectedTriState,
+      hardwareConnectionState:
+          hardware?.state ?? HardwareConnectionState.unknown,
+      hardwareTargetCompatible: hardware?.targetCompatible ?? false,
+      // Deliberately NOT combined with correctionDeployedAndVerified: this
+      // says the DSP session is usable, that says a specific correction was
+      // written and readback-verified. RoomAfterGate remains the only
+      // authority on the latter.
+      hardwareReadyForDeploy: hardware?.readyForDeploy ?? false,
       roomCorrectionVerified: deployedAndVerified,
       deployBlockedReason: autoPeqApproved && !deployedAndVerified
           ? afterGate.blockedReason

@@ -11,6 +11,7 @@
 
 library;
 
+import '../hardware/hardware_connection_readiness.dart';
 import '../pro_correction_cycle.dart';
 
 /// What the user must do next. Exactly one of these is returned as the
@@ -193,10 +194,21 @@ class MeasurementWorkflowReadiness {
   final List<MeasurementWorkflowWarningCode> closedLoopWarnings;
 
   // ── Hardware ───────────────────────────────────────────────────────────
-  /// Null when the current architecture cannot prove connection state for
-  /// THIS project — deliberately tri-state rather than a false that reads
-  /// as "disconnected".
+  /// Null when nobody has established a session for THIS project's DSP
+  /// target — deliberately tri-state, so "not checked" never renders as
+  /// "disconnected".
   final bool? hardwareConnected;
+
+  /// The full typed hardware verdict (Phase 3-F1). Describes whether the
+  /// current DSP SESSION is usable — never whether a particular correction
+  /// was written; [correctionDeployedAndVerified] alone answers that.
+  final HardwareConnectionState hardwareConnectionState;
+
+  /// The live session (if any) matches this project's DSP target.
+  final bool hardwareTargetCompatible;
+
+  /// A handshake-verified, identity-confirmed session for this project.
+  final bool hardwareReadyForDeploy;
   final bool roomCorrectionVerified;
   final String? deployBlockedReason;
 
@@ -245,6 +257,9 @@ class MeasurementWorkflowReadiness {
     this.closedLoopDecision,
     required this.closedLoopWarnings,
     this.hardwareConnected,
+    this.hardwareConnectionState = HardwareConnectionState.unknown,
+    this.hardwareTargetCompatible = false,
+    this.hardwareReadyForDeploy = false,
     required this.roomCorrectionVerified,
     this.deployBlockedReason,
     required this.nextRecommendedAction,

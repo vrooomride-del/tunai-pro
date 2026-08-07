@@ -16,6 +16,7 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../deploy/pro_hardware_context_provider.dart';
+import '../hardware/hardware_connection_provider.dart';
 import '../pro_project_store.dart';
 import '../../features/workbench/tabs/room_auto_peq_controller.dart';
 import '../../features/workbench/tabs/room_measurement_controller.dart';
@@ -53,5 +54,6 @@ final measurementWorkflowReadinessProvider =
     // independent verdict.
     closedLoopDecision: room.closedLoopResult?.decision,
     closedLoopComparison: room.closedLoopComparison,
+    hardware: ref.watch(hardwareConnectionReadinessProvider),
   );
 });

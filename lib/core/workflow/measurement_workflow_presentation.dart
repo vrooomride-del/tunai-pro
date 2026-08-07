@@ -12,6 +12,7 @@
 
 library;
 
+import '../hardware/hardware_connection_readiness.dart';
 import '../pro_correction_cycle.dart';
 import 'measurement_workflow_readiness.dart';
 
@@ -108,6 +109,21 @@ String measurementWorkflowWarningText(MeasurementWorkflowWarningCode c) =>
         '보정되지 않은 마이크로 측정된 결과입니다.',
     };
 
+/// §9 — the Deploy step is where hardware readiness first actually matters.
+/// It is surfaced as an extra line on that step, never by promoting
+/// "connect hardware" ahead of measurement in the ladder.
+String? measurementWorkflowHardwareBlockerText(MeasurementWorkflowReadiness r) {
+  if (r.nextRecommendedAction !=
+      MeasurementWorkflowAction.deployRoomCorrection) {
+    return null;
+  }
+  if (r.hardwareReadyForDeploy) return null;
+  return switch (r.hardwareConnectionState) {
+    HardwareConnectionState.incompatible => '프로젝트와 연결된 DSP가 일치하지 않습니다.',
+    _ => '먼저 하드웨어를 연결하고 준비 상태를 확인하세요.',
+  };
+}
+
 String measurementWorkflowStageTitle(MeasurementWorkflowStage s) => switch (s) {
       MeasurementWorkflowStage.project => '프로젝트',
       MeasurementWorkflowStage.measurementSetup => '측정 준비',
@@ -157,17 +173,42 @@ String measurementWorkflowSetupStateText(MeasurementWorkflowSetupState s) =>
       MeasurementWorkflowSetupState.expired => '유효 기간 지남',
     };
 
-/// §10 — a hardware state nobody has checked yet is NOT a failure. Home must
-/// read this as "not checked", never as disconnected and never as connected.
+/// Phase 3-F1 §8 — how the live DSP session reads on Home.
+///
+/// "준비 완료"/"검증" wording is reserved for [HardwareConnectionState
+/// .readyForDeploy] alone; every other state says plainly what is missing. A
+/// state nobody has checked is neutral, never a failure.
 ({String title, String detail}) measurementWorkflowHardwareText(
-        bool? connected) =>
-    switch (connected) {
-      null => (
-          title: '확인 필요',
+        HardwareConnectionState state) =>
+    switch (state) {
+      HardwareConnectionState.unknown => (
+          title: '하드웨어 상태 확인 필요',
           detail: 'DSP 연결 상태는 Hardware에서 확인할 수 있습니다.',
         ),
-      true => (title: '연결됨', detail: '하드웨어가 연결되어 있습니다.'),
-      false => (title: '연결 안 됨', detail: '하드웨어 연결을 확인해 주세요.'),
+      HardwareConnectionState.disconnected => (
+          title: '하드웨어가 연결되지 않았습니다.',
+          detail: 'Hardware에서 연결을 시작할 수 있습니다.',
+        ),
+      HardwareConnectionState.connecting => (
+          title: '하드웨어 연결 중',
+          detail: '기기 확인이 끝나면 준비 상태가 표시됩니다.',
+        ),
+      HardwareConnectionState.connected => (
+          title: '하드웨어 연결됨',
+          detail: 'DSP 준비 상태를 확인하고 있습니다.',
+        ),
+      HardwareConnectionState.readyForDeploy => (
+          title: '하드웨어 준비 완료',
+          detail: '보정을 적용할 수 있습니다.',
+        ),
+      HardwareConnectionState.incompatible => (
+          title: '프로젝트와 연결된 DSP가 일치하지 않습니다.',
+          detail: '프로젝트 설정과 같은 기기를 연결해 주세요.',
+        ),
+      HardwareConnectionState.error => (
+          title: '하드웨어 연결을 확인해 주세요.',
+          detail: 'Hardware에서 연결 상태를 다시 확인할 수 있습니다.',
+        ),
     };
 
 /// §11 — how the Factory stage reads. Only `improvedAndComplete` is a
