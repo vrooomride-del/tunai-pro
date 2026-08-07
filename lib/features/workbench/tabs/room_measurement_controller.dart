@@ -35,6 +35,7 @@ import '../../../core/measurement/measurement_capture_presentation.dart';
 import '../../../core/measurement/measurement_capture_preflight.dart';
 import '../../../core/measurement/measurement_capture_provenance.dart';
 import '../../../core/measurement/measurement_preview_acceptance_gate.dart';
+import '../../../core/measurement/measurement_quality_snapshot.dart';
 import '../../../core/measurement/measurement_warning_acknowledgement.dart';
 import '../../../core/orchestrator/room_after_capture_gate.dart';
 import '../../../core/orchestrator/room_after_gate.dart';
@@ -81,6 +82,11 @@ class RoomMeasurementState {
   /// for the identical rationale.
   final MeasurementCaptureProvenance? capturedProvenance;
 
+  /// Phase 3-D3B — same rationale as LiveMeasurementState
+  /// .capturedQualitySnapshot: pinned at capture time alongside
+  /// [capturedProvenance] (same provenance instance embedded inside).
+  final MeasurementQualitySnapshot? capturedQualitySnapshot;
+
   final String? error;
 
   /// The most recent capture-gate verdict, recomputed by [capture]'s
@@ -110,6 +116,7 @@ class RoomMeasurementState {
     this.capturedCalibrationWarnings = const [],
     this.capturedMicrophoneSnapshot,
     this.capturedProvenance,
+    this.capturedQualitySnapshot,
     this.error,
     this.captureGate,
     this.closedLoopResult,
@@ -128,6 +135,7 @@ class RoomMeasurementState {
     List<String>? capturedCalibrationWarnings,
     MeasurementMicrophoneSnapshot? capturedMicrophoneSnapshot,
     MeasurementCaptureProvenance? capturedProvenance,
+    MeasurementQualitySnapshot? capturedQualitySnapshot,
     String? error,
     bool clearError = false,
     MeasurementCaptureGateResult? captureGate,
@@ -161,6 +169,9 @@ class RoomMeasurementState {
         capturedProvenance: clearCapturedResponse
             ? null
             : (capturedProvenance ?? this.capturedProvenance),
+        capturedQualitySnapshot: clearCapturedResponse
+            ? null
+            : (capturedQualitySnapshot ?? this.capturedQualitySnapshot),
         error: clearError ? null : (error ?? this.error),
         captureGate: captureGate ?? this.captureGate,
         closedLoopResult: closedLoopResult ?? this.closedLoopResult,
@@ -455,6 +466,24 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
       return;
     }
 
+    // Same shared-instance rationale as LiveMeasurementController.capture()
+    // (Phase 3-D3B §3).
+    final provenanceAtCapture = projectAtCapture != null
+        ? MeasurementCaptureProvenanceBuilder.build(
+            project: projectAtCapture,
+            actualSampleRate: micState.actualSampleRate,
+            actualChannelCount: micState.actualChannelCount,
+          )
+        : null;
+    final readinessAtCapture = projectAtCapture?.currentSetupReadiness;
+    final qualitySnapshotAtCapture =
+        (provenanceAtCapture != null && readinessAtCapture != null)
+            ? MeasurementQualitySnapshotBuilder.build(
+                provenance: provenanceAtCapture,
+                readiness: readinessAtCapture,
+              )
+            : null;
+
     state = state.copyWith(
       phase: RoomMeasurementPhaseUi.captured,
       capturedResponse: micState.frequencyResponse,
@@ -468,13 +497,8 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
               sampleRate: mic.MicMeasurementController.sampleRate,
             )
           : null,
-      capturedProvenance: projectAtCapture != null
-          ? MeasurementCaptureProvenanceBuilder.build(
-              project: projectAtCapture,
-              actualSampleRate: micState.actualSampleRate,
-              actualChannelCount: micState.actualChannelCount,
-            )
-          : null,
+      capturedProvenance: provenanceAtCapture,
+      capturedQualitySnapshot: qualitySnapshotAtCapture,
     );
   }
 
@@ -518,6 +542,7 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
           state.capturedCalibrationStatus ?? CalibrationStatus.legacyUnknown,
       calibrationCurveChecksum: state.capturedCalibrationCurveChecksum,
       microphoneSnapshot: state.capturedMicrophoneSnapshot,
+      qualitySnapshot: state.capturedQualitySnapshot,
     );
     final measurement = RoomSystemMeasurement(
       side: side,
@@ -574,6 +599,7 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     required CalibrationStatus calibrationStatus,
     String? calibrationCurveChecksum,
     MeasurementMicrophoneSnapshot? microphoneSnapshot,
+    MeasurementQualitySnapshot? qualitySnapshot,
   }) {
     final now = DateTime.now();
     List<MeasurementDataPoint> toPoints(List<Map<String, double>> src) => [
@@ -597,6 +623,7 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
       calibrationStatus: calibrationStatus,
       calibrationCurveChecksum: calibrationCurveChecksum,
       calibrationAppliedAt: calibrationCurveChecksum != null ? now : null,
+      qualitySnapshot: qualitySnapshot,
     );
   }
 }

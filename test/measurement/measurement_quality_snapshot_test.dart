@@ -1,8 +1,10 @@
-// Phase 3-D2 — measurement_quality_snapshot.dart: typed model, round-trip,
-// corrupt-field isolation, fromSetupReadiness helper, no-PCM-payload check.
+// Phase 3-D3B — measurement_quality_snapshot.dart: typed model, round-trip,
+// corrupt-field isolation, builder, no-PCM-payload check, setup-vs-actual
+// provenance separation.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tunai_pro/core/calibration/calibration_types.dart';
+import 'package:tunai_pro/core/measurement/measurement_capture_provenance.dart';
 import 'package:tunai_pro/core/measurement/measurement_input_device.dart';
 import 'package:tunai_pro/core/measurement/measurement_quality_model.dart';
 import 'package:tunai_pro/core/measurement/measurement_quality_snapshot.dart';
@@ -18,15 +20,15 @@ MeasurementQualityEvaluation _evaluation() => MeasurementQualityEvaluation(
         noiseFloorDbFs: -55,
         signalToNoiseDb: 35,
         duration: const Duration(seconds: 3),
-        actualSampleRate: 48000,
-        actualChannelCount: 1,
+        actualSampleRate: 44100, // deliberately DIFFERENT from the capture's
+        actualChannelCount: 2, // actual format, to prove no mixing occurs
         inputDeviceSnapshot: MeasurementInputDeviceSnapshot(
           deviceId: 'dev1',
           label: 'USB Mic',
           isSystemDefault: false,
           platform: 'macos',
-          actualSampleRate: 48000,
-          actualChannelCount: 1,
+          actualSampleRate: 44100,
+          actualChannelCount: 2,
           capturedAt: DateTime.utc(2026, 1, 1),
         ),
         calibrationStatus: CalibrationStatus.calibrated,
@@ -60,111 +62,197 @@ MeasurementSetupReadinessSnapshot _readySnapshot() {
 }
 
 void main() {
-  group('fromSetupReadiness', () {
-    test('builds a snapshot carrying the level-check\'s metrics', () {
-      final readiness = _readySnapshot();
-      final snapshot = MeasurementQualitySnapshot.fromSetupReadiness(
-        readiness,
+  group('MeasurementQualitySnapshotBuilder.build', () {
+    test('setup* fields come from the setup check, never the capture', () {
+      final provenance = MeasurementCaptureProvenance(
+        projectId: 'p1',
+        microphoneProfileChecksum: 'checksum-a',
+        calibrationCurveChecksum: 'curve-a',
+        calibrationAngle: 'zeroDegree',
+        inputDeviceSelectionIdentity: 'device:dev1',
+        setupReadinessGenerationId: 'gen-1',
         qualityPolicyVersion: 'provisional-1',
-        capturedAt: DateTime.utc(2026, 1, 1, 12, 10, 0),
+        actualSampleRate: 48000,
+        actualChannelCount: 1,
+        capturedAt: DateTime.utc(2026, 1, 2),
       );
-      expect(snapshot.setupGenerationId, 'gen-1');
-      expect(snapshot.peakDbFs, -10);
-      expect(snapshot.rmsDbFs, -20);
-      expect(snapshot.noiseFloorDbFs, -55);
-      expect(snapshot.signalToNoiseDb, 35);
-      expect(snapshot.actualSampleRate, 48000);
-      expect(snapshot.actualChannelCount, 1);
-      expect(snapshot.profileChecksum, 'checksum-a');
-      expect(snapshot.calibrationStatus, CalibrationStatus.calibrated);
-      expect(snapshot.inputDeviceSnapshot?.deviceId, 'dev1');
-      expect(snapshot.setupCheckedAt, readiness.checkedAt);
+      final snapshot = MeasurementQualitySnapshotBuilder.build(
+        provenance: provenance,
+        readiness: _readySnapshot(),
+      );
+
+      // The capture's own actual format lives ONLY on provenance.
+      expect(snapshot.provenance.actualSampleRate, 48000);
+      expect(snapshot.provenance.actualChannelCount, 1);
+      // The setup check's own (different) numbers stay separate, never
+      // overwriting or being confused with the capture's actual format.
+      expect(snapshot.setupPeakDbFs, -10);
+      expect(snapshot.setupRmsDbFs, -20);
+      expect(snapshot.setupNoiseFloorDbFs, -55);
+      expect(snapshot.setupSignalToNoiseDb, 35);
+      expect(snapshot.setupCalibrationStatus, CalibrationStatus.calibrated);
+      expect(snapshot.setupInputDeviceSnapshot?.actualSampleRate, 44100);
+      expect(snapshot.setupCheckedAt, DateTime.utc(2026, 1, 1, 12, 0, 0));
+    });
+
+    test(
+        'no level-check metrics -> setup metrics fall back to defaults, '
+        'never to provenance values', () {
+      final readiness = MeasurementSetupReadinessSnapshot(
+        identity: _readySnapshot().identity,
+        generationId: 'gen-2',
+        blockers: const [],
+        warnings: const [],
+        checkedAt: DateTime.utc(2026, 1, 1),
+        expiresAt: DateTime.utc(2026, 1, 2),
+        isReady: true,
+      );
+      final snapshot = MeasurementQualitySnapshotBuilder.build(
+        provenance: MeasurementCaptureProvenance(
+          projectId: 'p1',
+          microphoneProfileChecksum: 'chk',
+          calibrationCurveChecksum: null,
+          calibrationAngle: null,
+          inputDeviceSelectionIdentity: 'system-default',
+          setupReadinessGenerationId: 'gen-2',
+          qualityPolicyVersion: 'provisional-1',
+          actualSampleRate: 48000,
+          actualChannelCount: 1,
+          capturedAt: DateTime.utc(2026, 1, 1),
+        ),
+        readiness: readiness,
+      );
+      expect(snapshot.setupPeakDbFs, 0.0);
+      expect(snapshot.setupRmsDbFs, 0.0);
+      expect(snapshot.setupClippedSampleCount, 0);
+      expect(snapshot.setupInputDeviceSnapshot, isNull);
     });
   });
 
   group('JSON round-trip', () {
-    test('a full snapshot round-trips exactly', () {
-      final readiness = _readySnapshot();
-      final snapshot = MeasurementQualitySnapshot.fromSetupReadiness(
-        readiness,
+    test('round-trips every field including nested provenance', () {
+      final provenance = MeasurementCaptureProvenance(
+        projectId: 'p1',
+        microphoneProfileChecksum: 'checksum-a',
+        calibrationCurveChecksum: 'curve-a',
+        calibrationAngle: 'zeroDegree',
+        inputDeviceSelectionIdentity: 'device:dev1',
+        setupReadinessGenerationId: 'gen-1',
         qualityPolicyVersion: 'provisional-1',
-        capturedAt: DateTime.utc(2026, 1, 1, 12, 10, 0),
+        actualSampleRate: 48000,
+        actualChannelCount: 1,
+        capturedAt: DateTime.utc(2026, 1, 2),
       );
-      final decoded = MeasurementQualitySnapshot.fromJson(snapshot.toJson());
-      expect(decoded.setupGenerationId, snapshot.setupGenerationId);
-      expect(decoded.peakDbFs, snapshot.peakDbFs);
-      expect(decoded.rmsDbFs, snapshot.rmsDbFs);
-      expect(decoded.noiseFloorDbFs, snapshot.noiseFloorDbFs);
-      expect(decoded.signalToNoiseDb, snapshot.signalToNoiseDb);
-      expect(decoded.clippedSampleCount, snapshot.clippedSampleCount);
-      expect(decoded.clippedSampleRatio, snapshot.clippedSampleRatio);
-      expect(decoded.actualSampleRate, snapshot.actualSampleRate);
-      expect(decoded.actualChannelCount, snapshot.actualChannelCount);
-      expect(decoded.profileChecksum, snapshot.profileChecksum);
-      expect(decoded.calibrationStatus, snapshot.calibrationStatus);
-      expect(decoded.inputDeviceSnapshot?.deviceId,
-          snapshot.inputDeviceSnapshot?.deviceId);
-      expect(decoded.qualityPolicyVersion, snapshot.qualityPolicyVersion);
-    });
-  });
-
-  group('backward compatibility / corrupt-field isolation', () {
-    test('an empty JSON object decodes to safe defaults, never throws', () {
-      final decoded = MeasurementQualitySnapshot.fromJson(const {});
-      expect(decoded.setupGenerationId, '');
-      expect(decoded.inputDeviceSnapshot, isNull);
-      expect(decoded.calibrationStatus, isNull);
-      expect(decoded.peakDbFs, 0.0);
-      expect(decoded.rmsDbFs, 0.0);
+      final original = MeasurementQualitySnapshotBuilder.build(
+        provenance: provenance,
+        readiness: _readySnapshot(),
+      );
+      final decoded = MeasurementQualitySnapshot.fromJson(original.toJson());
+      expect(decoded, isNotNull);
+      expect(decoded!.provenance, original.provenance);
+      expect(decoded.setupPeakDbFs, original.setupPeakDbFs);
+      expect(decoded.setupRmsDbFs, original.setupRmsDbFs);
+      expect(decoded.setupNoiseFloorDbFs, original.setupNoiseFloorDbFs);
+      expect(decoded.setupSignalToNoiseDb, original.setupSignalToNoiseDb);
+      expect(decoded.setupClippedSampleCount, original.setupClippedSampleCount);
+      expect(decoded.setupClippedSampleRatio, original.setupClippedSampleRatio);
+      expect(decoded.setupCalibrationStatus, original.setupCalibrationStatus);
+      expect(decoded.setupInputDeviceSnapshot?.deviceId,
+          original.setupInputDeviceSnapshot?.deviceId);
+      expect(decoded.setupCheckedAt, original.setupCheckedAt);
     });
 
-    test('a corrupt inputDeviceSnapshot does not fail the whole decode', () {
-      final json = {
-        'setupGenerationId': 'gen-1',
-        'inputDeviceSnapshot': 'not-a-map',
-        'peakDbFs': -10.0,
-        'rmsDbFs': -20.0,
-      };
-      final decoded = MeasurementQualitySnapshot.fromJson(json);
-      expect(decoded.setupGenerationId, 'gen-1');
-      expect(decoded.inputDeviceSnapshot, isNull);
-      expect(decoded.peakDbFs, -10.0);
-    });
-
-    test(
-        'a corrupt calibrationStatus value falls back to null, not a '
-        'thrown exception', () {
-      final json = {
-        'setupGenerationId': 'gen-1',
-        'calibrationStatus': 12345, // wrong type
-        'peakDbFs': -10.0,
-        'rmsDbFs': -20.0,
-      };
-      final decoded = MeasurementQualitySnapshot.fromJson(json);
-      expect(decoded.calibrationStatus, isNull);
-    });
-  });
-
-  group('no PCM payload', () {
-    test('toJson never contains a raw sample/PCM-shaped key', () {
-      final readiness = _readySnapshot();
-      final snapshot = MeasurementQualitySnapshot.fromSetupReadiness(
-        readiness,
-        qualityPolicyVersion: 'provisional-1',
+    test('no PCM/WAV payload anywhere in the JSON shape', () {
+      final snapshot = MeasurementQualitySnapshotBuilder.build(
+        provenance: MeasurementCaptureProvenance(
+          projectId: 'p1',
+          microphoneProfileChecksum: 'chk',
+          calibrationCurveChecksum: null,
+          calibrationAngle: null,
+          inputDeviceSelectionIdentity: 'system-default',
+          setupReadinessGenerationId: 'gen-1',
+          qualityPolicyVersion: 'provisional-1',
+          actualSampleRate: 48000,
+          actualChannelCount: 1,
+          capturedAt: DateTime.utc(2026, 1, 1),
+        ),
+        readiness: _readySnapshot(),
       );
       final json = snapshot.toJson();
-      const forbidden = {
-        'samples',
-        'pcm',
-        'rawdata',
-        'frequencies',
-        'magnitudes',
-      };
-      for (final key in json.keys) {
-        expect(forbidden.contains(key.toLowerCase()), isFalse,
-            reason: 'MeasurementQualitySnapshot must never carry raw PCM — '
-                'found forbidden key "$key"');
+      const forbiddenKeys = ['pcm', 'wav', 'samples', 'bytes', 'audio'];
+      void checkNoPayload(dynamic value) {
+        if (value is Map) {
+          for (final key in value.keys) {
+            for (final forbidden in forbiddenKeys) {
+              expect(key.toString().toLowerCase().contains(forbidden), isFalse,
+                  reason: 'unexpected payload-shaped key: $key');
+            }
+            checkNoPayload(value[key]);
+          }
+        }
       }
+
+      checkNoPayload(json);
+    });
+  });
+
+  group('corrupt-field isolation', () {
+    test('missing provenance -> fromJson returns null (no synthetic identity)',
+        () {
+      final decoded = MeasurementQualitySnapshot.fromJson({
+        'setupPeakDbFs': -10.0,
+        'setupRmsDbFs': -20.0,
+      });
+      expect(decoded, isNull);
+    });
+
+    test('corrupt setupInputDeviceSnapshot falls back to null, rest survives',
+        () {
+      final provenanceJson = MeasurementCaptureProvenance(
+        projectId: 'p1',
+        microphoneProfileChecksum: 'chk',
+        calibrationCurveChecksum: null,
+        calibrationAngle: null,
+        inputDeviceSelectionIdentity: 'system-default',
+        setupReadinessGenerationId: 'gen-1',
+        qualityPolicyVersion: 'provisional-1',
+        actualSampleRate: 48000,
+        actualChannelCount: 1,
+        capturedAt: DateTime.utc(2026, 1, 1),
+      ).toJson();
+      final decoded = MeasurementQualitySnapshot.fromJson({
+        'provenance': provenanceJson,
+        'setupPeakDbFs': -10.0,
+        'setupRmsDbFs': -20.0,
+        'setupInputDeviceSnapshot': 'not-a-map',
+      });
+      expect(decoded, isNotNull);
+      expect(decoded!.setupInputDeviceSnapshot, isNull);
+      expect(decoded.setupPeakDbFs, -10.0);
+      expect(decoded.provenance.projectId, 'p1');
+    });
+
+    test('corrupt setupCalibrationStatus falls back to null', () {
+      final provenanceJson = MeasurementCaptureProvenance(
+        projectId: 'p1',
+        microphoneProfileChecksum: 'chk',
+        calibrationCurveChecksum: null,
+        calibrationAngle: null,
+        inputDeviceSelectionIdentity: 'system-default',
+        setupReadinessGenerationId: 'gen-1',
+        qualityPolicyVersion: 'provisional-1',
+        actualSampleRate: 48000,
+        actualChannelCount: 1,
+        capturedAt: DateTime.utc(2026, 1, 1),
+      ).toJson();
+      final decoded = MeasurementQualitySnapshot.fromJson({
+        'provenance': provenanceJson,
+        'setupPeakDbFs': -10.0,
+        'setupRmsDbFs': -20.0,
+        'setupCalibrationStatus': 12345,
+      });
+      expect(decoded, isNotNull);
+      expect(decoded!.setupCalibrationStatus, isNull);
     });
   });
 }

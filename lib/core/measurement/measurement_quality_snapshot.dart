@@ -1,120 +1,99 @@
-// ── TUNAI PRO Phase 3-D2 — MeasurementQualitySnapshot ───────────────────────
+// ── TUNAI PRO Phase 3-D3B — MeasurementQualitySnapshot ──────────────────────
 //
-// The immutable record a future Factory/Room Accept (Phase 3-D3) will embed
-// into ParsedMeasurementData — "what quality was true about the setup this
-// specific capture was taken under." Distinct from
-// MeasurementSetupReadinessSnapshot (the SETUP CHECK's own record, which can
-// span multiple captures) — this type is per-capture and, once wired in
-// 3-D3, never mutated after creation.
+// The immutable record embedded into ParsedMeasurementData at Accept time —
+// "what was true about this specific capture and the setup it was taken
+// under." Two deliberately SEPARATE provenance sources, never conflated:
 //
-// This phase only defines the type + JSON + the setup->snapshot builder.
-// No Accept wiring yet — see the Phase 3-D2 completion report.
+//   - [provenance]: this capture's own identity + actual WAV format
+//     (project/profile/curve/angle/device/generation/policy, actual
+//     sampleRate/channelCount, capturedAt) — the SAME
+//     MeasurementCaptureProvenance object Phase 3-D3A-2's Accept gate
+//     already pins at capture time. Reused here, not duplicated.
+//
+//   - the `setup*` fields: the Guided Setup CHECK's own level-check/
+//     noise-floor metrics (peak/RMS/SNR/clipping/noise-floor, the device it
+//     ran on, when it ran). A setup check can precede many captures and its
+//     own actual-format numbers are NOT this capture's WAV — mixing the two
+//     was the exact mistake this phase's spec calls out, hence the `setup`
+//     prefix on every field sourced from the check rather than the capture.
+//
+// Built exactly once, at capture time, by [MeasurementQualitySnapshotBuilder]
+// — never reconstructed from current project state at Accept.
 library;
 
 import '../calibration/calibration_types.dart' show CalibrationStatus;
+import 'measurement_capture_provenance.dart';
 import 'measurement_input_device.dart';
 import 'measurement_setup_readiness.dart';
 
 class MeasurementQualitySnapshot {
-  final String setupGenerationId;
-  final MeasurementInputDeviceSnapshot? inputDeviceSnapshot;
+  /// This capture's own identity + actual WAV format — never the setup
+  /// check's numbers. See [MeasurementCaptureProvenance] for field detail.
+  final MeasurementCaptureProvenance provenance;
 
-  /// [MeasurementMicrophoneProfile.checksum] at capture time.
-  final String? profileChecksum;
-
-  final CalibrationStatus? calibrationStatus;
-  final double? noiseFloorDbFs;
-  final double peakDbFs;
-  final double rmsDbFs;
-  final double? signalToNoiseDb;
-  final int clippedSampleCount;
-  final double clippedSampleRatio;
-  final int actualSampleRate;
-  final int actualChannelCount;
+  /// Below: the SETUP CHECK's own metrics — what the check measured, not
+  /// what this capture measured. Distinguishable from [provenance] both by
+  /// the `setup` prefix and by nested structure.
+  final CalibrationStatus? setupCalibrationStatus;
+  final double? setupNoiseFloorDbFs;
+  final double setupPeakDbFs;
+  final double setupRmsDbFs;
+  final double? setupSignalToNoiseDb;
+  final int setupClippedSampleCount;
+  final double setupClippedSampleRatio;
+  final MeasurementInputDeviceSnapshot? setupInputDeviceSnapshot;
   final DateTime setupCheckedAt;
-  final DateTime capturedAt;
-  final String qualityPolicyVersion;
 
   const MeasurementQualitySnapshot({
-    required this.setupGenerationId,
-    this.inputDeviceSnapshot,
-    this.profileChecksum,
-    this.calibrationStatus,
-    this.noiseFloorDbFs,
-    required this.peakDbFs,
-    required this.rmsDbFs,
-    this.signalToNoiseDb,
-    required this.clippedSampleCount,
-    required this.clippedSampleRatio,
-    required this.actualSampleRate,
-    required this.actualChannelCount,
+    required this.provenance,
+    this.setupCalibrationStatus,
+    this.setupNoiseFloorDbFs,
+    required this.setupPeakDbFs,
+    required this.setupRmsDbFs,
+    this.setupSignalToNoiseDb,
+    required this.setupClippedSampleCount,
+    required this.setupClippedSampleRatio,
+    this.setupInputDeviceSnapshot,
     required this.setupCheckedAt,
-    required this.capturedAt,
-    required this.qualityPolicyVersion,
   });
 
-  /// Builds a capture-time snapshot from a Guided Setup readiness record —
-  /// the setup's own level-check metrics ARE what this capture's quality
-  /// was taken under, as long as the identity/generation still matches at
-  /// Accept time (that matching is Phase 3-D3's stale-preview-style guard,
-  /// not this constructor's job — this is a pure data copy).
-  factory MeasurementQualitySnapshot.fromSetupReadiness(
-    MeasurementSetupReadinessSnapshot readiness, {
-    required String qualityPolicyVersion,
-    DateTime? capturedAt,
-  }) {
-    final level = readiness.levelCheckEvaluation;
-    final metrics = level?.metrics;
-    return MeasurementQualitySnapshot(
-      setupGenerationId: readiness.generationId,
-      inputDeviceSnapshot: readiness.deviceSnapshot,
-      profileChecksum: readiness.identity.profileChecksum,
-      calibrationStatus: metrics?.calibrationStatus,
-      noiseFloorDbFs: metrics?.noiseFloorDbFs ??
-          readiness.noiseFloorEvaluation?.metrics.noiseFloorDbFs,
-      peakDbFs: metrics?.peakDbFs ?? 0.0,
-      rmsDbFs: metrics?.rmsDbFs ?? 0.0,
-      signalToNoiseDb: metrics?.signalToNoiseDb,
-      clippedSampleCount: metrics?.clippedSampleCount ?? 0,
-      clippedSampleRatio: metrics?.clippedSampleRatio ?? 0.0,
-      actualSampleRate:
-          metrics?.actualSampleRate ?? readiness.identity.expectedSampleRate,
-      actualChannelCount: metrics?.actualChannelCount ??
-          readiness.identity.expectedChannelCount,
-      setupCheckedAt: readiness.checkedAt,
-      capturedAt: capturedAt ?? DateTime.now(),
-      qualityPolicyVersion: qualityPolicyVersion,
-    );
-  }
-
   Map<String, dynamic> toJson() => {
-        'setupGenerationId': setupGenerationId,
-        if (inputDeviceSnapshot != null)
-          'inputDeviceSnapshot': inputDeviceSnapshot!.toJson(),
-        if (profileChecksum != null) 'profileChecksum': profileChecksum,
-        if (calibrationStatus != null)
-          'calibrationStatus': calibrationStatus!.toJson(),
-        if (noiseFloorDbFs != null) 'noiseFloorDbFs': noiseFloorDbFs,
-        'peakDbFs': peakDbFs,
-        'rmsDbFs': rmsDbFs,
-        if (signalToNoiseDb != null) 'signalToNoiseDb': signalToNoiseDb,
-        'clippedSampleCount': clippedSampleCount,
-        'clippedSampleRatio': clippedSampleRatio,
-        'actualSampleRate': actualSampleRate,
-        'actualChannelCount': actualChannelCount,
+        'provenance': provenance.toJson(),
+        if (setupCalibrationStatus != null)
+          'setupCalibrationStatus': setupCalibrationStatus!.toJson(),
+        if (setupNoiseFloorDbFs != null)
+          'setupNoiseFloorDbFs': setupNoiseFloorDbFs,
+        'setupPeakDbFs': setupPeakDbFs,
+        'setupRmsDbFs': setupRmsDbFs,
+        if (setupSignalToNoiseDb != null)
+          'setupSignalToNoiseDb': setupSignalToNoiseDb,
+        'setupClippedSampleCount': setupClippedSampleCount,
+        'setupClippedSampleRatio': setupClippedSampleRatio,
+        if (setupInputDeviceSnapshot != null)
+          'setupInputDeviceSnapshot': setupInputDeviceSnapshot!.toJson(),
         'setupCheckedAt': setupCheckedAt.toIso8601String(),
-        'capturedAt': capturedAt.toIso8601String(),
-        'qualityPolicyVersion': qualityPolicyVersion,
       };
 
-  /// Item-resilient by field: a corrupt/missing nested value falls back to
-  /// null/a safe default rather than throwing — matches the established
-  /// pattern for every other snapshot type in this codebase (never fails
-  /// the whole enclosing measurement's decode).
-  factory MeasurementQualitySnapshot.fromJson(Map<String, dynamic> j) {
+  /// Item-resilient: a corrupt/missing nested value falls back to null/a
+  /// safe default rather than throwing — never fails the whole enclosing
+  /// measurement's decode. A missing/unparseable `provenance` is the one
+  /// exception: without it this snapshot carries no usable identity at all,
+  /// so [fromJson] returns null in that case (see call site) rather than a
+  /// snapshot with an empty synthetic provenance.
+  static MeasurementQualitySnapshot? fromJson(Map<String, dynamic> j) {
+    MeasurementCaptureProvenance provenance;
+    try {
+      final raw = j['provenance'];
+      if (raw == null) return null;
+      provenance = MeasurementCaptureProvenance.fromJson(
+          Map<String, dynamic>.from(raw as Map));
+    } catch (_) {
+      return null;
+    }
+
     MeasurementInputDeviceSnapshot? device;
     try {
-      final raw = j['inputDeviceSnapshot'];
+      final raw = j['setupInputDeviceSnapshot'];
       if (raw != null) {
         device = MeasurementInputDeviceSnapshot.fromJson(
             Map<String, dynamic>.from(raw as Map));
@@ -125,30 +104,52 @@ class MeasurementQualitySnapshot {
 
     CalibrationStatus? calStatus;
     try {
-      final raw = j['calibrationStatus'];
+      final raw = j['setupCalibrationStatus'];
       if (raw is String) calStatus = CalibrationStatus.fromJson(raw);
     } catch (_) {
       calStatus = null;
     }
 
     return MeasurementQualitySnapshot(
-      setupGenerationId: j['setupGenerationId'] as String? ?? '',
-      inputDeviceSnapshot: device,
-      profileChecksum: j['profileChecksum'] as String?,
-      calibrationStatus: calStatus,
-      noiseFloorDbFs: (j['noiseFloorDbFs'] as num?)?.toDouble(),
-      peakDbFs: (j['peakDbFs'] as num?)?.toDouble() ?? 0.0,
-      rmsDbFs: (j['rmsDbFs'] as num?)?.toDouble() ?? 0.0,
-      signalToNoiseDb: (j['signalToNoiseDb'] as num?)?.toDouble(),
-      clippedSampleCount: j['clippedSampleCount'] as int? ?? 0,
-      clippedSampleRatio: (j['clippedSampleRatio'] as num?)?.toDouble() ?? 0.0,
-      actualSampleRate: j['actualSampleRate'] as int? ?? 0,
-      actualChannelCount: j['actualChannelCount'] as int? ?? 0,
+      provenance: provenance,
+      setupCalibrationStatus: calStatus,
+      setupNoiseFloorDbFs: (j['setupNoiseFloorDbFs'] as num?)?.toDouble(),
+      setupPeakDbFs: (j['setupPeakDbFs'] as num?)?.toDouble() ?? 0.0,
+      setupRmsDbFs: (j['setupRmsDbFs'] as num?)?.toDouble() ?? 0.0,
+      setupSignalToNoiseDb: (j['setupSignalToNoiseDb'] as num?)?.toDouble(),
+      setupClippedSampleCount: j['setupClippedSampleCount'] as int? ?? 0,
+      setupClippedSampleRatio:
+          (j['setupClippedSampleRatio'] as num?)?.toDouble() ?? 0.0,
+      setupInputDeviceSnapshot: device,
       setupCheckedAt: DateTime.tryParse(j['setupCheckedAt'] as String? ?? '') ??
           DateTime.now(),
-      capturedAt:
-          DateTime.tryParse(j['capturedAt'] as String? ?? '') ?? DateTime.now(),
-      qualityPolicyVersion: j['qualityPolicyVersion'] as String? ?? '',
+    );
+  }
+}
+
+/// The ONE builder — Factory and Room capture() both call this, so a quality
+/// snapshot's shape/derivation can never drift between the two paths, and it
+/// is always built from the SAME [MeasurementCaptureProvenance] instance
+/// already pinned for the Accept gate (never a second, separately-derived
+/// provenance).
+abstract final class MeasurementQualitySnapshotBuilder {
+  static MeasurementQualitySnapshot build({
+    required MeasurementCaptureProvenance provenance,
+    required MeasurementSetupReadinessSnapshot readiness,
+  }) {
+    final metrics = readiness.levelCheckEvaluation?.metrics;
+    return MeasurementQualitySnapshot(
+      provenance: provenance,
+      setupCalibrationStatus: metrics?.calibrationStatus,
+      setupNoiseFloorDbFs: metrics?.noiseFloorDbFs ??
+          readiness.noiseFloorEvaluation?.metrics.noiseFloorDbFs,
+      setupPeakDbFs: metrics?.peakDbFs ?? 0.0,
+      setupRmsDbFs: metrics?.rmsDbFs ?? 0.0,
+      setupSignalToNoiseDb: metrics?.signalToNoiseDb,
+      setupClippedSampleCount: metrics?.clippedSampleCount ?? 0,
+      setupClippedSampleRatio: metrics?.clippedSampleRatio ?? 0.0,
+      setupInputDeviceSnapshot: readiness.deviceSnapshot,
+      setupCheckedAt: readiness.checkedAt,
     );
   }
 }

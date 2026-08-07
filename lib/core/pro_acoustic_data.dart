@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import 'calibration/calibration_types.dart';
+import 'measurement/measurement_quality_snapshot.dart';
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
 
@@ -301,6 +302,14 @@ class ParsedMeasurementData {
   final String? warning;
   final String? notes;
 
+  /// Phase 3-D3B — the capture-time provenance + setup-check quality record
+  /// pinned by [MeasurementQualitySnapshotBuilder] at the moment THIS
+  /// measurement was captured. Null for imported FRD/ZMA files (no capture
+  /// ever happened) and for any measurement accepted before this field
+  /// existed — a missing snapshot is "legacy/unknown quality provenance",
+  /// never assumed Ready by any consumer.
+  final MeasurementQualitySnapshot? qualitySnapshot;
+
   const ParsedMeasurementData({
     required this.id,
     required this.sourceFileName,
@@ -314,6 +323,7 @@ class ParsedMeasurementData {
     this.calibrationAppliedAt,
     this.warning,
     this.notes,
+    this.qualitySnapshot,
   });
 
   /// [rawPoints] when present, otherwise [points] — the legacy-decode
@@ -360,6 +370,8 @@ class ParsedMeasurementData {
           'calibrationAppliedAt': calibrationAppliedAt!.toIso8601String(),
         if (warning != null) 'warning': warning,
         if (notes != null) 'notes': notes,
+        if (qualitySnapshot != null)
+          'qualitySnapshot': qualitySnapshot!.toJson(),
       };
 
   factory ParsedMeasurementData.fromJson(Map<String, dynamic> j) {
@@ -403,6 +415,17 @@ class ParsedMeasurementData {
       calibrationStatus = CalibrationStatus.legacyUnknown;
     }
 
+    MeasurementQualitySnapshot? qualitySnapshot;
+    try {
+      final raw = j['qualitySnapshot'];
+      if (raw is Map) {
+        qualitySnapshot =
+            MeasurementQualitySnapshot.fromJson(Map<String, dynamic>.from(raw));
+      }
+    } catch (_) {
+      qualitySnapshot = null;
+    }
+
     return ParsedMeasurementData(
       id: j['id'] as String,
       sourceFileName: j['sourceFileName'] as String,
@@ -420,6 +443,7 @@ class ParsedMeasurementData {
           : null,
       warning: j['warning'] as String?,
       notes: j['notes'] as String?,
+      qualitySnapshot: qualitySnapshot,
     );
   }
 }

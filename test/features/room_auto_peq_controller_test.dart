@@ -17,6 +17,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tunai_pro/core/calibration/calibration_types.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_export_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
@@ -24,10 +25,11 @@ import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
 import 'package:tunai_pro/core/room_measurement_data.dart';
 import 'package:tunai_pro/features/workbench/tabs/room_auto_peq_controller.dart';
+import '../support/room_quality_fixtures.dart';
 
 /// +8 dB bass bump around 80 Hz — a correctable broadPeak (cut-only PEQ can
 /// fix excess energy; see room_auto_peq_test.dart for why a dip cannot).
-ParsedMeasurementData _peakFrd(String id) {
+ParsedMeasurementData _peakFrd(String id, String projectId) {
   final points = <MeasurementDataPoint>[];
   for (var f = 20.0; f <= 2000; f *= 1.05) {
     final inBump = f > 60 && f < 110;
@@ -40,6 +42,13 @@ ParsedMeasurementData _peakFrd(String id) {
     fileType: AcousticFileType.frd,
     importedAt: DateTime.utc(2025, 1, 1),
     points: points,
+    // Phase 3-D3B: generate() now requires trustworthy quality provenance
+    // on both sides — this fixture is quality-ready by construction so
+    // these tests keep exercising approve()/rollback mechanics, not the
+    // quality gate itself (that has its own dedicated test file).
+    calibrationStatus: CalibrationStatus.calibrated,
+    microphoneSnapshot: roomQualityFixtureMicSnapshot(),
+    qualitySnapshot: roomQualityFixtureSnapshot(projectId: projectId),
   );
 }
 
@@ -47,7 +56,7 @@ RoomSystemMeasurement _measurement(RoomSystemSide side, String projectId) =>
     RoomSystemMeasurement(
       side: side,
       phase: RoomMeasurementPhase.before,
-      frd: _peakFrd('${side.name}_before'),
+      frd: _peakFrd('${side.name}_before', projectId),
       capturedAt: DateTime.utc(2025, 1, 1),
       sampleRate: 48000,
       source: RoomMeasurementSource.live,

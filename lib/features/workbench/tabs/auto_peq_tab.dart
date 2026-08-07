@@ -30,11 +30,14 @@ import '../../../core/orchestrator/pro_guided_ai_controller.dart'
 import '../../../core/orchestrator/room_after_gate.dart';
 import '../../../core/orchestrator/room_auto_peq.dart'
     show roomAutoPeqMinHz, roomAutoPeqMaxHz;
+import '../../../core/orchestrator/room_before_pair_quality_gate.dart';
+import '../../../core/orchestrator/room_quality_presentation.dart';
 import '../../../core/pro_correction_cycle.dart' show CorrectionCycleDecision;
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/workbench_tab_provider.dart';
 import '../../../shared/pro_widgets.dart';
+import '../../mic/microphone_profile_manager_dialog.dart';
 import 'room_auto_peq_controller.dart';
 import 'room_measurement_controller.dart'
     show roomMeasurementControllerProvider;
@@ -254,6 +257,13 @@ class _RoomAutoPeqCard extends ConsumerWidget {
     final before = project.roomState.before;
     final roomReady = before.isComplete;
 
+    // Phase 3-D3B — 2/2 completeness alone is no longer sufficient; the
+    // Left/Right pair must also carry trustworthy, matching quality
+    // provenance. Evaluated fresh here so the button state and generate()'s
+    // own refusal can never disagree (same contract as the Capture gates).
+    final qualityGate = ctrl.qualityGate;
+    final generateEnabled = roomReady && qualityGate.canGenerate;
+
     // Worsened verdict lives on RoomMeasurementController's closed-loop
     // result, not here — cross-read it (and the shared hardware-result
     // provider) so a rollback CTA can appear without a second, duplicate
@@ -291,23 +301,34 @@ class _RoomAutoPeqCard extends ConsumerWidget {
         const SizedBox(height: 10),
         Row(children: [
           Icon(
-            roomReady
+            generateEnabled
                 ? Icons.check_circle_outline
                 : Icons.warning_amber_outlined,
             size: 14,
-            color: roomReady ? kProGreen : kProAmber,
+            color: generateEnabled ? kProGreen : kProAmber,
           ),
           const SizedBox(width: 8),
-          Text(
-            'Before Left+Right: ${before.readyCount}/2',
-            style: TextStyle(
-                fontSize: 11, color: roomReady ? kProGreen : kProAmber),
+          Expanded(
+            child: Text(
+              generateEnabled
+                  ? kRoomBeforePairQualityReadyText
+                  : (roomReady
+                      ? roomBeforePairQualityBlockerText(qualityGate)
+                      : 'Before Left+Right: ${before.readyCount}/2'),
+              style: TextStyle(
+                  fontSize: 11, color: generateEnabled ? kProGreen : kProAmber),
+            ),
           ),
         ]),
+        if (roomReady && !generateEnabled) ...[
+          const SizedBox(height: 6),
+          _RoomQualityRemediationButton(
+              projectId: projectId, gate: qualityGate),
+        ],
         const SizedBox(height: 10),
         if (state.phase == RoomAutoPeqPhase.idle) ...[
           FilledButton.icon(
-            onPressed: roomReady ? ctrl.generate : null,
+            onPressed: generateEnabled ? ctrl.generate : null,
             icon: const Icon(Icons.auto_fix_high, size: 15),
             label: const Text('Room Auto PEQ 후보 생성'),
             style: FilledButton.styleFrom(
@@ -376,6 +397,45 @@ class _RoomAutoPeqCard extends ConsumerWidget {
         const SizedBox(height: 8),
         Text('승인 전에는 어떤 값도 하드웨어에 기록되지 않습니다.', style: proSubtitle(size: 10)),
       ]),
+    );
+  }
+}
+
+// ── Room quality gate remediation ────────────────────────────────────────────
+//
+// Typed dispatch only — no string matching, no new navigation system. Both
+// targets already exist: the Measure tab (for missing/legacy quality) and
+// the existing Microphone Profile Manager dialog (for calibration coverage
+// problems). Left/Right identity mismatches have no single-CTA fix (only
+// consistent re-measurement resolves them), so [roomBeforePairQualityRemediation]
+// returns null there and this widget renders nothing.
+
+class _RoomQualityRemediationButton extends ConsumerWidget {
+  final String projectId;
+  final RoomBeforePairQualityGateResult gate;
+  const _RoomQualityRemediationButton(
+      {required this.projectId, required this.gate});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final remediation = roomBeforePairQualityRemediation(gate);
+    if (remediation == null) return const SizedBox.shrink();
+    final label = switch (remediation) {
+      RoomBeforePairQualityRemediationKind.goToMeasureTab => 'Measure 탭으로 이동',
+      RoomBeforePairQualityRemediationKind.manageMicrophone => '마이크 관리',
+    };
+    return OutlinedButton(
+      onPressed: () {
+        switch (remediation) {
+          case RoomBeforePairQualityRemediationKind.goToMeasureTab:
+            ref.read(workbenchTabProvider.notifier).go(kTabMeasure);
+          case RoomBeforePairQualityRemediationKind.manageMicrophone:
+            showMicrophoneProfileManagerDialog(context, projectId: projectId);
+        }
+      },
+      style:
+          OutlinedButton.styleFrom(side: const BorderSide(color: kProBorder)),
+      child: Text(label, style: const TextStyle(fontSize: 11)),
     );
   }
 }

@@ -13,12 +13,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tunai_pro/core/calibration/calibration_types.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/room_measurement_data.dart';
 import 'package:tunai_pro/core/workbench_tab_provider.dart';
 import 'package:tunai_pro/features/workbench/workbench_shell.dart';
+import '../support/room_quality_fixtures.dart';
 
 DriverChannel _channelWithFrd(String id, DriverRole role, DriverSide side) =>
     DriverChannel(
@@ -37,7 +39,7 @@ DriverChannel _channelWithFrd(String id, DriverRole role, DriverSide side) =>
       ),
     );
 
-ParsedMeasurementData _flatFrd(String id) {
+ParsedMeasurementData _flatFrd(String id, String projectId) {
   final points = <MeasurementDataPoint>[];
   for (var f = 20.0; f <= 2000; f *= 1.05) {
     points.add(MeasurementDataPoint(frequencyHz: f, magnitudeDb: 0.0));
@@ -48,6 +50,13 @@ ParsedMeasurementData _flatFrd(String id) {
     fileType: AcousticFileType.frd,
     importedAt: DateTime.utc(2025, 1, 1),
     points: points,
+    // Phase 3-D3B: the Room card's "2/2" text only renders once the
+    // quality/calibration pair gate also passes — this fixture is
+    // quality-ready by construction since this test's subject is Factory/
+    // Room card non-interference, not the quality gate itself.
+    calibrationStatus: CalibrationStatus.calibrated,
+    microphoneSnapshot: roomQualityFixtureMicSnapshot(),
+    qualitySnapshot: roomQualityFixtureSnapshot(projectId: projectId),
   );
 }
 
@@ -55,7 +64,7 @@ RoomSystemMeasurement _roomMeasurement(RoomSystemSide side, String projectId) =>
     RoomSystemMeasurement(
       side: side,
       phase: RoomMeasurementPhase.before,
-      frd: _flatFrd('${side.name}_flat'),
+      frd: _flatFrd('${side.name}_flat', projectId),
       capturedAt: DateTime.utc(2025, 1, 1),
       sampleRate: 48000,
       source: RoomMeasurementSource.live,
@@ -115,8 +124,8 @@ void main() {
     final factoryButtonTextBefore =
         tester.widget<Text>(find.text('Guided AI에서 실행')).data;
 
-    // Room readiness: 2/2, independent provider.
-    expect(find.textContaining('Before Left+Right: 2/2'), findsOneWidget);
+    // Room readiness: 2/2 + quality gate PASS, independent provider.
+    expect(find.textContaining('Room Before 측정 2/2'), findsOneWidget);
 
     // Act only on Room — generate candidates.
     await tester.tap(find.text('Room Auto PEQ 후보 생성'));

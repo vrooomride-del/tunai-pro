@@ -30,6 +30,7 @@ import '../../../core/measurement/measurement_capture_presentation.dart';
 import '../../../core/measurement/measurement_capture_preflight.dart';
 import '../../../core/measurement/measurement_capture_provenance.dart';
 import '../../../core/measurement/measurement_preview_acceptance_gate.dart';
+import '../../../core/measurement/measurement_quality_snapshot.dart';
 import '../../../core/measurement/measurement_warning_acknowledgement.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_correction_cycle.dart';
@@ -86,6 +87,12 @@ class LiveMeasurementState {
   /// re-derives what was true at capture time from current state.
   final MeasurementCaptureProvenance? capturedProvenance;
 
+  /// Phase 3-D3B — the setup-check quality record for THIS capture, pinned
+  /// alongside [capturedProvenance] at the same moment (same provenance
+  /// instance embedded inside). Persisted into `ParsedMeasurementData
+  /// .qualitySnapshot` on Accept — never rebuilt from current project state.
+  final MeasurementQualitySnapshot? capturedQualitySnapshot;
+
   final String? error;
 
   /// Most recent capture-gate verdict from [capture]'s runtime preflight —
@@ -106,6 +113,7 @@ class LiveMeasurementState {
     this.capturedCalibrationWarnings = const [],
     this.capturedMicrophoneSnapshot,
     this.capturedProvenance,
+    this.capturedQualitySnapshot,
     this.error,
     this.captureGate,
     this.lastCompletedCycle,
@@ -124,6 +132,7 @@ class LiveMeasurementState {
     List<String>? capturedCalibrationWarnings,
     MeasurementMicrophoneSnapshot? capturedMicrophoneSnapshot,
     MeasurementCaptureProvenance? capturedProvenance,
+    MeasurementQualitySnapshot? capturedQualitySnapshot,
     String? error,
     bool clearError = false,
     MeasurementCaptureGateResult? captureGate,
@@ -157,6 +166,9 @@ class LiveMeasurementState {
         capturedProvenance: clearCapturedResponse
             ? null
             : (capturedProvenance ?? this.capturedProvenance),
+        capturedQualitySnapshot: clearCapturedResponse
+            ? null
+            : (capturedQualitySnapshot ?? this.capturedQualitySnapshot),
         error: clearError ? null : (error ?? this.error),
         captureGate: captureGate ?? this.captureGate,
         lastCompletedCycle: lastCompletedCycle ?? this.lastCompletedCycle,
@@ -382,6 +394,26 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
       return;
     }
 
+    // Provenance and quality snapshot are built from the SAME capture-time
+    // inputs, once, so the two can never diverge (Phase 3-D3B §3: the
+    // quality snapshot is always sourced from the setup readiness THIS
+    // capture actually relied on, never re-derived later).
+    final provenanceAtCapture = projectAtCapture != null
+        ? MeasurementCaptureProvenanceBuilder.build(
+            project: projectAtCapture,
+            actualSampleRate: micState.actualSampleRate,
+            actualChannelCount: micState.actualChannelCount,
+          )
+        : null;
+    final readinessAtCapture = projectAtCapture?.currentSetupReadiness;
+    final qualitySnapshotAtCapture =
+        (provenanceAtCapture != null && readinessAtCapture != null)
+            ? MeasurementQualitySnapshotBuilder.build(
+                provenance: provenanceAtCapture,
+                readiness: readinessAtCapture,
+              )
+            : null;
+
     state = state.copyWith(
       phase: LiveMeasurementPhase.captured,
       capturedResponse: micState.frequencyResponse,
@@ -395,13 +427,8 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
               sampleRate: mic.MicMeasurementController.sampleRate,
             )
           : null,
-      capturedProvenance: projectAtCapture != null
-          ? MeasurementCaptureProvenanceBuilder.build(
-              project: projectAtCapture,
-              actualSampleRate: micState.actualSampleRate,
-              actualChannelCount: micState.actualChannelCount,
-            )
-          : null,
+      capturedProvenance: provenanceAtCapture,
+      capturedQualitySnapshot: qualitySnapshotAtCapture,
     );
   }
 
@@ -446,6 +473,7 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
           state.capturedCalibrationStatus ?? CalibrationStatus.legacyUnknown,
       calibrationCurveChecksum: state.capturedCalibrationCurveChecksum,
       microphoneSnapshot: state.capturedMicrophoneSnapshot,
+      qualitySnapshot: state.capturedQualitySnapshot,
     );
 
     if (state.mode == LiveMeasurementMode.before) {
@@ -535,6 +563,7 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
     required CalibrationStatus calibrationStatus,
     String? calibrationCurveChecksum,
     MeasurementMicrophoneSnapshot? microphoneSnapshot,
+    MeasurementQualitySnapshot? qualitySnapshot,
   }) {
     final now = DateTime.now();
     List<MeasurementDataPoint> toPoints(List<Map<String, double>> src) => [
@@ -558,6 +587,7 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
       calibrationStatus: calibrationStatus,
       calibrationCurveChecksum: calibrationCurveChecksum,
       calibrationAppliedAt: calibrationCurveChecksum != null ? now : null,
+      qualitySnapshot: qualitySnapshot,
     );
   }
 }

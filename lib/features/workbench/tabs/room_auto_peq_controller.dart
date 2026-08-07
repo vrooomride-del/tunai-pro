@@ -31,6 +31,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/orchestrator/room_auto_peq.dart';
+import '../../../core/orchestrator/room_before_pair_quality_gate.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_tuning_data.dart';
@@ -125,6 +126,19 @@ class RoomAutoPeqController extends StateNotifier<RoomAutoPeqState> {
     return before != null && RoomAutoPeq.isReady(before);
   }
 
+  /// Phase 3-D3B — the Left/Right quality/calibration pair gate, fresh on
+  /// every read. AND'd with [isReady] (2/2 completeness) before [generate]
+  /// runs — 2/2 alone is no longer sufficient. The UI renders THIS instead
+  /// of separately re-deriving quality readiness.
+  RoomBeforePairQualityGateResult get qualityGate {
+    final before = _project?.roomState.before;
+    return RoomBeforePairQualityGate.evaluate(
+      projectId: projectId,
+      left: before?.leftSystemFrd,
+      right: before?.rightSystemFrd,
+    );
+  }
+
   PeqChannelState _currentWoofer(String channelId) =>
       _project?.tuningState.peqChannels
           .where((c) => c.channelId == channelId)
@@ -139,6 +153,19 @@ class RoomAutoPeqController extends StateNotifier<RoomAutoPeqState> {
     if (project == null || before == null || !RoomAutoPeq.isReady(before)) {
       state = state.copyWith(
         error: '준비되지 않음: Before Left+Right 측정 2/2가 필요합니다.',
+      );
+      return;
+    }
+
+    // Phase 3-D3B §8: 2/2 completeness alone is no longer sufficient — the
+    // Left/Right pair must also carry trustworthy, matching quality
+    // provenance. RoomAutoPeq's own algorithm (generateForSide and
+    // everything it calls) is untouched; this gate only decides whether
+    // that algorithm is allowed to run at all.
+    final quality = qualityGate;
+    if (!quality.canGenerate) {
+      state = state.copyWith(
+        error: quality.primaryBlocker?.message ?? '측정 품질을 확인할 수 없습니다.',
       );
       return;
     }
