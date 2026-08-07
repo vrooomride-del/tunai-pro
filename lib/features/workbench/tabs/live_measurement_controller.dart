@@ -588,6 +588,7 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
       calibrationCurveChecksum: calibrationCurveChecksum,
       calibrationAppliedAt: calibrationCurveChecksum != null ? now : null,
       qualitySnapshot: qualitySnapshot,
+      source: MeasurementDataSource.liveCapture,
     );
   }
 }

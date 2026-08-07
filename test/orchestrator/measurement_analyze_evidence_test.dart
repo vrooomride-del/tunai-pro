@@ -52,6 +52,13 @@ ProOrchestratorStep _step(
 final _registry =
     ProDeterministicToolRegistry(const [MeasurementAnalyzeAdapter()]);
 
+/// MeasurementAnalyzeAdapter always produces import evidence;
+/// MeasurementArtifact.evidence widened to the sealed base in Phase 3-D3C so
+/// live captures can carry MeasurementCaptureEvidence, so import-specific
+/// fields are read through this explicit cast.
+ImportedMeasurementEvidence _importedEv(MeasurementArtifact a) =>
+    a.evidence as ImportedMeasurementEvidence;
+
 MeasurementArtifact _run(
   ({
     ProToolExecutionContext ctx,
@@ -102,7 +109,7 @@ void main() {
     test('4. original content is not embedded in evidence JSON', () {
       final env = _ctx()
         ..resolver.put('p1', 'in1', _src(_frdWithPhase, AcousticFileType.frd));
-      final json = jsonEncode(_run(env).evidence.toJson());
+      final json = jsonEncode(_importedEv(_run(env)).toJson());
       expect(json.contains('-3.0'), isFalse);
       expect(json.contains('100 '), isFalse);
     });
@@ -113,7 +120,7 @@ void main() {
         () {
       final env = _ctx()
         ..resolver.put('p1', 'in1', _src(_frdWithPhase, AcousticFileType.frd));
-      final ev = _run(env).evidence;
+      final ev = _importedEv(_run(env));
       expect(ev.domain, MeasurementDomain.acousticResponse);
       expect(ev.source, MeasurementSource.importedFrd);
       expect(ev.magnitudePresent, isTrue);
@@ -130,14 +137,14 @@ void main() {
     test('12. phase present → phasePresent true, phase available', () {
       final env = _ctx()
         ..resolver.put('p1', 'in1', _src(_frdWithPhase, AcousticFileType.frd));
-      final ev = _run(env).evidence;
+      final ev = _importedEv(_run(env));
       expect(ev.phasePresent, isTrue);
       expect(ev.availableMetrics, contains(EvidenceMetric.phase));
     });
     test('13. no phase column → phasePresent false, phase unavailable', () {
       final env = _ctx()
         ..resolver.put('p1', 'in1', _src(_frdNoPhase, AcousticFileType.frd));
-      final ev = _run(env).evidence;
+      final ev = _importedEv(_run(env));
       expect(ev.phasePresent, isFalse);
       expect(ev.unavailableMetrics, contains(EvidenceMetric.phase));
     });
@@ -166,7 +173,7 @@ void main() {
       final env = _ctx()
         ..resolver
             .put('p1', 'in1', _src(_zma, AcousticFileType.zma, name: 'a.zma'));
-      final ev = _run(env).evidence;
+      final ev = _importedEv(_run(env));
       expect(ev.domain, MeasurementDomain.impedance);
       expect(ev.source, MeasurementSource.importedZma);
       expect(ev.impedancePresent, isTrue);
@@ -182,7 +189,7 @@ void main() {
       expect(art.confidence, isNull);
       expect(art.evaluation, MeasurementConfidenceEvaluation.unsupportedDomain);
       expect(art.evaluationReason, isNotEmpty);
-      expect(art.evidence.magnitudePresent, isFalse);
+      expect(_importedEv(art).magnitudePresent, isFalse);
     });
   });
 

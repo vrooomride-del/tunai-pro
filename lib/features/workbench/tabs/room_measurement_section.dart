@@ -8,6 +8,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/deploy/pro_hardware_context_provider.dart';
+import '../../../core/measurement/measurement_before_after_comparison.dart';
+import '../../../core/measurement/room_before_after_presentation.dart';
+import '../../../core/orchestrator/room_before_after_comparison_gate.dart';
+import '../../../core/orchestrator/room_closed_loop.dart';
+import '../../../core/orchestrator/room_closed_loop_presentation.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/room_measurement_data.dart';
 import '../../../core/workbench_tab_provider.dart';
@@ -72,10 +77,23 @@ class RoomMeasurementSection extends ConsumerWidget {
         _TransportRow(transportKind: ctrl.transportKind),
         const Divider(height: 24, color: kProBorder),
         _SideCaptureCard(state: state, ctrl: ctrl, projectId: project.id),
+        // A provenance-blocked comparison is a DISTINCT state from a
+        // verdict: it must never read as "worsened", and it must not offer
+        // the rollback path (Phase 3-D3C-2 §6).
         if (state.mode == RoomMeasurementPhase.after &&
+            state.closedLoopComparison != null &&
+            !state.closedLoopComparison!.canEvaluate) ...[
+          const SizedBox(height: 10),
+          _ClosedLoopMismatchBanner(comparison: state.closedLoopComparison!),
+        ] else if (state.mode == RoomMeasurementPhase.after &&
             state.closedLoopResult != null) ...[
           const SizedBox(height: 10),
           _ClosedLoopBanner(result: state.closedLoopResult!),
+          for (final w in state.closedLoopComparison?.warnings ??
+              const <MeasurementBeforeAfterWarning>[]) ...[
+            const SizedBox(height: 6),
+            _ClosedLoopWarningRow(warning: w),
+          ],
         ],
         const SizedBox(height: 12),
         _NavigationRow(ctrl: ctrl, mode: state.mode),
@@ -454,31 +472,114 @@ class _FrdPreview extends StatelessWidget {
 
 // ── Closed loop banner ───────────────────────────────────────────────────────
 
-class _ClosedLoopBanner extends StatelessWidget {
-  final dynamic result;
+/// The verdict banner. Tone, copy and the rollback affordance all come from
+/// the single typed mapping in room_closed_loop_presentation.dart — this
+/// widget never inspects `decision.name` or matches strings, which is what
+/// keeps a `worsened` verdict from ever rendering as a green check.
+class _ClosedLoopBanner extends ConsumerWidget {
+  /// Concretely typed on purpose: `decision.name` comes from the `EnumName`
+  /// EXTENSION, which cannot be resolved against a `dynamic` receiver and
+  /// threw NoSuchMethodError at runtime for every valid verdict.
+  final RoomClosedLoopResult result;
   const _ClosedLoopBanner({required this.result});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tone = closedLoopVerdictTone(result.decision);
+    final (color, icon) = switch (tone) {
+      ClosedLoopVerdictTone.success => (kProGreen, Icons.check_circle_outline),
+      ClosedLoopVerdictTone.followUp => (kProAmber, Icons.trending_up),
+      ClosedLoopVerdictTone.caution => (kProRed, Icons.warning_amber_outlined),
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: kProGreen.withValues(alpha: 0.08),
-        border: Border.all(color: kProGreen.withValues(alpha: 0.4)),
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Row(children: [
-        const Icon(Icons.check_circle_outline, size: 14, color: kProGreen),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'Left/Right After 측정 완료 — Closed Loop 판정: ${result.decision.name}',
-            style: const TextStyle(color: kProGreen, fontSize: 11),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              closedLoopVerdictText(result.decision),
+              style: TextStyle(color: color, fontSize: 11),
+            ),
           ),
+        ]),
+        // The rollback affordance itself lives in the Room Auto PEQ tab
+        // (_RollbackCard, gated by RoomAfterGate). This only navigates there
+        // — it never triggers a rollback or writes hardware.
+        if (closedLoopVerdictOffersRollback(result.decision)) ...[
+          const SizedBox(height: 6),
+          OutlinedButton.icon(
+            onPressed: () =>
+                ref.read(workbenchTabProvider.notifier).go(kTabAutoPeq),
+            icon: const Icon(Icons.settings_backup_restore, size: 14),
+            label: const Text('보정 전 상태로 되돌리기', style: TextStyle(fontSize: 11)),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
+/// Provenance mismatch — deliberately amber/informational, never the
+/// red "성능 저하" styling, and carrying a remeasure/setup CTA instead of
+/// any rollback affordance.
+class _ClosedLoopMismatchBanner extends StatelessWidget {
+  final RoomBeforeAfterComparisonGateResult comparison;
+  const _ClosedLoopMismatchBanner({required this.comparison});
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = comparison.primaryBlocker;
+    if (primary == null) return const SizedBox.shrink();
+    final remediation = roomBeforeAfterRemediation(primary.code);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: kProAmber.withValues(alpha: 0.08),
+        border: Border.all(color: kProAmber.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.compare_arrows, size: 14, color: kProAmber),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              roomBeforeAfterBlockerText(primary.code),
+              style: const TextStyle(color: kProAmber, fontSize: 11),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 4),
+        Text(
+          '측정 조건이 달라 Before/After를 비교할 수 없습니다. '
+          '${roomBeforeAfterRemediationLabel(remediation)}',
+          style: proSubtitle(size: 10),
         ),
       ]),
     );
   }
+}
+
+class _ClosedLoopWarningRow extends StatelessWidget {
+  final MeasurementBeforeAfterWarning warning;
+  const _ClosedLoopWarningRow({required this.warning});
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        const Icon(Icons.info_outline, size: 12, color: kProAmber),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(roomBeforeAfterWarningText(warning.code),
+              style: const TextStyle(color: kProAmber, fontSize: 10)),
+        ),
+      ]);
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────

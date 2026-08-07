@@ -9,8 +9,7 @@ import '../../acoustic/closed_loop_evaluator.dart'
 import '../../acoustic/correction_plan.dart' show CorrectionPlan;
 import '../../acoustic/measurement_confidence.dart'
     show MeasurementConfidenceResult;
-import '../../acoustic/measurement_evidence.dart'
-    show ImportedMeasurementEvidence;
+import '../../acoustic/measurement_evidence.dart' show MeasurementEvidence;
 import '../../pro_acoustic_data.dart' show MeasurementParseResult;
 import '../../pro_impedance_analysis.dart' show ImpedanceAnalysisResult;
 import '../../pro_response_error.dart' show ResponseErrorResult;
@@ -41,7 +40,13 @@ class MeasurementArtifact extends ProToolArtifact {
   final MeasurementParseResult parse;
 
   /// The evidence describing what confidence this measurement can back.
-  final ImportedMeasurementEvidence evidence;
+  ///
+  /// Phase 3-D3C widened this from [ImportedMeasurementEvidence] to the
+  /// sealed base so a live Factory capture can carry
+  /// [MeasurementCaptureEvidence] instead of being mislabelled as an import.
+  /// Production consumers only read base-class members (`domain`, `source`);
+  /// anything needing import-specific fields casts explicitly.
+  final MeasurementEvidence evidence;
 
   /// Whether confidence was computed, and the reason when it was not.
   final MeasurementConfidenceEvaluation evaluation;

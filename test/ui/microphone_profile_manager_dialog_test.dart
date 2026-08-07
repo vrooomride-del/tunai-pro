@@ -98,13 +98,11 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
-      // Back on the list view; the new profile appears.
-      expect(find.textContaining('Acme Corp Model X'), findsOneWidget);
-
-      // Select it.
-      final selectIcon = find.byIcon(Icons.check).first;
-      await tester.tap(selectIcon);
-      await tester.pumpAndSettle();
+      // Back on the list view; the new profile appears — and, because
+      // nothing real was selected before, saving also SELECTS it (Phase 3-E
+      // P0: the roster used to gain a configured microphone while the
+      // selection stayed on nothing / the "No Calibration" sentinel).
+      expect(find.textContaining('Acme Corp Model X'), findsWidgets);
 
       final project = container
           .read(proProjectStoreProvider)

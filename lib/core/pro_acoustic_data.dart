@@ -264,6 +264,34 @@ class MeasurementDataPoint {
       );
 }
 
+/// Phase 3-D3C — how a [ParsedMeasurementData] came to exist.
+///
+/// Explicit and stored, never inferred: a live Factory/Room capture and a
+/// plain imported FRD are BOTH legitimate inputs but rest on different kinds
+/// of evidence, and downstream (MeasurementEvidence, Guided AI confidence)
+/// must not treat one as the other. Deliberately not derived from
+/// `microphoneSnapshot != null` / `qualitySnapshot != null` / filename —
+/// imported measurements may legitimately carry metadata too, so those are
+/// not source discriminators.
+enum MeasurementDataSource {
+  /// Recorded by this app through the measurement chain (mic profile, input
+  /// device, setup readiness, PCM quality analysis).
+  liveCapture,
+
+  /// Parsed from a user-supplied FRD/ZMA file.
+  imported,
+
+  /// Persisted before this field existed. Never assumed to be either — it is
+  /// its own state, and consumers must not upgrade it to live-capture
+  /// confidence.
+  legacyUnknown;
+
+  String toJson() => name;
+  static MeasurementDataSource fromJson(String s) =>
+      MeasurementDataSource.values.firstWhere((e) => e.name == s,
+          orElse: () => MeasurementDataSource.legacyUnknown);
+}
+
 /// Fully parsed measurement data from a single FRD or ZMA file.
 class ParsedMeasurementData {
   final String id;
@@ -310,6 +338,12 @@ class ParsedMeasurementData {
   /// never assumed Ready by any consumer.
   final MeasurementQualitySnapshot? qualitySnapshot;
 
+  /// Phase 3-D3C — explicit provenance. Defaults to
+  /// [MeasurementDataSource.legacyUnknown] so every already-persisted
+  /// measurement decodes unchanged and is never silently promoted to
+  /// live-capture provenance.
+  final MeasurementDataSource source;
+
   const ParsedMeasurementData({
     required this.id,
     required this.sourceFileName,
@@ -324,6 +358,7 @@ class ParsedMeasurementData {
     this.warning,
     this.notes,
     this.qualitySnapshot,
+    this.source = MeasurementDataSource.legacyUnknown,
   });
 
   /// [rawPoints] when present, otherwise [points] — the legacy-decode
@@ -372,6 +407,7 @@ class ParsedMeasurementData {
         if (notes != null) 'notes': notes,
         if (qualitySnapshot != null)
           'qualitySnapshot': qualitySnapshot!.toJson(),
+        'source': source.toJson(),
       };
 
   factory ParsedMeasurementData.fromJson(Map<String, dynamic> j) {
@@ -444,6 +480,9 @@ class ParsedMeasurementData {
       warning: j['warning'] as String?,
       notes: j['notes'] as String?,
       qualitySnapshot: qualitySnapshot,
+      // Absent on every pre-3-D3C record -> legacyUnknown, never upgraded.
+      source: MeasurementDataSource.fromJson(
+          j['source'] as String? ?? MeasurementDataSource.legacyUnknown.name),
     );
   }
 }

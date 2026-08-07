@@ -226,7 +226,7 @@ void main() {
     // Microphone Profile Manager, not Guided Setup — proves the typed
     // MeasurementCaptureRemediation dispatch is reused as-is.
     expect(
-        find.text('Manage Microphone').evaluate().isNotEmpty ||
+        find.text('마이크 설정').evaluate().isNotEmpty ||
             find.byType(GuidedMeasurementSetupDialog).evaluate().isNotEmpty,
         isTrue);
   });

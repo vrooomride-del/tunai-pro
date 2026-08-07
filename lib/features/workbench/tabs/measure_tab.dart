@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/diagnostics_visibility.dart';
+import '../../../core/measurement_entry_intent.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_measurement.dart';
@@ -10,6 +12,8 @@ import '../../../shared/components/stat_chip.dart';
 import '../../../shared/components/section_header.dart';
 import 'live_measurement_section.dart';
 import 'microphone_status_card.dart';
+import '../../mic/guided_measurement_setup_dialog.dart';
+import '../../mic/microphone_profile_manager_dialog.dart';
 import 'room_measurement_section.dart';
 
 /// Which measurement UI MeasureTab shows: Factory per-driver tuning
@@ -19,6 +23,33 @@ final measureModeIsRoomProvider =
     StateProvider.family<bool, String>((ref, projectId) => false);
 
 // ── Entry point ───────────────────────────────────────────────────────────────
+
+class _DiagnosticsToggle extends StatelessWidget {
+  final bool visible;
+  final VoidCallback onToggle;
+  const _DiagnosticsToggle({required this.visible, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: onToggle,
+            icon: Icon(
+                visible
+                    ? Icons.visibility_off_outlined
+                    : Icons.science_outlined,
+                size: 13,
+                color: Colors.white38),
+            label: Text(
+              visible ? '진단 도구 숨기기' : '진단 도구 (시뮬레이션 세션)',
+              style: proSubtitle(size: 10),
+            ),
+          ),
+        ),
+      );
+}
 
 class MeasureTab extends ConsumerStatefulWidget {
   final String projectId;
@@ -36,7 +67,40 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
       ref
           .read(proMeasurementProvider.notifier)
           .loadForProject(widget.projectId);
+      _consumeEntryIntent();
     });
+  }
+
+  /// Phase 3-E P0 §5 — acts on Home's one-shot entry intent exactly once.
+  ///
+  /// consume() clears the request as it hands it over, so a rebuild cannot
+  /// reopen the dialog and closing one cannot re-trigger it. A request that
+  /// names a different project is left alone rather than applied here.
+  Future<void> _consumeEntryIntent() async {
+    final intent = ref
+        .read(measurementEntryIntentProvider.notifier)
+        .consume(widget.projectId);
+    if (intent == null || !mounted) return;
+
+    switch (intent) {
+      case MeasurementEntryIntent.manageMicrophone:
+      case MeasurementEntryIntent.manageCalibration:
+        await showMicrophoneProfileManagerDialog(context,
+            projectId: widget.projectId);
+      case MeasurementEntryIntent.selectInputDevice:
+      case MeasurementEntryIntent.runSetupCheck:
+        await showGuidedMeasurementSetupDialog(context,
+            projectId: widget.projectId);
+      case MeasurementEntryIntent.roomBefore:
+      case MeasurementEntryIntent.roomAfter:
+      case MeasurementEntryIntent.closedLoopReview:
+        // No dialog — put the tab on the Room view the user was sent for.
+        ref.read(measureModeIsRoomProvider(widget.projectId).notifier).state =
+            true;
+      case MeasurementEntryIntent.factoryMeasurement:
+        ref.read(measureModeIsRoomProvider(widget.projectId).notifier).state =
+            false;
+    }
   }
 
   ProProject? get _project => ref
@@ -55,6 +119,7 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
     }
 
     final selectedSession = mStore.selectedSession;
+    final showDiagnostics = ref.watch(diagnosticsVisibleProvider);
 
     final acoustic = project.acousticState;
 
@@ -73,13 +138,23 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
         child: ConstrainedBox(
           constraints: BoxConstraints(minHeight: constraints.maxHeight),
           child: Column(children: [
-            // ── Orientation bar: workflow guidance + simulated-data indicator ─
-            _MeasureOrientationBar(
-              guidance: _measurementGuidance(mStore.sessions, selectedSession),
-            ),
-            // ── Workflow progress card: 5-step guided sequence ──────────────
-            _WorkflowProgressCard(
-                sessions: mStore.sessions, selected: selectedSession),
+            // ── Phase 3-E §15 ────────────────────────────────────────────
+            // The MeasurementSession surface below describes SIMULATED
+            // captures. Home's Continue Tuning sends beginners straight to
+            // this tab, so it is hidden unless the user explicitly asks for
+            // diagnostics — nothing is deleted, only withheld from the
+            // production guided path where it could be mistaken for a real
+            // measurement.
+            if (showDiagnostics) ...[
+              // ── Orientation bar: workflow guidance + simulated indicator ─
+              _MeasureOrientationBar(
+                guidance:
+                    _measurementGuidance(mStore.sessions, selectedSession),
+              ),
+              // ── Workflow progress card: 5-step guided sequence ───────────
+              _WorkflowProgressCard(
+                  sessions: mStore.sessions, selected: selectedSession),
+            ],
             // ── Phase C: Driver readiness overview bar ──────────────────────
             _DriverReadinessBar(acoustic: acoustic),
             // ── Phase 3-C: current measurement microphone / calibration state ─
@@ -96,67 +171,74 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
             // a bounded height from this now-unbounded scrolling Column --
             // Expanded still works normally *inside* this Row because
             // IntrinsicHeight gives the Row itself a concrete height.
-            IntrinsicHeight(
-              child: Row(children: [
-                // ── Session list panel (left) ──────────────────────────────
-                SizedBox(
-                  width: 280,
-                  child: _SessionListPanel(
-                    project: project,
-                    sessions: mStore.sessions,
-                    selectedId: mStore.selectedSessionId,
-                    onSelect: (id) => ref
-                        .read(proMeasurementProvider.notifier)
-                        .selectSession(id),
-                    onNew: () => _showNewSessionDialog(project),
-                    onRename: (s) => _showRenameDialog(project, s),
-                    onDuplicate: (s) => ref
-                        .read(proMeasurementProvider.notifier)
-                        .duplicateSession(project.id, s.id),
-                    onDelete: (s) => _confirmDeleteSession(project, s),
+            if (showDiagnostics)
+              IntrinsicHeight(
+                child: Row(children: [
+                  // ── Session list panel (left) ──────────────────────────────
+                  SizedBox(
+                    width: 280,
+                    child: _SessionListPanel(
+                      project: project,
+                      sessions: mStore.sessions,
+                      selectedId: mStore.selectedSessionId,
+                      onSelect: (id) => ref
+                          .read(proMeasurementProvider.notifier)
+                          .selectSession(id),
+                      onNew: () => _showNewSessionDialog(project),
+                      onRename: (s) => _showRenameDialog(project, s),
+                      onDuplicate: (s) => ref
+                          .read(proMeasurementProvider.notifier)
+                          .duplicateSession(project.id, s.id),
+                      onDelete: (s) => _confirmDeleteSession(project, s),
+                    ),
                   ),
-                ),
-                Container(width: 0.5, color: kProBorder),
-                // ── Session detail panel (right) ───────────────────────────
-                Expanded(
-                  child: selectedSession == null
-                      ? _ReadinessCard(
-                          project: project,
-                          sessionCount: mStore.sessions.length)
-                      : _SessionDetailPanel(
-                          project: project,
-                          session: selectedSession,
-                          onAddPoint: () =>
-                              _showAddPointDialog(project, selectedSession),
-                          onSimulate: (pointId) => ref
-                              .read(proMeasurementProvider.notifier)
-                              .simulateCapture(
-                                  projectId: project.id,
-                                  sessionId: selectedSession.id,
-                                  pointId: pointId),
-                          onAccept: (pointId) => ref
-                              .read(proMeasurementProvider.notifier)
-                              .acceptPoint(
-                                  projectId: project.id,
-                                  sessionId: selectedSession.id,
-                                  pointId: pointId),
-                          onReject: (pointId) => ref
-                              .read(proMeasurementProvider.notifier)
-                              .rejectPoint(
-                                  projectId: project.id,
-                                  sessionId: selectedSession.id,
-                                  pointId: pointId),
-                          onDeletePoint: (pointId) => ref
-                              .read(proMeasurementProvider.notifier)
-                              .deletePoint(
-                                  projectId: project.id,
-                                  sessionId: selectedSession.id,
-                                  pointId: pointId),
-                          onMarkComplete: () =>
-                              _confirmMarkComplete(project, selectedSession),
-                        ),
-                ),
-              ]),
+                  Container(width: 0.5, color: kProBorder),
+                  // ── Session detail panel (right) ───────────────────────────
+                  Expanded(
+                    child: selectedSession == null
+                        ? _ReadinessCard(
+                            project: project,
+                            sessionCount: mStore.sessions.length)
+                        : _SessionDetailPanel(
+                            project: project,
+                            session: selectedSession,
+                            onAddPoint: () =>
+                                _showAddPointDialog(project, selectedSession),
+                            onSimulate: (pointId) => ref
+                                .read(proMeasurementProvider.notifier)
+                                .simulateCapture(
+                                    projectId: project.id,
+                                    sessionId: selectedSession.id,
+                                    pointId: pointId),
+                            onAccept: (pointId) => ref
+                                .read(proMeasurementProvider.notifier)
+                                .acceptPoint(
+                                    projectId: project.id,
+                                    sessionId: selectedSession.id,
+                                    pointId: pointId),
+                            onReject: (pointId) => ref
+                                .read(proMeasurementProvider.notifier)
+                                .rejectPoint(
+                                    projectId: project.id,
+                                    sessionId: selectedSession.id,
+                                    pointId: pointId),
+                            onDeletePoint: (pointId) => ref
+                                .read(proMeasurementProvider.notifier)
+                                .deletePoint(
+                                    projectId: project.id,
+                                    sessionId: selectedSession.id,
+                                    pointId: pointId),
+                            onMarkComplete: () =>
+                                _confirmMarkComplete(project, selectedSession),
+                          ),
+                  ),
+                ]),
+              ),
+            _DiagnosticsToggle(
+              visible: showDiagnostics,
+              onToggle: () => ref
+                  .read(diagnosticsVisibleProvider.notifier)
+                  .state = !showDiagnostics,
             ),
           ]),
         ),

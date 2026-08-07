@@ -24,26 +24,34 @@ class MicrophoneStatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final profile = project.selectedMicrophoneProfile;
     final displayState = deriveMicrophoneDisplayState(profile);
-    final (label, color, detail) = switch (displayState) {
+    // §8 — one language per status. These used to mix an English status
+    // ("Explicitly uncalibrated") with a Korean explanation in one card.
+    final (name, status, color, detail) = switch (displayState) {
       MicrophoneDisplayState.notSelected => (
-          'Measurement microphone not selected',
+          '마이크가 선택되지 않았습니다',
+          '선택 필요',
           Colors.white38,
           '측정 정확도를 위해 마이크를 등록하고 선택하세요.',
         ),
       MicrophoneDisplayState.calibrationReady => (
-          'Calibrated — ${profile!.manufacturer} ${profile.model}',
+          '${profile!.manufacturer} ${profile.model}',
+          '보정 완료',
           kProGreen,
           _rangeLabel(profile),
         ),
       MicrophoneDisplayState.explicitlyUncalibrated => (
-          'Explicitly uncalibrated',
+          profile == null
+              ? '보정 없이 사용'
+              : '${profile.manufacturer} ${profile.model}',
+          '보정 없이 사용',
           kProAmber,
           '보정 없이 측정 중입니다 — 정확도가 낮아질 수 있습니다.',
         ),
       MicrophoneDisplayState.invalid => (
-          'Calibration invalid',
+          '${profile!.manufacturer} ${profile.model}',
+          '보정 파일 확인 필요',
           kProRed,
-          '선택된 프로필의 보정 데이터가 유효하지 않습니다.',
+          '선택된 프로필의 보정 데이터를 사용할 수 없습니다.',
         ),
     };
 
@@ -58,40 +66,45 @@ class MicrophoneStatusCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // §6 — this card is the start of every measurement, so it reads as a
+        // titled section rather than one more status strip among the
+        // professional panels.
         Row(children: [
-          Icon(Icons.mic_none, size: 16, color: color),
+          Icon(Icons.mic_none, size: 17, color: color),
           const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: proValue(size: 12, color: color)),
-                Text(detail, style: proSubtitle(size: 10)),
-              ],
+          Text('측정 마이크', style: proTitle(size: 13)),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              border: Border.all(color: color.withValues(alpha: 0.45)),
+              borderRadius: BorderRadius.circular(3),
             ),
+            child: Text(status, style: TextStyle(color: color, fontSize: 10)),
           ),
         ]),
         const SizedBox(height: 8),
+        Text(name, style: proValue(size: 13)),
+        if (detail.isNotEmpty) Text(detail, style: proSubtitle(size: 10)),
+        const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.fact_check_outlined, size: 14, color: setupColor),
-              const SizedBox(width: 6),
-              Text('Setup Check: $setupLabel',
-                  style: proSubtitle(size: 11, color: setupColor)),
-            ]),
-            OutlinedButton(
+            FilledButton.icon(
               onPressed: () => showMicrophoneProfileManagerDialog(context,
                   projectId: project.id),
-              child: const Text('Manage Microphone'),
+              icon: const Icon(Icons.settings_outlined, size: 14),
+              label: const Text('마이크 설정'),
             ),
-            OutlinedButton(
+            OutlinedButton.icon(
               onPressed: () => showGuidedMeasurementSetupDialog(context,
                   projectId: project.id),
-              child: const Text('Check Measurement Setup'),
+              icon:
+                  Icon(Icons.fact_check_outlined, size: 14, color: setupColor),
+              label: Text('측정 준비 확인 · $setupLabel'),
             ),
           ],
         ),
@@ -101,16 +114,16 @@ class MicrophoneStatusCard extends StatelessWidget {
 
   (String, Color) _setupStatusLabel() {
     final readiness = project.currentSetupReadiness;
-    if (readiness == null) return ('Not checked', Colors.white38);
+    if (readiness == null) return ('확인 필요', Colors.white38);
     final currentIdentity =
         MeasurementSetupReadinessProjectIdentity.forProject(project);
-    if (readiness.isStaleFor(currentIdentity)) return ('Stale', kProAmber);
-    if (readiness.isExpired()) return ('Expired', kProAmber);
-    if (readiness.isReady) return ('Ready', kProGreen);
+    if (readiness.isStaleFor(currentIdentity)) return ('설정 변경됨', kProAmber);
+    if (readiness.isExpired()) return ('유효 기간 지남', kProAmber);
+    if (readiness.isReady) return ('준비 완료', kProGreen);
     if (readiness.warnings.isNotEmpty && readiness.blockers.isEmpty) {
-      return ('Warning', kProAmber);
+      return ('주의 사항 있음', kProAmber);
     }
-    return ('Blocked', kProRed);
+    return ('다시 확인 필요', kProRed);
   }
 
   static String _rangeLabel(MeasurementMicrophoneProfile profile) {

@@ -10,6 +10,9 @@ import 'package:tunai_pro/core/orchestrator/tools/pro_tool_execution.dart';
 import 'package:tunai_pro/core/orchestrator/tools/pro_tool_registry.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/calibration/calibration_types.dart';
+import 'package:tunai_pro/core/measurement/measurement_capture_provenance.dart';
+import 'package:tunai_pro/core/measurement/measurement_quality_snapshot.dart';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +38,10 @@ ParsedMeasurementData _frdData({
   String fileName = 'woofer.frd',
   List<MeasurementDataPoint>? points,
   String? warning,
+  MeasurementDataSource source = MeasurementDataSource.imported,
+  CalibrationStatus calibrationStatus = CalibrationStatus.legacyUnknown,
+  String? calibrationCurveChecksum,
+  MeasurementQualitySnapshot? qualitySnapshot,
 }) =>
     ParsedMeasurementData(
       id: id,
@@ -43,6 +50,10 @@ ParsedMeasurementData _frdData({
       importedAt: _now,
       points: points ?? _points10,
       warning: warning,
+      source: source,
+      calibrationStatus: calibrationStatus,
+      calibrationCurveChecksum: calibrationCurveChecksum,
+      qualitySnapshot: qualitySnapshot,
     );
 
 DriverChannel _driver({
@@ -72,8 +83,7 @@ ProProject _project({
       ),
     );
 
-ProOrchestratorStep _step({String inputRef = 'ch_wf_l'}) =>
-    ProOrchestratorStep(
+ProOrchestratorStep _step({String inputRef = 'ch_wf_l'}) => ProOrchestratorStep(
       stepId: 'step-measurementAnalyze',
       toolId: ProOrchestratorToolId.measurementAnalyze,
       objective: 'analyze frd',
@@ -112,7 +122,8 @@ void main() {
       final result = adapter.run(ctx, step);
 
       expect(store.has(_pid, step.outputRef), isTrue);
-      final artifact = store.getTyped<MeasurementArtifact>(_pid, step.outputRef);
+      final artifact =
+          store.getTyped<MeasurementArtifact>(_pid, step.outputRef);
       expect(artifact.parse.data, isNotNull);
       expect(artifact.evidence.measurementRef, equals('ch_wf_l'));
       expect(result.toolId, equals(ProOrchestratorToolId.measurementAnalyze));
@@ -146,7 +157,8 @@ void main() {
       final (:ctx, :store) = _setup();
       adapter.run(ctx, _step());
 
-      final artifact = store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+      final artifact =
+          store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
       final points = artifact.parse.data!.points;
       expect(points.length, equals(10));
       expect(points.first.frequencyHz, equals(100.0));
@@ -157,7 +169,8 @@ void main() {
       final (:ctx, :store) = _setup();
       adapter.run(ctx, _step());
 
-      final artifact = store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+      final artifact =
+          store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
       expect(artifact.parse.data!.points.first.magnitudeDb, equals(-5.0));
       expect(artifact.parse.data!.points[2].magnitudeDb, equals(-8.0));
     });
@@ -166,8 +179,10 @@ void main() {
       final (:ctx, :store) = _setup();
       adapter.run(ctx, _step());
 
-      final artifact = store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
-      expect(artifact.evidence.domain, equals(MeasurementDomain.acousticResponse));
+      final artifact =
+          store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+      expect(
+          artifact.evidence.domain, equals(MeasurementDomain.acousticResponse));
       expect(artifact.evidence.source, equals(MeasurementSource.importedFrd));
     });
 
@@ -175,8 +190,10 @@ void main() {
       final (:ctx, :store) = _setup();
       adapter.run(ctx, _step());
 
-      final artifact = store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
-      expect(artifact.evaluation, equals(MeasurementConfidenceEvaluation.evaluated));
+      final artifact =
+          store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+      expect(artifact.evaluation,
+          equals(MeasurementConfidenceEvaluation.evaluated));
       expect(artifact.confidence, isNotNull);
     });
   });
@@ -273,14 +290,16 @@ void main() {
         resolver: ProProjectResolver(project: proj),
         store: store2,
       );
-      adapter.run(ctx2, ProOrchestratorStep(
-        stepId: 'step-2',
-        toolId: ProOrchestratorToolId.measurementAnalyze,
-        objective: 'analyze',
-        inputRefs: ['ch_wf_l'],
-        outputRef: 'out:measurement',
-        requiresUserConfirmation: false,
-      ));
+      adapter.run(
+          ctx2,
+          ProOrchestratorStep(
+            stepId: 'step-2',
+            toolId: ProOrchestratorToolId.measurementAnalyze,
+            objective: 'analyze',
+            inputRefs: ['ch_wf_l'],
+            outputRef: 'out:measurement',
+            requiresUserConfirmation: false,
+          ));
 
       final a1 = store1.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
       final a2 = store2.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
@@ -311,14 +330,16 @@ void main() {
         resolver: ProProjectResolver(project: proj2),
         store: store2,
       );
-      adapter.run(ctx2, ProOrchestratorStep(
-        stepId: 'step-2',
-        toolId: ProOrchestratorToolId.measurementAnalyze,
-        objective: 'analyze',
-        inputRefs: ['ch_wf_l'],
-        outputRef: 'out:measurement',
-        requiresUserConfirmation: false,
-      ));
+      adapter.run(
+          ctx2,
+          ProOrchestratorStep(
+            stepId: 'step-2',
+            toolId: ProOrchestratorToolId.measurementAnalyze,
+            objective: 'analyze',
+            inputRefs: ['ch_wf_l'],
+            outputRef: 'out:measurement',
+            requiresUserConfirmation: false,
+          ));
 
       final a1 = store1.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
       final a2 = store2.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
@@ -352,6 +373,107 @@ void main() {
       // Summary must be a non-empty string and not a DSP value bag
       expect(result.summary, isA<String>());
       expect(result.summary, isNotEmpty);
+    });
+  });
+  // ── Phase 3-D3C: live vs imported evidence branch ───────────────────────
+  group('Phase 3-D3C evidence source branch', () {
+    MeasurementQualitySnapshot quality() => MeasurementQualitySnapshot(
+          provenance: MeasurementCaptureProvenance(
+            projectId: _pid,
+            microphoneProfileChecksum: 'profile-abc',
+            calibrationCurveChecksum: 'curve-abc',
+            calibrationAngle: CalibrationAngle.zeroDegree.name,
+            inputDeviceSelectionIdentity: 'device:dev-1',
+            setupReadinessGenerationId: 'gen-1',
+            qualityPolicyVersion: 'pro-provisional-1',
+            actualSampleRate: 48000,
+            actualChannelCount: 1,
+            capturedAt: _now,
+          ),
+          setupCalibrationStatus: CalibrationStatus.calibrated,
+          setupNoiseFloorDbFs: -72,
+          setupPeakDbFs: -6,
+          setupRmsDbFs: -18,
+          setupSignalToNoiseDb: 54,
+          setupClippedSampleCount: 0,
+          setupClippedSampleRatio: 0,
+          setupCheckedAt: _now,
+        );
+
+    test('a live capture produces MeasurementCaptureEvidence', () {
+      final env = _setup(
+        proj: _project(drivers: [
+          _driver(
+              frdData: _frdData(
+            source: MeasurementDataSource.liveCapture,
+            calibrationStatus: CalibrationStatus.calibrated,
+            calibrationCurveChecksum: 'curve-abc',
+            qualitySnapshot: quality(),
+          )),
+        ]),
+      );
+      const ParsedMeasurementAdapter().run(env.ctx, _step());
+      final art =
+          env.store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+
+      expect(art.evidence, isA<MeasurementCaptureEvidence>());
+      expect(art.evidence.source, MeasurementSource.liveMicrophone);
+      final capture = art.evidence as MeasurementCaptureEvidence;
+      expect(capture.microphoneProfileRef, 'profile-abc');
+      expect(capture.calibrationRef, 'curve-abc');
+      expect(capture.availableMetrics, contains(EvidenceMetric.calibration));
+      expect(capture.sampleRate, 48000);
+    });
+
+    test('an imported FRD keeps ImportedMeasurementEvidence unchanged', () {
+      final env = _setup();
+      const ParsedMeasurementAdapter().run(env.ctx, _step());
+      final art =
+          env.store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+
+      expect(art.evidence, isA<ImportedMeasurementEvidence>());
+      expect(art.evidence.source, MeasurementSource.importedFrd);
+    });
+
+    test('legacyUnknown data keeps the imported path (no forced migration)',
+        () {
+      final env = _setup(
+        proj: _project(drivers: [
+          _driver(
+              frdData: _frdData(source: MeasurementDataSource.legacyUnknown)),
+        ]),
+      );
+      const ParsedMeasurementAdapter().run(env.ctx, _step());
+      final art =
+          env.store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+
+      expect(art.evidence, isA<ImportedMeasurementEvidence>());
+      expect(art.evidence.source, MeasurementSource.importedFrd);
+    });
+
+    test(
+        'the confidence result is identical for the same numbers regardless '
+        'of evidence source (DSP path unchanged)', () {
+      final importedEnv = _setup();
+      const ParsedMeasurementAdapter().run(importedEnv.ctx, _step());
+      final imported = importedEnv.store
+          .getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+
+      final liveEnv = _setup(
+        proj: _project(drivers: [
+          _driver(
+              frdData: _frdData(
+                  source: MeasurementDataSource.liveCapture,
+                  qualitySnapshot: quality())),
+        ]),
+      );
+      const ParsedMeasurementAdapter().run(liveEnv.ctx, _step());
+      final live =
+          liveEnv.store.getTyped<MeasurementArtifact>(_pid, 'out:measurement');
+
+      expect(live.confidence!.status, imported.confidence!.status);
+      expect(live.confidence!.overallScore, imported.confidence!.overallScore);
+      expect(live.confidence!.grade, imported.confidence!.grade);
     });
   });
 }

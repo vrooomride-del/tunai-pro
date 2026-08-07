@@ -277,9 +277,19 @@ class _MicrophoneProfileManagerDialogState
             ? CalibrationSource.manufacturerFile
             : CalibrationSource.userImported);
 
+    // Record the serial the curve is being imported FOR, at import time.
+    // The text field is the user's live input but the draft object was only
+    // updated on save, so the draft used to reach updateSerialNumber() still
+    // claiming no serial — which read as "the serial changed" and discarded
+    // this very curve (Phase 3-E P0).
+    final typedSerial = _serialCtrl.text.trim();
+
     setState(() {
       _draft = applyCalibrationImport(
-        profile: _draft,
+        profile: _draft.copyWith(
+          serialNumber: typedSerial.isEmpty ? null : typedSerial,
+          clearSerialNumber: typedSerial.isEmpty,
+        ),
         curve: effectiveCurve,
         resultingSource: source,
         now: DateTime.now(),
@@ -304,6 +314,21 @@ class _MicrophoneProfileManagerDialogState
   Future<void> _saveDraft() async {
     final project = _project;
     if (project == null) return;
+
+    // §2 — fail closed on an unapplied calibration import.
+    //
+    // A parsed file sits in _pendingParse until the user applies it. Saving
+    // in that state used to silently discard it and persist an UNCALIBRATED
+    // profile: a runtime trace showed the file parsing to 615 points and the
+    // saved draft still carrying no curve at all, because the apply button
+    // lives inside the scrolling form while Save does not.
+    // Dropping a calibration the user explicitly imported is never an
+    // acceptable outcome, so the save is refused outright — no roster write,
+    // no selection change, no dialog close.
+    if (_pendingParse != null) {
+      setState(() => _importError = '가져온 보정 파일을 먼저 확인해 주세요.');
+      return;
+    }
 
     if (_kind == _Kind.tunai) {
       final serialError = validateTunaiSerialForImport(_serialCtrl.text);
@@ -334,10 +359,28 @@ class _MicrophoneProfileManagerDialogState
     finalDraft =
         updateSerialNumber(profile: finalDraft, newSerial: newSerial, now: now);
 
-    final wasSelected = project.selectedMicrophoneProfile?.id == finalDraft.id;
+    // Selection policy on save (Phase 3-E P0).
+    //
+    // Saving used to refresh the selection ONLY when this exact profile was
+    // already selected. So a user who had "Use Without Calibration" active —
+    // or nothing at all — could create a profile, import a calibration file
+    // and save it, and the selection stayed on the uncalibrated sentinel:
+    // the roster held a fully calibrated microphone while every screen still
+    // read "보정 없이 사용 — No Calibration".
+    //
+    // A profile the user just configured is therefore selected when nothing
+    // real is selected yet. An existing, different microphone is never
+    // hijacked — switching between real profiles stays an explicit choice in
+    // the list.
+    final selected = project.selectedMicrophoneProfile;
+    final wasSelected = selected?.id == finalDraft.id;
+    final nothingRealSelected =
+        selected == null || isUncalibratedSentinel(selected);
+
     await _saveRoster(upsertProfileInRoster(
         roster: project.microphoneProfiles, profile: finalDraft));
-    if (wasSelected) {
+
+    if (wasSelected || nothingRealSelected) {
       await _select(finalDraft);
     }
 
@@ -586,6 +629,36 @@ class _MicrophoneProfileManagerDialogState
             ),
           ),
           const SizedBox(height: 12),
+          // The calibration preview and its apply button live inside the
+          // scrolling form, but this action row does not — so a user could
+          // press Save having never scrolled far enough to see that an
+          // import was still waiting to be applied. This banner puts that
+          // outstanding action where Save already is.
+          if (_pendingParse != null && _pendingParse!.isSuccess)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: kProAmber.withValues(alpha: 0.08),
+                border: Border.all(color: kProAmber.withValues(alpha: 0.45)),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(children: [
+                const Icon(Icons.warning_amber_outlined,
+                    size: 14, color: kProAmber),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('가져온 보정 파일이 아직 적용되지 않았습니다.',
+                      style: TextStyle(color: kProAmber, fontSize: 11)),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _confirmPendingCalibration,
+                  icon: const Icon(Icons.check, size: 14),
+                  label: const Text('보정 파일 적용'),
+                ),
+              ]),
+            ),
           Row(children: [
             if (_importError != null)
               Expanded(
@@ -719,14 +792,19 @@ class _MicrophoneProfileManagerDialogState
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: kProSurface,
-        border: Border.all(color: kProBorder),
+        color: kProAmber.withValues(alpha: 0.06),
+        border: Border.all(color: kProAmber.withValues(alpha: 0.45)),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Preview — not yet applied', style: proLabel(size: 10)),
+          Row(children: [
+            const Icon(Icons.info_outline, size: 13, color: kProAmber),
+            const SizedBox(width: 6),
+            Text('미리보기 — 아직 적용되지 않았습니다',
+                style: proLabel(size: 10, color: kProAmber)),
+          ]),
           const SizedBox(height: 8),
           CalibrationCurvePreview(curve: parsed.curve),
           if (parsed.detectedAngle == CalibrationAngle.unspecified) ...[
@@ -753,9 +831,10 @@ class _MicrophoneProfileManagerDialogState
               ),
             ),
           const SizedBox(height: 8),
-          FilledButton(
+          FilledButton.icon(
             onPressed: _confirmPendingCalibration,
-            child: const Text('Use This Calibration'),
+            icon: const Icon(Icons.check, size: 16),
+            label: const Text('보정 파일 적용'),
           ),
         ],
       ),

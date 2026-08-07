@@ -55,7 +55,8 @@ void main() {
       final container = await _seed(_project());
       addTearDown(container.dispose);
       await tester.pumpWidget(_host(container, _project()));
-      expect(find.text('Measurement microphone not selected'), findsOneWidget);
+      expect(find.text('마이크가 선택되지 않았습니다'), findsOneWidget);
+      expect(find.text('선택 필요'), findsOneWidget);
     });
 
     testWidgets('calibrated', (tester) async {
@@ -73,7 +74,8 @@ void main() {
       final container = await _seed(project);
       addTearDown(container.dispose);
       await tester.pumpWidget(_host(container, project));
-      expect(find.textContaining('Calibrated — ACME M1'), findsOneWidget);
+      expect(find.textContaining('ACME M1'), findsOneWidget);
+      expect(find.text('보정 완료'), findsOneWidget);
     });
 
     testWidgets('explicitly uncalibrated', (tester) async {
@@ -83,7 +85,7 @@ void main() {
       final container = await _seed(project);
       addTearDown(container.dispose);
       await tester.pumpWidget(_host(container, project));
-      expect(find.text('Explicitly uncalibrated'), findsOneWidget);
+      expect(find.text('보정 없이 사용'), findsWidgets);
     });
 
     testWidgets('invalid (mismatched source/curve combo)', (tester) async {
@@ -100,7 +102,7 @@ void main() {
       final container = await _seed(project);
       addTearDown(container.dispose);
       await tester.pumpWidget(_host(container, project));
-      expect(find.text('Calibration invalid'), findsOneWidget);
+      expect(find.text('보정 파일 확인 필요'), findsOneWidget);
     });
   });
 
@@ -125,7 +127,7 @@ void main() {
       addTearDown(container.dispose);
       await tester.pumpWidget(_host(container, project));
 
-      final cta = find.text('Manage Microphone');
+      final cta = find.text('마이크 설정');
       expect(cta, findsOneWidget);
       await tester.tap(cta);
       await tester.pumpAndSettle();

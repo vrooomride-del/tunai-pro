@@ -33,6 +33,8 @@ import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
 import 'package:tunai_pro/core/room_measurement_data.dart';
+import 'package:tunai_pro/core/measurement/measurement_capture_provenance.dart';
+import 'package:tunai_pro/core/measurement/measurement_quality_snapshot.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
 import 'package:tunai_pro/features/workbench/tabs/room_auto_peq_controller.dart';
 import 'package:tunai_pro/features/workbench/tabs/room_measurement_controller.dart';
@@ -96,7 +98,37 @@ ProProject _project({String id = 'room-proj-1'}) =>
       ]),
     ));
 
-ParsedMeasurementData _frd(String id, {double magBase = -1.0}) =>
+/// Capture provenance identical on every side/phase, so the Phase 3-D3C-2
+/// Before/After provenance gate is satisfied and these tests stay about the
+/// closed-loop evaluation/re-entry contract rather than the gate itself.
+/// (The gate has its own dedicated tests.)
+/// Provenance built from the SAME builder the live capture path uses, over
+/// the same gate-ready project fixture — so a seeded Before and a live
+/// captured After describe an identical measurement chain and the Phase
+/// 3-D3C-2 provenance gate is satisfied. These tests are about the
+/// closed-loop evaluation/re-entry contract; the gate has its own tests.
+MeasurementQualitySnapshot _roomQuality(String projectId) {
+  final provenance = MeasurementCaptureProvenanceBuilder.build(
+    project: _project(id: projectId),
+    actualSampleRate: 48000,
+    actualChannelCount: 1,
+    now: DateTime.utc(2025, 1, 1),
+  );
+  return MeasurementQualitySnapshot(
+    provenance: provenance,
+    setupCalibrationStatus: CalibrationStatus.calibrated,
+    setupNoiseFloorDbFs: -70,
+    setupPeakDbFs: -6,
+    setupRmsDbFs: -18,
+    setupSignalToNoiseDb: 52,
+    setupClippedSampleCount: 0,
+    setupClippedSampleRatio: 0,
+    setupCheckedAt: DateTime.utc(2025, 1, 1),
+  );
+}
+
+ParsedMeasurementData _frd(String id,
+        {double magBase = -1.0, String projectId = 'room-proj-1'}) =>
     ParsedMeasurementData(
       id: id,
       sourceFileName: '$id.frd',
@@ -106,6 +138,10 @@ ParsedMeasurementData _frd(String id, {double magBase = -1.0}) =>
         for (var f = 20.0; f <= 2000; f *= 1.3)
           MeasurementDataPoint(frequencyHz: f, magnitudeDb: magBase),
       ],
+      calibrationStatus: CalibrationStatus.calibrated,
+      calibrationCurveChecksum: gateReadyCalibrationCurve().checksum,
+      qualitySnapshot: _roomQuality(projectId),
+      source: MeasurementDataSource.liveCapture,
     );
 
 RoomSystemMeasurement _measurement({
@@ -117,7 +153,8 @@ RoomSystemMeasurement _measurement({
     RoomSystemMeasurement(
       side: side,
       phase: phase,
-      frd: _frd('${side.name}_${phase.name}', magBase: magBase),
+      frd: _frd('${side.name}_${phase.name}',
+          magBase: magBase, projectId: projectId),
       capturedAt: DateTime.utc(2025, 1, 1),
       sampleRate: 48000,
       source: RoomMeasurementSource.live,

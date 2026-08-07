@@ -70,8 +70,8 @@ class ProMeasurementParser {
     required String fileName,
     required String content,
     required AcousticFileType fileType,
-    required MeasurementDataPoint? Function(List<String> tokens, int lineNo,
-            List<String> warnings)
+    required MeasurementDataPoint? Function(
+            List<String> tokens, int lineNo, List<String> warnings)
         columnParser,
     required int minColumns,
     required String dataLabel,
@@ -93,7 +93,8 @@ class ProMeasurementParser {
 
         if (tokens.length < minColumns) {
           skipped++;
-          warnings.add('Line ${i + 1}: too few columns (${tokens.length}) — skipped.');
+          warnings.add(
+              'Line ${i + 1}: too few columns (${tokens.length}) — skipped.');
           continue;
         }
 
@@ -132,7 +133,8 @@ class ProMeasurementParser {
       final seen = <double>{};
       for (final pt in points) {
         if (!seen.add(pt.frequencyHz)) {
-          warnings.add('Duplicate frequency ${pt.frequencyHz} Hz — keeping all occurrences.');
+          warnings.add(
+              'Duplicate frequency ${pt.frequencyHz} Hz — keeping all occurrences.');
         }
       }
 
@@ -148,6 +150,7 @@ class ProMeasurementParser {
         importedAt: DateTime.now(),
         points: points,
         warning: warnings.isNotEmpty ? warnings.first : null,
+        source: MeasurementDataSource.imported,
       );
 
       final status = warnings.isEmpty
@@ -225,7 +228,8 @@ class ProMeasurementParser {
     if (tokens.length >= 3) {
       phase = _parseNum(tokens[2]);
       if (phase == null) {
-        warnings.add('Line $lineNo: invalid impedance phase "${tokens[2]}" — ignored.');
+        warnings.add(
+            'Line $lineNo: invalid impedance phase "${tokens[2]}" — ignored.');
       }
     }
 
@@ -238,6 +242,7 @@ class ProMeasurementParser {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  static String _hzLabel(double v) =>
-      v >= 1000 ? '${(v / 1000).toStringAsFixed(1)} kHz' : '${v.toStringAsFixed(0)} Hz';
+  static String _hzLabel(double v) => v >= 1000
+      ? '${(v / 1000).toStringAsFixed(1)} kHz'
+      : '${v.toStringAsFixed(0)} Hz';
 }

@@ -95,12 +95,23 @@ String? validateTunaiSerialForImport(String? serialNumber) {
 /// to match the (now different) unit — it is cleared and the source reverts
 /// to [CalibrationSource.uncalibrated] rather than silently keeping a
 /// curve that may belong to a different physical microphone.
+///
+/// "Changing" means REPLACING a serial the profile already had. Setting a
+/// serial for the first time (null -> "7018617") is not a mismatch: the
+/// TUNAI import flow requires the serial to be typed BEFORE the calibration
+/// file can be picked, so the curve was already imported for that exact
+/// unit — the profile object simply had not recorded the field yet. Treating
+/// that first save as a change silently discarded the calibration the user
+/// had just imported (Phase 3-E P0: the file imported fine, then Home
+/// reported "보정 안 함"). Clearing the serial outright still invalidates,
+/// since an unattributed curve can no longer be tied to a physical unit.
 MeasurementMicrophoneProfile updateSerialNumber({
   required MeasurementMicrophoneProfile profile,
   required String? newSerial,
   required DateTime now,
 }) {
-  final serialChanged = newSerial != profile.serialNumber;
+  final previous = profile.serialNumber;
+  final serialChanged = previous != null && previous != newSerial;
   final isTunaiWithCurve =
       profile.calibrationSource == CalibrationSource.tunaiSerialProfile &&
           profile.calibrationCurve != null;

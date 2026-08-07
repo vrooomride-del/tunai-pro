@@ -2,11 +2,13 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+import '../../../acoustic/measurement_capture_evidence_builder.dart';
 import '../../../acoustic/measurement_confidence.dart';
 import '../../../acoustic/measurement_evidence.dart';
 import '../../../pro_acoustic_data.dart'
     show
         FrdSweepEntry,
+        MeasurementDataSource,
         MeasurementParseResult,
         MeasurementParseStatus;
 import '../../../pro_measurement_parser.dart';
@@ -54,8 +56,7 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
     final state =
         ctx.resolver.resolveMeasurementProjectState(ctx.projectId, ref);
 
-    final driver =
-        state.driverChannels.where((d) => d.id == ref).firstOrNull;
+    final driver = state.driverChannels.where((d) => d.id == ref).firstOrNull;
     if (driver == null) {
       throw ProToolException(
         ProToolFailureCode.missingReference,
@@ -78,9 +79,8 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
       );
     }
 
-    final contentHash = sha256
-        .convert(utf8.encode('$_hashPrefix|${frdData.id}'))
-        .toString();
+    final contentHash =
+        sha256.convert(utf8.encode('$_hashPrefix|${frdData.id}')).toString();
     final evidenceId = 'ev:${ctx.projectId}|$ref|$contentHash';
     final phasePresent = frdData.hasPhase;
 
@@ -105,32 +105,46 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
         ? _buildAlignedSpectra(freqs, mags, driver.additionalFrdSweeps)
         : null;
 
-    final ImportedMeasurementEvidence evidence;
+    // Phase 3-D3C: a live Factory capture and a plain imported FRD are both
+    // legitimate inputs but rest on different evidence. Branch on the
+    // measurement's OWN recorded source -- never inferred from the presence
+    // of a mic/quality snapshot, which an imported measurement may also
+    // legitimately carry. Imported and legacyUnknown keep the pre-existing
+    // ImportedMeasurementEvidence path byte-for-byte.
+    final MeasurementEvidence evidence;
     try {
-      evidence = ImportedMeasurementEvidence(
-        evidenceId: evidenceId,
-        projectId: ctx.projectId,
-        measurementRef: ref,
-        domain: MeasurementDomain.acousticResponse,
-        source: MeasurementSource.importedFrd,
-        provenance: provenance,
-        availableMetrics: {
-          EvidenceMetric.validBandCoverage,
-          if (phasePresent) EvidenceMetric.phase,
-        },
-        unavailableMetrics: {
-          EvidenceMetric.repeatability,
-          EvidenceMetric.snr,
-          EvidenceMetric.clipping,
-          if (!phasePresent) EvidenceMetric.phase,
-        },
-        displayName: frdData.sourceFileName,
-        originalFormat: 'FRD',
-        parserSchemaVersion: _parserSchemaVersion,
-        magnitudePresent: true,
-        phasePresent: phasePresent,
-        impedancePresent: frdData.hasImpedance,
-      );
+      if (frdData.source == MeasurementDataSource.liveCapture) {
+        evidence = MeasurementCaptureEvidenceBuilder.build(
+          projectId: ctx.projectId,
+          measurementRef: ref,
+          data: frdData,
+        ).evidence;
+      } else {
+        evidence = ImportedMeasurementEvidence(
+          evidenceId: evidenceId,
+          projectId: ctx.projectId,
+          measurementRef: ref,
+          domain: MeasurementDomain.acousticResponse,
+          source: MeasurementSource.importedFrd,
+          provenance: provenance,
+          availableMetrics: {
+            EvidenceMetric.validBandCoverage,
+            if (phasePresent) EvidenceMetric.phase,
+          },
+          unavailableMetrics: {
+            EvidenceMetric.repeatability,
+            EvidenceMetric.snr,
+            EvidenceMetric.clipping,
+            if (!phasePresent) EvidenceMetric.phase,
+          },
+          displayName: frdData.sourceFileName,
+          originalFormat: 'FRD',
+          parserSchemaVersion: _parserSchemaVersion,
+          magnitudePresent: true,
+          phasePresent: phasePresent,
+          impedancePresent: frdData.hasImpedance,
+        );
+      }
     } on MeasurementEvidenceException catch (e) {
       throw ProToolException(
           ProToolFailureCode.evidenceConstructionFailure, e.message);
@@ -168,8 +182,7 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
       data: frdData,
       warnings: frdData.warning != null ? [frdData.warning!] : const [],
       errors: const [],
-      summary:
-          '${frdData.pointCount} points from "${frdData.sourceFileName}" '
+      summary: '${frdData.pointCount} points from "${frdData.sourceFileName}" '
           '(pre-parsed, no re-read).',
     );
 
@@ -225,5 +238,4 @@ class ParsedMeasurementAdapter implements ProToolAdapter {
     if (sweepList.length < 2) return null;
     return FrdGridAligner.align(sweepList);
   }
-
 }

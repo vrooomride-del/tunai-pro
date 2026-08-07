@@ -39,9 +39,14 @@ import '../../../core/measurement/measurement_quality_snapshot.dart';
 import '../../../core/measurement/measurement_warning_acknowledgement.dart';
 import '../../../core/orchestrator/room_after_capture_gate.dart';
 import '../../../core/orchestrator/room_after_gate.dart';
+import '../../../core/orchestrator/room_before_after_comparison_gate.dart';
 import '../../../core/orchestrator/room_closed_loop.dart';
 import '../../../core/pro_acoustic_data.dart'
-    show AcousticFileType, MeasurementDataPoint, ParsedMeasurementData;
+    show
+        AcousticFileType,
+        MeasurementDataPoint,
+        MeasurementDataSource,
+        ParsedMeasurementData;
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/room_measurement_data.dart';
@@ -98,6 +103,12 @@ class RoomMeasurementState {
   /// re-evaluated afterward (see accept()'s transition guard).
   final RoomClosedLoopResult? closedLoopResult;
 
+  /// The provenance verdict computed at that same 2/2 transition (Phase
+  /// 3-D3C-2). When `canEvaluate` is false, [closedLoopResult] is
+  /// deliberately null and the UI must render THIS instead — a blocked
+  /// comparison is a distinct state from a "worsened" verdict.
+  final RoomBeforeAfterComparisonGateResult? closedLoopComparison;
+
   /// The most recent DUAL (hardware AND measurement) gate verdict from
   /// [capture]'s After-mode preflight (Phase 3-D3A-3). Null in Before mode —
   /// Before never requires the hardware condition, so [captureGate] alone
@@ -120,6 +131,7 @@ class RoomMeasurementState {
     this.error,
     this.captureGate,
     this.closedLoopResult,
+    this.closedLoopComparison,
     this.afterCaptureGate,
   });
 
@@ -140,6 +152,7 @@ class RoomMeasurementState {
     bool clearError = false,
     MeasurementCaptureGateResult? captureGate,
     RoomClosedLoopResult? closedLoopResult,
+    RoomBeforeAfterComparisonGateResult? closedLoopComparison,
     RoomAfterCaptureGateResult? afterCaptureGate,
     bool clearAfterCaptureGate = false,
   }) =>
@@ -175,6 +188,7 @@ class RoomMeasurementState {
         error: clearError ? null : (error ?? this.error),
         captureGate: captureGate ?? this.captureGate,
         closedLoopResult: closedLoopResult ?? this.closedLoopResult,
+        closedLoopComparison: closedLoopComparison ?? this.closedLoopComparison,
         afterCaptureGate: clearAfterCaptureGate
             ? null
             : (afterCaptureGate ?? this.afterCaptureGate),
@@ -573,14 +587,30 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     // stepIndex >= steps.length, but this guard makes the "evaluate exactly
     // once" contract explicit and independent of that).
     RoomClosedLoopResult? evaluation;
+    RoomBeforeAfterComparisonGateResult? comparison;
     if (state.mode == RoomMeasurementPhase.after &&
         !wasCompleteBefore &&
         updatedSnapshot.isComplete) {
-      evaluation = RoomClosedLoopEvaluator.evaluate(
-        projectId: projectId,
+      // OUTERMOST provenance gate (Phase 3-D3C-2 §5). A Before/After pair
+      // that is not provenance-comparable is not a worse or better result —
+      // it is not a result. Blocking here is what guarantees
+      // RoomClosedLoopEvaluator (and therefore CorrectionCycleEvaluator)
+      // never runs on it, so no improved/worsened verdict, no next-cycle
+      // suggestion and no rollback recommendation can be produced from a
+      // meaningless comparison. The pre-apply rollback snapshot is left
+      // untouched, so the user can simply re-measure After and get a valid
+      // comparison.
+      comparison = RoomBeforeAfterComparisonGate.evaluateSnapshots(
         before: currentRoom.before,
         after: updatedRoom.after,
       );
+      if (comparison.canEvaluate) {
+        evaluation = RoomClosedLoopEvaluator.evaluate(
+          projectId: projectId,
+          before: currentRoom.before,
+          after: updatedRoom.after,
+        );
+      }
     }
 
     _ref.read(mic.micMeasurementProvider.notifier).reset();
@@ -590,6 +620,7 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
       clearCapturedResponse: true,
       clearError: true,
       closedLoopResult: evaluation,
+      closedLoopComparison: comparison,
     );
   }
 
@@ -624,6 +655,7 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
       calibrationCurveChecksum: calibrationCurveChecksum,
       calibrationAppliedAt: calibrationCurveChecksum != null ? now : null,
       qualitySnapshot: qualitySnapshot,
+      source: MeasurementDataSource.liveCapture,
     );
   }
 }
