@@ -13,6 +13,7 @@ import 'pro_hardware_connection_data.dart';
 import 'pro_deploy_package_data.dart';
 import 'pro_address_validation_data.dart';
 import 'room_measurement_data.dart';
+import 'calibration/calibration_types.dart';
 
 const _kProjectsKey = 'tunai_pro_projects';
 const _kCurrentIdKey = 'tunai_pro_current_project_id';
@@ -192,6 +193,20 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     final project = state.projects.firstWhere((p) => p.id == id);
     await updateProject(
         project.copyWith(roomState: roomState, updatedAt: DateTime.now()));
+  }
+
+  /// Selects (or clears, when [profile] is null) the measurement microphone
+  /// for project [id] only — never touches any other project, and never
+  /// changes any already-captured measurement's stored
+  /// MeasurementMicrophoneSnapshot.
+  Future<void> updateSelectedMicrophoneProfile(
+      String id, MeasurementMicrophoneProfile? profile) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(project.copyWith(
+      selectedMicrophoneProfile: profile,
+      clearSelectedMicrophoneProfile: profile == null,
+      updatedAt: DateTime.now(),
+    ));
   }
 
   Future<void> updateProtectionState(

@@ -40,6 +40,7 @@ import 'package:tunai_pro/core/orchestrator/pro_guided_ai_controller.dart';
 import 'package:tunai_pro/core/orchestrator/pro_guided_ai_state.dart';
 import 'package:tunai_pro/core/orchestrator/pro_local_orchestrator_session.dart';
 import 'package:tunai_pro/core/orchestrator/pro_orchestrator_types.dart';
+import 'package:tunai_pro/core/calibration/calibration_types.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_correction_cycle.dart';
 import 'package:tunai_pro/core/pro_project.dart';
@@ -66,7 +67,7 @@ class _FakeMicController extends mic.MicMeasurementController {
 
   @override
   Future<void> startMeasurement({
-    List<double>? scfCorrection,
+    CalibrationCurve? calibrationCurve,
     SpeakerProfile? speakerProfile,
     bool bleWarmup = false,
   }) async {

@@ -26,6 +26,7 @@ import 'package:tunai_pro/core/deploy/pro_hardware_context_provider.dart';
 import 'package:tunai_pro/core/deploy/pro_hardware_capability.dart';
 import 'package:tunai_pro/core/deploy/pro_hardware_write_executor.dart';
 import 'package:tunai_pro/core/deploy/pro_hardware_write_plan.dart';
+import 'package:tunai_pro/core/calibration/calibration_types.dart';
 import 'package:tunai_pro/core/orchestrator/room_closed_loop.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
@@ -52,6 +53,7 @@ class _FakeMicController extends mic.MicMeasurementController {
   @override
   Future<void> startRoomMeasurement({
     required bool leftActive,
+    CalibrationCurve? calibrationCurve,
     bool bleWarmup = false,
   }) async {
     callCount++;

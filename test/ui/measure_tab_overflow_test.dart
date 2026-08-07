@@ -25,6 +25,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tunai_pro/core/calibration/calibration_types.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
@@ -67,7 +68,7 @@ class _FakeMicController extends mic.MicMeasurementController {
 
   @override
   Future<void> startMeasurement({
-    List<double>? scfCorrection,
+    CalibrationCurve? calibrationCurve,
     dynamic speakerProfile,
     bool bleWarmup = false,
   }) async {

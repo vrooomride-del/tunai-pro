@@ -29,6 +29,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/calibration/calibration_types.dart';
 import '../../../core/orchestrator/room_after_gate.dart';
 import '../../../core/orchestrator/room_closed_loop.dart';
 import '../../../core/pro_acoustic_data.dart'
@@ -62,6 +63,11 @@ class RoomMeasurementState {
   final int stepIndex; // 0 = Left, 1 = Right
   final RoomMeasurementPhaseUi phase;
   final List<Map<String, double>>? capturedResponse;
+  final List<Map<String, double>>? capturedRawResponse;
+  final CalibrationStatus? capturedCalibrationStatus;
+  final String? capturedCalibrationCurveChecksum;
+  final List<String> capturedCalibrationWarnings;
+  final MeasurementMicrophoneSnapshot? capturedMicrophoneSnapshot;
   final String? error;
 
   /// Populated exactly once, the moment After reaches 2/2 — never
@@ -73,6 +79,11 @@ class RoomMeasurementState {
     this.stepIndex = 0,
     this.phase = RoomMeasurementPhaseUi.idle,
     this.capturedResponse,
+    this.capturedRawResponse,
+    this.capturedCalibrationStatus,
+    this.capturedCalibrationCurveChecksum,
+    this.capturedCalibrationWarnings = const [],
+    this.capturedMicrophoneSnapshot,
     this.error,
     this.closedLoopResult,
   });
@@ -83,6 +94,11 @@ class RoomMeasurementState {
     RoomMeasurementPhaseUi? phase,
     List<Map<String, double>>? capturedResponse,
     bool clearCapturedResponse = false,
+    List<Map<String, double>>? capturedRawResponse,
+    CalibrationStatus? capturedCalibrationStatus,
+    String? capturedCalibrationCurveChecksum,
+    List<String>? capturedCalibrationWarnings,
+    MeasurementMicrophoneSnapshot? capturedMicrophoneSnapshot,
     String? error,
     bool clearError = false,
     RoomClosedLoopResult? closedLoopResult,
@@ -94,6 +110,22 @@ class RoomMeasurementState {
         capturedResponse: clearCapturedResponse
             ? null
             : (capturedResponse ?? this.capturedResponse),
+        capturedRawResponse: clearCapturedResponse
+            ? null
+            : (capturedRawResponse ?? this.capturedRawResponse),
+        capturedCalibrationStatus: clearCapturedResponse
+            ? null
+            : (capturedCalibrationStatus ?? this.capturedCalibrationStatus),
+        capturedCalibrationCurveChecksum: clearCapturedResponse
+            ? null
+            : (capturedCalibrationCurveChecksum ??
+                this.capturedCalibrationCurveChecksum),
+        capturedCalibrationWarnings: clearCapturedResponse
+            ? const []
+            : (capturedCalibrationWarnings ?? this.capturedCalibrationWarnings),
+        capturedMicrophoneSnapshot: clearCapturedResponse
+            ? null
+            : (capturedMicrophoneSnapshot ?? this.capturedMicrophoneSnapshot),
         error: clearError ? null : (error ?? this.error),
         closedLoopResult: closedLoopResult ?? this.closedLoopResult,
       );
@@ -232,11 +264,13 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     state = state.copyWith(
         phase: RoomMeasurementPhaseUi.capturing, clearError: true);
 
+    final profile = _project?.selectedMicrophoneProfile;
     final micNotifier = _ref.read(mic.micMeasurementProvider.notifier);
     micNotifier.reset();
     await micNotifier.startRoomMeasurement(
       leftActive: currentSide == RoomSystemSide.left,
       bleWarmup: bleWarmupNeeded,
+      calibrationCurve: profile?.calibrationCurve,
     );
     final micState = _ref.read(mic.micMeasurementProvider);
 
@@ -258,6 +292,16 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     state = state.copyWith(
       phase: RoomMeasurementPhaseUi.captured,
       capturedResponse: micState.frequencyResponse,
+      capturedRawResponse: micState.rawFrequencyResponse,
+      capturedCalibrationStatus: micState.calibrationStatus,
+      capturedCalibrationCurveChecksum: micState.calibrationCurveChecksum,
+      capturedCalibrationWarnings: micState.calibrationWarnings,
+      capturedMicrophoneSnapshot: profile != null
+          ? MeasurementMicrophoneSnapshot.of(
+              profile,
+              sampleRate: mic.MicMeasurementController.sampleRate,
+            )
+          : null,
     );
   }
 
@@ -276,7 +320,14 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     final side = currentSide;
     if (response == null || side == null) return;
 
-    final data = _toParsedMeasurementData(response);
+    final data = _toParsedMeasurementData(
+      calibrated: response,
+      raw: state.capturedRawResponse ?? response,
+      calibrationStatus:
+          state.capturedCalibrationStatus ?? CalibrationStatus.legacyUnknown,
+      calibrationCurveChecksum: state.capturedCalibrationCurveChecksum,
+      microphoneSnapshot: state.capturedMicrophoneSnapshot,
+    );
     final measurement = RoomSystemMeasurement(
       side: side,
       phase: state.mode,
@@ -326,9 +377,20 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     );
   }
 
-  ParsedMeasurementData _toParsedMeasurementData(
-      List<Map<String, double>> response) {
+  ParsedMeasurementData _toParsedMeasurementData({
+    required List<Map<String, double>> calibrated,
+    required List<Map<String, double>> raw,
+    required CalibrationStatus calibrationStatus,
+    String? calibrationCurveChecksum,
+    MeasurementMicrophoneSnapshot? microphoneSnapshot,
+  }) {
     final now = DateTime.now();
+    List<MeasurementDataPoint> toPoints(List<Map<String, double>> src) => [
+          for (final m in src)
+            if (m['frequency'] != null)
+              MeasurementDataPoint(
+                  frequencyHz: m['frequency']!, magnitudeDb: m['db']),
+        ];
     return ParsedMeasurementData(
       id: 'room_live_${now.microsecondsSinceEpoch}',
       sourceFileName: 'Room Live Measurement '
@@ -338,12 +400,12 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
           '${now.minute.toString().padLeft(2, '0')}',
       fileType: AcousticFileType.frd,
       importedAt: now,
-      points: [
-        for (final m in response)
-          if (m['frequency'] != null)
-            MeasurementDataPoint(
-                frequencyHz: m['frequency']!, magnitudeDb: m['db']),
-      ],
+      points: toPoints(calibrated),
+      rawPoints: toPoints(raw),
+      microphoneSnapshot: microphoneSnapshot,
+      calibrationStatus: calibrationStatus,
+      calibrationCurveChecksum: calibrationCurveChecksum,
+      calibrationAppliedAt: calibrationCurveChecksum != null ? now : null,
     );
   }
 }

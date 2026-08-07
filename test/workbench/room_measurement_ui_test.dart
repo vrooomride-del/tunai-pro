@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tunai_pro/core/calibration/calibration_types.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
@@ -41,6 +42,7 @@ class _FakeMicController extends mic.MicMeasurementController {
   @override
   Future<void> startRoomMeasurement({
     required bool leftActive,
+    CalibrationCurve? calibrationCurve,
     bool bleWarmup = false,
   }) async {
     state = state.copyWith(

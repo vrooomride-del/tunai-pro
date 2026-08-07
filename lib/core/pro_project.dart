@@ -12,6 +12,7 @@ import 'pro_hardware_connection_data.dart';
 import 'pro_deploy_package_data.dart';
 import 'pro_address_validation_data.dart';
 import 'room_measurement_data.dart';
+import 'calibration/calibration_types.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 
@@ -89,6 +90,19 @@ class ProProject {
   final AddressValidationProjectState addressValidationState;
   final RoomMeasurementProjectState roomState;
 
+  /// The measurement microphone currently selected for THIS project only —
+  /// never shared with or inherited by any other project. Null means no
+  /// microphone has been selected; this phase never fabricates a default
+  /// profile (calibrated or otherwise) to fill that gap.
+  ///
+  /// Changing this only affects readiness for NEW measurements going
+  /// forward — every past measurement already carries its own immutable
+  /// [MeasurementMicrophoneSnapshot] (see ParsedMeasurementData
+  /// .microphoneSnapshot / RoomSystemMeasurement.frd.microphoneSnapshot),
+  /// so editing or replacing this field can never retroactively change what
+  /// an already-captured measurement means.
+  final MeasurementMicrophoneProfile? selectedMicrophoneProfile;
+
   /// Closed-loop correction cycles for this project.
   /// Each entry records one before/apply/deploy/after pass.
   final List<CorrectionCycle> correctionCycles;
@@ -123,6 +137,7 @@ class ProProject {
     DeployProjectState? deployState,
     AddressValidationProjectState? addressValidationState,
     RoomMeasurementProjectState? roomState,
+    this.selectedMicrophoneProfile,
     this.correctionCycles = const [],
     this.factoryProfiles = const [],
   })  : acousticState =
@@ -187,6 +202,8 @@ class ProProject {
     DeployProjectState? deployState,
     AddressValidationProjectState? addressValidationState,
     RoomMeasurementProjectState? roomState,
+    MeasurementMicrophoneProfile? selectedMicrophoneProfile,
+    bool clearSelectedMicrophoneProfile = false,
     List<CorrectionCycle>? correctionCycles,
     List<FactorySoundProfile>? factoryProfiles,
   }) =>
@@ -217,6 +234,9 @@ class ProProject {
         addressValidationState:
             addressValidationState ?? this.addressValidationState,
         roomState: roomState ?? this.roomState,
+        selectedMicrophoneProfile: clearSelectedMicrophoneProfile
+            ? null
+            : (selectedMicrophoneProfile ?? this.selectedMicrophoneProfile),
         correctionCycles: correctionCycles ?? this.correctionCycles,
         factoryProfiles: factoryProfiles ?? this.factoryProfiles,
       );
@@ -252,6 +272,8 @@ class ProProject {
         'deployState': deployState.toJson(),
         'addressValidationState': addressValidationState.toJson(),
         'roomState': roomState.toJson(),
+        if (selectedMicrophoneProfile != null)
+          'selectedMicrophoneProfile': selectedMicrophoneProfile!.toJson(),
         if (correctionCycles.isNotEmpty)
           'correctionCycles': correctionCycles.map((c) => c.toJson()).toList(),
         if (factoryProfiles.isNotEmpty)
@@ -316,6 +338,8 @@ class ProProject {
                 Map<String, dynamic>.from(j['addressValidationState'] as Map))
             : null,
         roomState: _decodeRoomState(j['roomState']),
+        selectedMicrophoneProfile:
+            _decodeSelectedMicrophoneProfile(j['selectedMicrophoneProfile']),
         correctionCycles: (j['correctionCycles'] as List? ?? [])
             .map((e) =>
                 CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -338,6 +362,22 @@ class ProProject {
     } catch (e) {
       debugPrint('ProProject: skipping unparsable roomState ($e)');
       return RoomMeasurementProjectState.createDefault();
+    }
+  }
+
+  /// Isolated decode: a corrupt selectedMicrophoneProfile must not fail the
+  /// whole project decode, and must never silently become a fabricated
+  /// default profile — falls back to null (no microphone selected).
+  static MeasurementMicrophoneProfile? _decodeSelectedMicrophoneProfile(
+      Object? raw) {
+    if (raw == null) return null;
+    try {
+      return MeasurementMicrophoneProfile.fromJson(
+          Map<String, dynamic>.from(raw as Map));
+    } catch (e) {
+      debugPrint(
+          'ProProject: skipping unparsable selectedMicrophoneProfile ($e)');
+      return null;
     }
   }
 

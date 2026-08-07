@@ -12,13 +12,32 @@ import 'package:path_provider/path_provider.dart';
 import 'package:fftea/fftea.dart';
 import '../auth/auth_controller.dart' show authProvider;
 import '../../core/akg/measurement_session.dart';
+import '../../core/calibration/calibration_applicator.dart';
+import '../../core/calibration/calibration_types.dart';
+import '../../core/pro_acoustic_data.dart' show MeasurementDataPoint;
 
 enum MeasurementStatus { idle, playing, recording, analyzing, done, error }
 
 class MicMeasurementState {
   final MeasurementStatus status;
   final String message;
+
+  /// Calibrated response (or numerically identical to
+  /// [rawFrequencyResponse] when no calibration curve was supplied) — same
+  /// field name/shape/meaning every existing consumer already reads.
   final List<Map<String, double>> frequencyResponse;
+
+  /// The response BEFORE calibration was applied. Always populated
+  /// alongside [frequencyResponse] once a measurement completes.
+  final List<Map<String, double>> rawFrequencyResponse;
+
+  /// Null until a measurement completes. Never
+  /// [CalibrationStatus.calibrated] unless a real curve actually covered the
+  /// full range — see CalibrationApplicator.apply.
+  final CalibrationStatus? calibrationStatus;
+  final String? calibrationCurveChecksum;
+  final List<String> calibrationWarnings;
+
   final Map<int, List<Map<String, double>>> channelResponses; // 채널별 측정
   final List<double?> recommendedCrossovers; // 추천 크로스오버 주파수
   final String? error;
@@ -27,6 +46,10 @@ class MicMeasurementState {
     this.status = MeasurementStatus.idle,
     this.message = '',
     this.frequencyResponse = const [],
+    this.rawFrequencyResponse = const [],
+    this.calibrationStatus,
+    this.calibrationCurveChecksum,
+    this.calibrationWarnings = const [],
     this.channelResponses = const {},
     this.recommendedCrossovers = const [],
     this.error,
@@ -36,6 +59,10 @@ class MicMeasurementState {
     MeasurementStatus? status,
     String? message,
     List<Map<String, double>>? frequencyResponse,
+    List<Map<String, double>>? rawFrequencyResponse,
+    CalibrationStatus? calibrationStatus,
+    String? calibrationCurveChecksum,
+    List<String>? calibrationWarnings,
     Map<int, List<Map<String, double>>>? channelResponses,
     List<double?>? recommendedCrossovers,
     String? error,
@@ -44,6 +71,11 @@ class MicMeasurementState {
         status: status ?? this.status,
         message: message ?? this.message,
         frequencyResponse: frequencyResponse ?? this.frequencyResponse,
+        rawFrequencyResponse: rawFrequencyResponse ?? this.rawFrequencyResponse,
+        calibrationStatus: calibrationStatus ?? this.calibrationStatus,
+        calibrationCurveChecksum:
+            calibrationCurveChecksum ?? this.calibrationCurveChecksum,
+        calibrationWarnings: calibrationWarnings ?? this.calibrationWarnings,
         channelResponses: channelResponses ?? this.channelResponses,
         recommendedCrossovers:
             recommendedCrossovers ?? this.recommendedCrossovers,
@@ -89,7 +121,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   }
 
   Future<void> startMeasurement({
-    List<double>? scfCorrection,
+    CalibrationCurve? calibrationCurve,
     SpeakerProfile? speakerProfile,
     bool bleWarmup = false,
   }) async {
@@ -151,19 +183,24 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         await _safeStopRecorderAndPlayer();
       }
 
-      // FFT 분석
+      // FFT 분석 — 항상 raw(uncalibrated) 1/3옥타브 응답을 생성한다.
       state = state.copyWith(
           status: MeasurementStatus.analyzing, message: 'FFT 분석 중...');
       final pcmBytes = await File(recPath).readAsBytes();
       final rawPcm = Uint8List.sublistView(pcmBytes, 44);
       final samples = _pcmToFloat(rawPcm);
-      final response = _analyzeFFT(samples,
-          scfCorrection: scfCorrection, speakerProfile: speakerProfile);
+      final rawResponse = _analyzeFFT(samples, speakerProfile: speakerProfile);
+      final calibration =
+          _applyCalibration(rawResponse: rawResponse, curve: calibrationCurve);
 
       state = state.copyWith(
         status: MeasurementStatus.done,
         message: '측정 완료',
-        frequencyResponse: response,
+        frequencyResponse: calibration.calibrated,
+        rawFrequencyResponse: rawResponse,
+        calibrationStatus: calibration.status,
+        calibrationCurveChecksum: calibration.curveChecksum,
+        calibrationWarnings: calibration.warnings,
       );
       _recordSession(channelCount: 1);
     } catch (e) {
@@ -183,7 +220,6 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     required Function(int, CrossoverFilter) applyLp,
     required Function(int, CrossoverFilter) applyHp,
     required CrossoverType xoverType,
-    List<double>? scfCorrection,
     bool bleWarmup = false,
   }) async {
     final hasPermission = await _recorder.hasPermission();
@@ -206,8 +242,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         await muteAllExcept(i);
         await Future.delayed(const Duration(milliseconds: 300)); // DSP 적용 대기
 
-        final response = await _measureOnce(
-            scfCorrection: scfCorrection, bleWarmup: bleWarmup);
+        final response = await _measureOnce(bleWarmup: bleWarmup);
         channelResponses[i] = response;
       }
 
@@ -257,7 +292,6 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   }
 
   Future<List<Map<String, double>>> _measureOnce({
-    List<double>? scfCorrection,
     bool bleWarmup = false,
   }) async {
     final warmup = bleWarmup ? _bleWarmupSec : 0;
@@ -301,7 +335,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     final pcmBytes = await File(recPath).readAsBytes();
     final rawPcm = Uint8List.sublistView(pcmBytes, 44);
     final samples = _pcmToFloat(rawPcm);
-    return _analyzeFFT(samples, scfCorrection: scfCorrection);
+    return _analyzeFFT(samples);
   }
 
   List<double?> _recommendCrossovers(
@@ -374,7 +408,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   }
 
   List<Map<String, double>> _analyzeFFT(Float64List samples,
-      {List<double>? scfCorrection, SpeakerProfile? speakerProfile}) {
+      {SpeakerProfile? speakerProfile}) {
     final input = Float64List(fftSize);
     final copyLen = min(samples.length, fftSize);
     for (int i = 0; i < copyLen; i++) {
@@ -407,17 +441,56 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     for (int i = 0; i < sortedBands.length; i++) {
       final f = sortedBands[i];
       final dbs = bands[f]!;
-      double avgDb = dbs.reduce((a, b) => a + b) / dbs.length;
-
-      // SCF 보정 적용
-      if (scfCorrection != null && i < scfCorrection.length) {
-        avgDb += scfCorrection[i];
-      }
-
+      final avgDb = dbs.reduce((a, b) => a + b) / dbs.length;
       result.add({'frequency': f, 'db': avgDb});
     }
 
     return result;
+  }
+
+  /// Applies [curve] (if any) to a raw 1/3-octave response, producing both
+  /// the raw and calibrated `List<Map<frequency,db>>` shapes this
+  /// controller's state already uses. This is the ONLY place in this file
+  /// calibration is applied — the same [CalibrationApplicator] a future
+  /// Log Sweep/IR path will call too, so the correction logic itself is
+  /// never duplicated.
+  ///
+  /// A null [curve] always means [CalibrationStatus.explicitlyUncalibrated]
+  /// here: this is a fresh, live capture, never a decode of old persisted
+  /// data, so [CalibrationStatus.legacyUnknown] never applies at this call
+  /// site — only a caller decoding a past project would use that status.
+  ({
+    List<Map<String, double>> calibrated,
+    CalibrationStatus status,
+    String? curveChecksum,
+    List<String> warnings,
+  }) _applyCalibration({
+    required List<Map<String, double>> rawResponse,
+    CalibrationCurve? curve,
+  }) {
+    final rawPoints = [
+      for (final m in rawResponse)
+        if (m['frequency'] != null)
+          MeasurementDataPoint(
+              frequencyHz: m['frequency']!, magnitudeDb: m['db']),
+    ];
+
+    final result = curve != null
+        ? CalibrationApplicator.apply(rawPoints: rawPoints, curve: curve)
+        : CalibrationApplicator.passthrough(
+            rawPoints: rawPoints,
+            status: CalibrationStatus.explicitlyUncalibrated,
+          );
+
+    return (
+      calibrated: [
+        for (final p in result.calibratedPoints)
+          {'frequency': p.frequencyHz, 'db': p.magnitudeDb ?? 0.0},
+      ],
+      status: result.status,
+      curveChecksum: result.curveChecksum,
+      warnings: result.warnings,
+    );
   }
 
   double _nearestThirdOctave(double freq) {
@@ -495,6 +568,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   /// [startMeasurement] — only the WAV fed to the player changes.
   Future<void> startRoomMeasurement({
     required bool leftActive,
+    CalibrationCurve? calibrationCurve,
     bool bleWarmup = false,
   }) async {
     try {
@@ -560,12 +634,18 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       final pcmBytes = await File(recPath).readAsBytes();
       final rawPcm = Uint8List.sublistView(pcmBytes, 44);
       final samples = _pcmToFloat(rawPcm);
-      final response = _analyzeFFT(samples);
+      final rawResponse = _analyzeFFT(samples);
+      final calibration =
+          _applyCalibration(rawResponse: rawResponse, curve: calibrationCurve);
 
       state = state.copyWith(
         status: MeasurementStatus.done,
         message: '측정 완료',
-        frequencyResponse: response,
+        frequencyResponse: calibration.calibrated,
+        rawFrequencyResponse: rawResponse,
+        calibrationStatus: calibration.status,
+        calibrationCurveChecksum: calibration.curveChecksum,
+        calibrationWarnings: calibration.warnings,
       );
       _recordSession(channelCount: 1);
     } catch (e) {
