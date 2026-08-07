@@ -12,6 +12,7 @@ import '../../../core/pro_project.dart';
 import '../../../core/workbench_tab_provider.dart';
 import '../../../shared/pro_widgets.dart';
 import 'live_measurement_controller.dart';
+import 'measurement_capture_ready_control.dart';
 
 class LiveMeasurementSection extends ConsumerWidget {
   final ProProject project;
@@ -327,7 +328,7 @@ class _ChannelCaptureCard extends ConsumerWidget {
           style: proSubtitle(size: 11),
         ),
         const SizedBox(height: 10),
-        _CaptureControls(state: state, ctrl: ctrl),
+        _CaptureControls(state: state, ctrl: ctrl, projectId: project.id),
         if (state.error != null) ...[
           const SizedBox(height: 8),
           Text(state.error!,
@@ -346,7 +347,9 @@ class _ChannelCaptureCard extends ConsumerWidget {
 class _CaptureControls extends StatelessWidget {
   final LiveMeasurementState state;
   final LiveMeasurementController ctrl;
-  const _CaptureControls({required this.state, required this.ctrl});
+  final String projectId;
+  const _CaptureControls(
+      {required this.state, required this.ctrl, required this.projectId});
 
   @override
   Widget build(BuildContext context) {
@@ -362,14 +365,11 @@ class _CaptureControls extends StatelessWidget {
           ),
         );
       case LiveMeasurementPhase.ready:
-        return SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: ctrl.capture,
-            icon: const Icon(Icons.fiber_manual_record, size: 14),
-            label: const Text('Capture'),
-            style: FilledButton.styleFrom(backgroundColor: kProAccent),
-          ),
+        return MeasurementCaptureReadyControl(
+          projectId: projectId,
+          evaluateGate: ctrl.evaluateCaptureGate,
+          acknowledgeWarnings: ctrl.acknowledgeWarnings,
+          capture: ctrl.capture,
         );
       case LiveMeasurementPhase.capturing:
         return const Row(children: [

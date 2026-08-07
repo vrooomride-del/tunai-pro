@@ -21,6 +21,8 @@ import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
 import 'package:tunai_pro/features/workbench/tabs/room_measurement_section.dart';
 import 'package:tunai_pro/features/workbench/workbench_shell.dart';
+import 'package:tunai_pro/core/measurement/measurement_input_device_service.dart';
+import '../support/capture_gate_fixtures.dart';
 
 /// Scopes a text/tap finder to inside RoomMeasurementSection so it can't
 /// collide with unrelated Factory-panel content that stays visible above
@@ -37,6 +39,14 @@ Finder _roomButton(String label) => find.descendant(
             (w) => w is FilledButton || w is OutlinedButton)));
 
 class _FakeMicController extends mic.MicMeasurementController {
+  // Capture is gated (Phase 3-D3): the gate's runtime preflight asks this
+  // service for permission + a fresh device list. Serve the known-good chain
+  // the shared fixtures seed, so these tests exercise capture mechanics
+  // rather than re-testing the gate.
+  @override
+  MeasurementInputDeviceService get inputDeviceService =>
+      fakeGateInputDeviceService();
+
   _FakeMicController(super.ref);
 
   @override
@@ -64,13 +74,13 @@ Future<ProviderContainer> _seedContainer() async {
     mic.micMeasurementProvider.overrideWith((ref) => _FakeMicController(ref)),
   ]);
   await container.read(proProjectStoreProvider.notifier).addProject(
-        ProProject(
+        withGateReadySetup(ProProject(
           id: 'room-ui-1',
           name: 'Room UI Test',
           dspTarget: 'ADAU1701',
           createdAt: DateTime.utc(2025, 1, 1),
           updatedAt: DateTime.utc(2025, 1, 1),
-        ),
+        )),
       );
   container.read(mic.micMeasurementProvider);
   return container;
@@ -152,6 +162,10 @@ void main() {
       await tester.ensureVisible(_roomButton('준비 완료'));
       await tester.tap(_roomButton('준비 완료'));
       await tester.pump();
+      // The Capture button's gate-driven state (Phase 3-D3A-1B) is resolved
+      // via an async preflight evaluated in the control's initState — pump
+      // it to completion before the button reflects Ready.
+      await tester.pumpAndSettle();
       await tester.ensureVisible(_roomButton('Capture'));
       await tester.tap(_roomButton('Capture'));
       await tester.pump();
@@ -207,6 +221,7 @@ void main() {
       await tester.ensureVisible(_roomButton('준비 완료'));
       await tester.tap(_roomButton('준비 완료'));
       await tester.pump();
+      await tester.pumpAndSettle();
       await tester.ensureVisible(_roomButton('Capture'));
       await tester.tap(_roomButton('Capture'));
       await tester.pump();

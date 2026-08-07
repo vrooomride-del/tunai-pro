@@ -36,10 +36,20 @@ import 'package:tunai_pro/core/room_measurement_data.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
 import 'package:tunai_pro/features/workbench/tabs/room_auto_peq_controller.dart';
 import 'package:tunai_pro/features/workbench/tabs/room_measurement_controller.dart';
+import 'package:tunai_pro/core/measurement/measurement_input_device_service.dart';
+import '../support/capture_gate_fixtures.dart';
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
 
 class _FakeMicController extends mic.MicMeasurementController {
+  // Capture is gated (Phase 3-D3): the gate's runtime preflight asks this
+  // service for permission + a fresh device list. Serve the known-good chain
+  // the shared fixtures seed, so these tests exercise capture mechanics
+  // rather than re-testing the gate.
+  @override
+  MeasurementInputDeviceService get inputDeviceService =>
+      fakeGateInputDeviceService();
+
   _FakeMicController(super.ref);
   bool? lastLeftActive;
   bool? lastBleWarmup;
@@ -72,7 +82,8 @@ class _FakeMicController extends mic.MicMeasurementController {
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-ProProject _project({String id = 'room-proj-1'}) => ProProject(
+ProProject _project({String id = 'room-proj-1'}) =>
+    withGateReadySetup(ProProject(
       id: id,
       name: 'Room Test Project',
       dspTarget: 'ADAU1701',
@@ -83,7 +94,7 @@ ProProject _project({String id = 'room-proj-1'}) => ProProject(
           PeqBand(id: 'existing-band', frequencyHz: 500, gainDb: -2.0, q: 1.2),
         ]),
       ]),
-    );
+    ));
 
 ParsedMeasurementData _frd(String id, {double magBase = -1.0}) =>
     ParsedMeasurementData(

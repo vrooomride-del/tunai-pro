@@ -13,6 +13,8 @@ import '../../../core/room_measurement_data.dart';
 import '../../../core/workbench_tab_provider.dart';
 import '../../../shared/pro_widgets.dart';
 import 'live_measurement_controller.dart' show TransportKind;
+import 'measurement_capture_ready_control.dart';
+import 'room_after_capture_ready_control.dart';
 import 'room_auto_peq_controller.dart';
 import 'room_measurement_controller.dart';
 
@@ -69,7 +71,7 @@ class RoomMeasurementSection extends ConsumerWidget {
         const SizedBox(height: 12),
         _TransportRow(transportKind: ctrl.transportKind),
         const Divider(height: 24, color: kProBorder),
-        _SideCaptureCard(state: state, ctrl: ctrl),
+        _SideCaptureCard(state: state, ctrl: ctrl, projectId: project.id),
         if (state.mode == RoomMeasurementPhase.after &&
             state.closedLoopResult != null) ...[
           const SizedBox(height: 10),
@@ -291,7 +293,9 @@ class _TransportRow extends StatelessWidget {
 class _SideCaptureCard extends StatelessWidget {
   final RoomMeasurementState state;
   final RoomMeasurementController ctrl;
-  const _SideCaptureCard({required this.state, required this.ctrl});
+  final String projectId;
+  const _SideCaptureCard(
+      {required this.state, required this.ctrl, required this.projectId});
 
   @override
   Widget build(BuildContext context) {
@@ -334,7 +338,7 @@ class _SideCaptureCard extends StatelessWidget {
                   fontWeight: FontWeight.w500)),
         ]),
         const SizedBox(height: 10),
-        _CaptureControls(state: state, ctrl: ctrl),
+        _CaptureControls(state: state, ctrl: ctrl, projectId: projectId),
         if (state.error != null) ...[
           const SizedBox(height: 8),
           Text(state.error!,
@@ -353,7 +357,9 @@ class _SideCaptureCard extends StatelessWidget {
 class _CaptureControls extends StatelessWidget {
   final RoomMeasurementState state;
   final RoomMeasurementController ctrl;
-  const _CaptureControls({required this.state, required this.ctrl});
+  final String projectId;
+  const _CaptureControls(
+      {required this.state, required this.ctrl, required this.projectId});
 
   @override
   Widget build(BuildContext context) {
@@ -369,15 +375,22 @@ class _CaptureControls extends StatelessWidget {
           ),
         );
       case RoomMeasurementPhaseUi.ready:
-        return SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: ctrl.capture,
-            icon: const Icon(Icons.fiber_manual_record, size: 14),
-            label: const Text('Capture'),
-            style: FilledButton.styleFrom(backgroundColor: kProAccent),
-          ),
-        );
+        // After requires the DUAL gate (hardware AND measurement, Phase
+        // 3-D3A-3) — Before never requires the hardware condition, so it
+        // keeps using the plain measurement-only control.
+        return state.mode == RoomMeasurementPhase.after
+            ? RoomAfterCaptureReadyControl(
+                projectId: projectId,
+                evaluateGate: ctrl.evaluateAfterCaptureGate,
+                acknowledgeWarnings: ctrl.acknowledgeWarnings,
+                capture: ctrl.capture,
+              )
+            : MeasurementCaptureReadyControl(
+                projectId: projectId,
+                evaluateGate: ctrl.evaluateCaptureGate,
+                acknowledgeWarnings: ctrl.acknowledgeWarnings,
+                capture: ctrl.capture,
+              );
       case RoomMeasurementPhaseUi.capturing:
         return const Row(children: [
           SizedBox(

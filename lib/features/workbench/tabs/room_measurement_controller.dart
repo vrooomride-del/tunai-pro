@@ -30,6 +30,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/calibration/calibration_types.dart';
+import '../../../core/measurement/measurement_capture_gate.dart';
+import '../../../core/measurement/measurement_capture_presentation.dart';
+import '../../../core/measurement/measurement_capture_preflight.dart';
+import '../../../core/measurement/measurement_capture_provenance.dart';
+import '../../../core/measurement/measurement_preview_acceptance_gate.dart';
+import '../../../core/measurement/measurement_warning_acknowledgement.dart';
+import '../../../core/orchestrator/room_after_capture_gate.dart';
 import '../../../core/orchestrator/room_after_gate.dart';
 import '../../../core/orchestrator/room_closed_loop.dart';
 import '../../../core/pro_acoustic_data.dart'
@@ -68,11 +75,29 @@ class RoomMeasurementState {
   final String? capturedCalibrationCurveChecksum;
   final List<String> capturedCalibrationWarnings;
   final MeasurementMicrophoneSnapshot? capturedMicrophoneSnapshot;
+
+  /// The identity/actual-format snapshot pinned the moment THIS preview was
+  /// captured (Phase 3-D3A-2) — see LiveMeasurementState.capturedProvenance
+  /// for the identical rationale.
+  final MeasurementCaptureProvenance? capturedProvenance;
+
   final String? error;
+
+  /// The most recent capture-gate verdict, recomputed by [capture]'s
+  /// preflight. Rendered by the UI so the button state and the controller's
+  /// refusal reason are literally the same value (Phase 3-D3A-1 §7).
+  final MeasurementCaptureGateResult? captureGate;
 
   /// Populated exactly once, the moment After reaches 2/2 — never
   /// re-evaluated afterward (see accept()'s transition guard).
   final RoomClosedLoopResult? closedLoopResult;
+
+  /// The most recent DUAL (hardware AND measurement) gate verdict from
+  /// [capture]'s After-mode preflight (Phase 3-D3A-3). Null in Before mode —
+  /// Before never requires the hardware condition, so [captureGate] alone
+  /// (the measurement-only verdict) is authoritative there. The UI renders
+  /// THIS instead of separately AND-ing hardwareGate/measurementGate itself.
+  final RoomAfterCaptureGateResult? afterCaptureGate;
 
   const RoomMeasurementState({
     this.mode = RoomMeasurementPhase.before,
@@ -84,8 +109,11 @@ class RoomMeasurementState {
     this.capturedCalibrationCurveChecksum,
     this.capturedCalibrationWarnings = const [],
     this.capturedMicrophoneSnapshot,
+    this.capturedProvenance,
     this.error,
+    this.captureGate,
     this.closedLoopResult,
+    this.afterCaptureGate,
   });
 
   RoomMeasurementState copyWith({
@@ -99,9 +127,13 @@ class RoomMeasurementState {
     String? capturedCalibrationCurveChecksum,
     List<String>? capturedCalibrationWarnings,
     MeasurementMicrophoneSnapshot? capturedMicrophoneSnapshot,
+    MeasurementCaptureProvenance? capturedProvenance,
     String? error,
     bool clearError = false,
+    MeasurementCaptureGateResult? captureGate,
     RoomClosedLoopResult? closedLoopResult,
+    RoomAfterCaptureGateResult? afterCaptureGate,
+    bool clearAfterCaptureGate = false,
   }) =>
       RoomMeasurementState(
         mode: mode ?? this.mode,
@@ -126,8 +158,15 @@ class RoomMeasurementState {
         capturedMicrophoneSnapshot: clearCapturedResponse
             ? null
             : (capturedMicrophoneSnapshot ?? this.capturedMicrophoneSnapshot),
+        capturedProvenance: clearCapturedResponse
+            ? null
+            : (capturedProvenance ?? this.capturedProvenance),
         error: clearError ? null : (error ?? this.error),
+        captureGate: captureGate ?? this.captureGate,
         closedLoopResult: closedLoopResult ?? this.closedLoopResult,
+        afterCaptureGate: clearAfterCaptureGate
+            ? null
+            : (afterCaptureGate ?? this.afterCaptureGate),
       );
 }
 
@@ -144,6 +183,89 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
 
   RoomMeasurementController(this._ref, this.projectId)
       : super(const RoomMeasurementState());
+
+  /// Session-scoped only, deliberately NOT persisted on ProProject: a
+  /// warning acknowledgement must never survive an app restart and quietly
+  /// re-authorise a capture the user agreed to in an earlier session. It is
+  /// also invalidated automatically by any project/profile/device/generation
+  /// change, because the gate re-checks [MeasurementWarningAcknowledgement
+  /// .covers] on every evaluation rather than trusting a stored flag.
+  MeasurementWarningAcknowledgement? _warningAck;
+
+  MeasurementWarningAcknowledgement? get warningAcknowledgement => _warningAck;
+
+  MeasurementCapturePreflight get _preflight => MeasurementCapturePreflight(
+        inputDeviceService:
+            _ref.read(mic.micMeasurementProvider.notifier).inputDeviceService,
+      );
+
+  /// Records the user's explicit "I understand, measure anyway" for exactly
+  /// the warnings [gate] raised, bound to the chain identity it was raised
+  /// under. Never called automatically — only from an explicit UI action.
+  /// No-op if the verdict has blockers (a warning ack can never override a
+  /// blocker) or raised no warnings at all.
+  void acknowledgeWarnings(MeasurementCaptureGateResult gate) {
+    if (gate.blockers.isNotEmpty || gate.warnings.isEmpty) return;
+    final project = _project;
+    if (project == null || gate.activeGenerationId == null) return;
+    _warningAck = MeasurementWarningAcknowledgement(
+      projectId: project.id,
+      profileIdentity: gate.profileIdentity,
+      deviceIdentity: gate.deviceIdentity ?? '',
+      readinessGenerationId: gate.activeGenerationId!,
+      warningCodes: gate.warningCodes,
+      acknowledgedAt: DateTime.now(),
+    );
+  }
+
+  /// Fresh runtime evaluation — permission and device enumeration are
+  /// re-read here, never taken from whatever the UI cached at render time.
+  Future<MeasurementCaptureGateResult> evaluateCaptureGate() =>
+      _preflight.evaluate(project: _project, acknowledgement: _warningAck);
+
+  /// Fresh hardware-write gate — identical evaluation [_afterGate] already
+  /// performs for the mode-entry checks, exposed here so both the UI and
+  /// [capture]'s own preflight read the SAME fresh computation rather than
+  /// each re-deriving it.
+  RoomAfterGateResult get _hardwareGate {
+    final approvedPackageId =
+        _ref.read(roomAutoPeqControllerProvider(projectId)).approvedPackageId;
+    // Phase 3-D3A-3 §11 (rollback identity risk): this MUST always be the
+    // correction's approvedPackageId, never rollbackApprovedPackageId.
+    // RoomAfterGate.evaluate is deliberately generic to both purposes (see
+    // its own doc comment — auto_peq_tab.dart's rollback-status indicator
+    // legitimately calls it with the rollback id), so nothing inside the
+    // gate itself can tell them apart; today's separation is entirely this
+    // call site reading the right field. A rollback's hardware result must
+    // never be misread as evidence a fresh correction is ready for After
+    // measurement — this assertion is the guard against a future "harmless"
+    // simplification (e.g. `approvedPackageId ?? rollbackApprovedPackageId`)
+    // silently reopening that hole.
+    assert(
+      approvedPackageId == null ||
+          !approvedPackageId.startsWith('room-rollback-'),
+      '_hardwareGate must read the CORRECTION approvedPackageId, not a '
+      'rollback package id — see Phase 3-D3A-3 §11.',
+    );
+    return RoomAfterGate.evaluate(
+      approvedPackageId: approvedPackageId,
+      lastResult: _ref.read(lastHardwareWriteResultProvider),
+    );
+  }
+
+  /// Phase 3-D3A-3 — the composite Room After dual gate (hardware AND
+  /// measurement), both evaluated FRESH on every call. This is what
+  /// [capture] itself checks in After mode — never only the measurement
+  /// gate — and what the UI should render for After's Capture control
+  /// instead of separately AND-ing the two gates itself.
+  Future<RoomAfterCaptureGateResult> evaluateAfterCaptureGate() async {
+    final hardwareGate = _hardwareGate;
+    final measurementGate = await evaluateCaptureGate();
+    return RoomAfterCaptureGate.evaluate(
+      hardwareGate: hardwareGate,
+      measurementGate: measurementGate,
+    );
+  }
 
   static const List<RoomSystemSide> steps = [
     RoomSystemSide.left,
@@ -184,12 +306,7 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
 
   // ── After-mode hardware gate ──────────────────────────────────────────────
 
-  RoomAfterGateResult get _afterGate => RoomAfterGate.evaluate(
-        approvedPackageId: _ref
-            .read(roomAutoPeqControllerProvider(projectId))
-            .approvedPackageId,
-        lastResult: _ref.read(lastHardwareWriteResultProvider),
-      );
+  RoomAfterGateResult get _afterGate => _hardwareGate;
 
   /// True only once Room Auto PEQ's approved correction has actually been
   /// written to hardware and DSP-readback-verified for THIS project's
@@ -261,10 +378,59 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     if (state.phase != RoomMeasurementPhaseUi.ready || currentSide == null) {
       return;
     }
-    state = state.copyWith(
-        phase: RoomMeasurementPhaseUi.capturing, clearError: true);
 
-    final profile = _project?.selectedMicrophoneProfile;
+    final isAfter = state.mode == RoomMeasurementPhase.after;
+    MeasurementCaptureGateResult measurementGate;
+    RoomAfterCaptureGateResult? afterGate;
+
+    if (isAfter) {
+      // Dual preflight (Phase 3-D3A-3 §5/§6): re-evaluate BOTH the hardware
+      // gate and the measurement gate FRESH, right here, before any
+      // recorder/player/BLE-warmup work — never trust whatever setMode(after)
+      // / startNewAfterSession() established earlier. A direct capture()
+      // call while already in After mode is gated exactly as strictly as
+      // going through the UI toggle; the mode being `after` is never itself
+      // sufficient authority.
+      afterGate = await evaluateAfterCaptureGate();
+      measurementGate = afterGate.measurementGate;
+      if (!afterGate.canCapture) {
+        state = state.copyWith(
+          phase: RoomMeasurementPhaseUi.ready,
+          captureGate: measurementGate,
+          afterCaptureGate: afterGate,
+          error: afterGate.primaryBlocker?.message ?? '측정을 시작할 수 없습니다.',
+        );
+        return;
+      }
+    } else {
+      // Before mode never requires the hardware condition (Phase 3-D3A-3
+      // §5) — identical fail-closed measurement-only gate as before.
+      measurementGate = await evaluateCaptureGate();
+      if (!measurementGate.canCapture) {
+        state = state.copyWith(
+          phase: RoomMeasurementPhaseUi.ready,
+          captureGate: measurementGate,
+          clearAfterCaptureGate: true,
+          error: measurementGate.requiresExplicitWarningAcknowledgement
+              ? '측정 전 경고 확인이 필요합니다.'
+              : (measurementGate.primaryBlocker?.message ?? '측정을 시작할 수 없습니다.'),
+        );
+        return;
+      }
+    }
+
+    state = state.copyWith(
+      phase: RoomMeasurementPhaseUi.capturing,
+      captureGate: measurementGate,
+      afterCaptureGate: afterGate,
+      clearAfterCaptureGate: !isAfter,
+      clearError: true,
+    );
+
+    // Pinned NOW — see LiveMeasurementController.capture()'s identical
+    // rationale (Phase 3-D3A-2 §5).
+    final projectAtCapture = _project;
+    final profile = projectAtCapture?.selectedMicrophoneProfile;
     final micNotifier = _ref.read(mic.micMeasurementProvider.notifier);
     micNotifier.reset();
     await micNotifier.startRoomMeasurement(
@@ -302,6 +468,13 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
               sampleRate: mic.MicMeasurementController.sampleRate,
             )
           : null,
+      capturedProvenance: projectAtCapture != null
+          ? MeasurementCaptureProvenanceBuilder.build(
+              project: projectAtCapture,
+              actualSampleRate: micState.actualSampleRate,
+              actualChannelCount: micState.actualChannelCount,
+            )
+          : null,
     );
   }
 
@@ -320,17 +493,20 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     final side = currentSide;
     if (response == null || side == null) return;
 
-    // Stale-preview guard: identical rationale to
-    // LiveMeasurementController.accept() — if the selected microphone
-    // profile changed after this preview was captured, reject the accept
-    // rather than persist data captured under a no-longer-selected profile.
-    final capturedChecksum = state.capturedMicrophoneSnapshot?.profileChecksum;
-    final currentChecksum = _project?.selectedMicrophoneProfile?.checksum;
-    if (capturedChecksum != currentChecksum) {
+    // Accept-time provenance gate (Phase 3-D3A-2): identical rationale to
+    // LiveMeasurementController.accept() — supersedes the earlier Phase 3-C
+    // profileChecksum-only stale guard with the full identity +
+    // actual-WAV-format comparison.
+    final acceptance = MeasurementPreviewAcceptanceGate.evaluate(
+      provenance: state.capturedProvenance,
+      currentProject: _project,
+    );
+    if (!acceptance.canAccept) {
       state = state.copyWith(
         phase: RoomMeasurementPhaseUi.ready,
         clearCapturedResponse: true,
-        error: '측정 마이크 프로필이 변경되었습니다 — 다시 Capture하세요.',
+        error: measurementPreviewAcceptanceBlockerText(
+            acceptance.primaryBlocker!.code),
       );
       return;
     }

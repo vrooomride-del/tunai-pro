@@ -25,6 +25,12 @@ import '../../../core/deploy/pro_hardware_context_provider.dart';
 import '../../../core/orchestrator/full_system_after_frd_input.dart';
 import '../../../core/orchestrator/pro_guided_ai_controller.dart';
 import '../../../core/orchestrator/pro_guided_ai_state.dart';
+import '../../../core/measurement/measurement_capture_gate.dart';
+import '../../../core/measurement/measurement_capture_presentation.dart';
+import '../../../core/measurement/measurement_capture_preflight.dart';
+import '../../../core/measurement/measurement_capture_provenance.dart';
+import '../../../core/measurement/measurement_preview_acceptance_gate.dart';
+import '../../../core/measurement/measurement_warning_acknowledgement.dart';
 import '../../../core/pro_acoustic_data.dart';
 import '../../../core/pro_correction_cycle.dart';
 import '../../../core/pro_project.dart';
@@ -74,7 +80,18 @@ class LiveMeasurementState {
   final List<String> capturedCalibrationWarnings;
   final MeasurementMicrophoneSnapshot? capturedMicrophoneSnapshot;
 
+  /// The identity/actual-format snapshot pinned the moment THIS preview was
+  /// captured (Phase 3-D3A-2). [accept] compares this frozen value against
+  /// the current project via [MeasurementPreviewAcceptanceGate] — never
+  /// re-derives what was true at capture time from current state.
+  final MeasurementCaptureProvenance? capturedProvenance;
+
   final String? error;
+
+  /// Most recent capture-gate verdict from [capture]'s runtime preflight —
+  /// the UI renders this instead of computing its own readiness, so button
+  /// state and controller refusal can never disagree (Phase 3-D3A-1 §7).
+  final MeasurementCaptureGateResult? captureGate;
   final CorrectionCycle? lastCompletedCycle;
   final String? submitBlockedReason;
 
@@ -88,7 +105,9 @@ class LiveMeasurementState {
     this.capturedCalibrationCurveChecksum,
     this.capturedCalibrationWarnings = const [],
     this.capturedMicrophoneSnapshot,
+    this.capturedProvenance,
     this.error,
+    this.captureGate,
     this.lastCompletedCycle,
     this.submitBlockedReason,
   });
@@ -104,8 +123,10 @@ class LiveMeasurementState {
     String? capturedCalibrationCurveChecksum,
     List<String>? capturedCalibrationWarnings,
     MeasurementMicrophoneSnapshot? capturedMicrophoneSnapshot,
+    MeasurementCaptureProvenance? capturedProvenance,
     String? error,
     bool clearError = false,
+    MeasurementCaptureGateResult? captureGate,
     CorrectionCycle? lastCompletedCycle,
     String? submitBlockedReason,
     bool clearSubmitBlockedReason = false,
@@ -133,7 +154,11 @@ class LiveMeasurementState {
         capturedMicrophoneSnapshot: clearCapturedResponse
             ? null
             : (capturedMicrophoneSnapshot ?? this.capturedMicrophoneSnapshot),
+        capturedProvenance: clearCapturedResponse
+            ? null
+            : (capturedProvenance ?? this.capturedProvenance),
         error: clearError ? null : (error ?? this.error),
+        captureGate: captureGate ?? this.captureGate,
         lastCompletedCycle: lastCompletedCycle ?? this.lastCompletedCycle,
         submitBlockedReason: clearSubmitBlockedReason
             ? null
@@ -155,6 +180,36 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
 
   LiveMeasurementController(this._ref, this.projectId)
       : super(const LiveMeasurementState());
+
+  /// Session-scoped only, deliberately NOT persisted — see the identical
+  /// rationale on RoomMeasurementController._warningAck.
+  MeasurementWarningAcknowledgement? _warningAck;
+
+  MeasurementWarningAcknowledgement? get warningAcknowledgement => _warningAck;
+
+  MeasurementCapturePreflight get _preflight => MeasurementCapturePreflight(
+        inputDeviceService:
+            _ref.read(mic.micMeasurementProvider.notifier).inputDeviceService,
+      );
+
+  /// Explicit user action only. No-op when the verdict carries blockers (an
+  /// acknowledgement never overrides a blocker) or raised no warnings.
+  void acknowledgeWarnings(MeasurementCaptureGateResult gate) {
+    if (gate.blockers.isNotEmpty || gate.warnings.isEmpty) return;
+    final project = _project;
+    if (project == null || gate.activeGenerationId == null) return;
+    _warningAck = MeasurementWarningAcknowledgement(
+      projectId: project.id,
+      profileIdentity: gate.profileIdentity,
+      deviceIdentity: gate.deviceIdentity ?? '',
+      readinessGenerationId: gate.activeGenerationId!,
+      warningCodes: gate.warningCodes,
+      acknowledgedAt: DateTime.now(),
+    );
+  }
+
+  Future<MeasurementCaptureGateResult> evaluateCaptureGate() =>
+      _preflight.evaluate(project: _project, acknowledgement: _warningAck);
 
   ProProject? get _project => _ref
       .read(proProjectStoreProvider)
@@ -277,10 +332,33 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
     if (state.phase != LiveMeasurementPhase.ready || currentChannel == null) {
       return;
     }
-    state =
-        state.copyWith(phase: LiveMeasurementPhase.capturing, clearError: true);
+    // Fail-closed capture gate — see RoomMeasurementController.capture() for
+    // the identical contract. Runs before any recorder/player/BLE-warmup
+    // work and before leaving `ready`, so a blocked verdict mutates no
+    // driver FRD and produces no preview.
+    final gate = await evaluateCaptureGate();
+    if (!gate.canCapture) {
+      state = state.copyWith(
+        phase: LiveMeasurementPhase.ready,
+        captureGate: gate,
+        error: gate.requiresExplicitWarningAcknowledgement
+            ? '측정 전 경고 확인이 필요합니다.'
+            : (gate.primaryBlocker?.message ?? '측정을 시작할 수 없습니다.'),
+      );
+      return;
+    }
 
-    final profile = _project?.selectedMicrophoneProfile;
+    state = state.copyWith(
+        phase: LiveMeasurementPhase.capturing,
+        captureGate: gate,
+        clearError: true);
+
+    // Pinned NOW, at the exact moment capture is attempted — never re-read
+    // later at accept() time (Phase 3-D3A-2 §5: capture-time values are
+    // frozen, not reconstructed from whatever the project looks like when
+    // the user gets around to pressing Accept).
+    final projectAtCapture = _project;
+    final profile = projectAtCapture?.selectedMicrophoneProfile;
     final micNotifier = _ref.read(mic.micMeasurementProvider.notifier);
     micNotifier.reset();
     await micNotifier.startMeasurement(
@@ -317,6 +395,13 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
               sampleRate: mic.MicMeasurementController.sampleRate,
             )
           : null,
+      capturedProvenance: projectAtCapture != null
+          ? MeasurementCaptureProvenanceBuilder.build(
+              project: projectAtCapture,
+              actualSampleRate: micState.actualSampleRate,
+              actualChannelCount: micState.actualChannelCount,
+            )
+          : null,
     );
   }
 
@@ -335,19 +420,21 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
     final channel = currentChannel;
     if (response == null || channel == null) return;
 
-    // Stale-preview guard: if the selected microphone profile changed after
-    // this preview was captured (e.g. the user edited/switched profiles in
-    // the Profile Manager while a preview was pending), the preview's
-    // calibration no longer reflects the CURRENTLY selected profile. Reject
-    // the accept and force a fresh capture rather than silently persisting
-    // data captured under a profile that is no longer selected.
-    final capturedChecksum = state.capturedMicrophoneSnapshot?.profileChecksum;
-    final currentChecksum = _project?.selectedMicrophoneProfile?.checksum;
-    if (capturedChecksum != currentChecksum) {
+    // Accept-time provenance gate (Phase 3-D3A-2): supersedes the earlier
+    // Phase 3-C profileChecksum-only stale guard with the full identity +
+    // actual-WAV-format comparison against the CURRENT project — never
+    // weaker than the check it replaces. A blocked verdict persists nothing
+    // and forces a fresh capture, exactly like the guard it replaces.
+    final acceptance = MeasurementPreviewAcceptanceGate.evaluate(
+      provenance: state.capturedProvenance,
+      currentProject: _project,
+    );
+    if (!acceptance.canAccept) {
       state = state.copyWith(
         phase: LiveMeasurementPhase.ready,
         clearCapturedResponse: true,
-        error: '측정 마이크 프로필이 변경되었습니다 — 다시 Capture하세요.',
+        error: measurementPreviewAcceptanceBlockerText(
+            acceptance.primaryBlocker!.code),
       );
       return;
     }

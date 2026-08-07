@@ -23,6 +23,8 @@ import 'package:tunai_pro/core/pro_tuning_data.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
 import 'package:tunai_pro/features/workbench/tabs/live_measurement_controller.dart';
 import 'package:tunai_pro/features/workbench/tabs/room_measurement_controller.dart';
+import 'package:tunai_pro/core/measurement/measurement_input_device_service.dart';
+import '../support/capture_gate_fixtures.dart';
 
 CalibrationCurve _curve(String tag) {
   final points = [
@@ -51,6 +53,14 @@ MeasurementMicrophoneProfile _profile(String id, {String tag = 'A'}) =>
     );
 
 class _FakeMicController extends mic.MicMeasurementController {
+  // Capture is gated (Phase 3-D3): the gate's runtime preflight asks this
+  // service for permission + a fresh device list. Serve the known-good chain
+  // the shared fixtures seed, so these tests exercise capture mechanics
+  // rather than re-testing the gate.
+  @override
+  MeasurementInputDeviceService get inputDeviceService =>
+      fakeGateInputDeviceService();
+
   _FakeMicController(super.ref);
   CalibrationCurve? lastCalibrationCurve;
   int callCount = 0;
@@ -115,7 +125,8 @@ DriverChannel _channel(String id) => DriverChannel(
       side: id.endsWith('l') ? DriverSide.left : DriverSide.right,
     );
 
-ProProject _project({MeasurementMicrophoneProfile? profile}) => ProProject(
+ProProject _project({MeasurementMicrophoneProfile? profile}) =>
+    withGateReadySetup(ProProject(
       id: 'proj-mic-1',
       name: 'Mic Test Project',
       dspTarget: 'ADAU1701',
@@ -129,7 +140,7 @@ ProProject _project({MeasurementMicrophoneProfile? profile}) => ProProject(
       ]),
       tuningState: TuningProjectState(peqChannels: const []),
       selectedMicrophoneProfile: profile,
-    );
+    ));
 
 Future<
     ({
@@ -209,6 +220,17 @@ void main() {
       // Switch to profile B, capture the next channel.
       await projectStore.updateSelectedMicrophoneProfile(
           'proj-mic-1', _profile('mic-b', tag: 'B'));
+      // Swapping the microphone invalidates the setup readiness by design
+      // (Phase 3-D3 capture gate), so the user re-runs the setup check
+      // before the next capture. This test's subject is what the NEXT
+      // capture uses, not the (separately tested) blocked-until-recheck
+      // state.
+      await refreshGateReadiness(
+          projectStore,
+          seeded.container
+              .read(proProjectStoreProvider)
+              .projects
+              .firstWhere((p) => p.id == 'proj-mic-1'));
       ctrl.markReady();
       await ctrl.capture();
       expect(seeded.fakeMic.lastCalibrationCurve?.checksum,

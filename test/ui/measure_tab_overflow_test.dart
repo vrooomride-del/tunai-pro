@@ -33,6 +33,8 @@ import 'package:tunai_pro/core/pro_tuning_data.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
 import 'package:tunai_pro/features/workbench/tabs/live_measurement_controller.dart';
 import 'package:tunai_pro/features/workbench/tabs/measure_tab.dart';
+import 'package:tunai_pro/core/measurement/measurement_input_device_service.dart';
+import '../support/capture_gate_fixtures.dart';
 
 // ── Fixtures (same shape as live_measurement_controller_test.dart /
 //    release_flow_integration_test.dart) ────────────────────────────────────
@@ -44,7 +46,8 @@ DriverChannel _channel(String id) => DriverChannel(
       side: id.endsWith('l') ? DriverSide.left : DriverSide.right,
     );
 
-ProProject _project({String id = 'proj-overflow'}) => ProProject(
+ProProject _project({String id = 'proj-overflow'}) =>
+    withGateReadySetup(ProProject(
       id: id,
       name: 'Overflow Test Project',
       dspTarget: 'ADAU1701',
@@ -57,13 +60,19 @@ ProProject _project({String id = 'proj-overflow'}) => ProProject(
         _channel('ch_wf_r'),
       ]),
       tuningState: TuningProjectState(peqChannels: []),
-    );
+    ));
 
 // _FakeMicController: same technique as live_measurement_controller_test.dart
 // -- MicMeasurementController's real superclass touches record/just_audio
 // platform channels unconditionally, which have no handler in a plain test
 // host, so startMeasurement is fully overridden and dispose() is a no-op.
 class _FakeMicController extends mic.MicMeasurementController {
+  // Capture is gated (Phase 3-D3): serve the known-good chain the shared
+  // fixtures seed so this test stays about layout, not the gate.
+  @override
+  MeasurementInputDeviceService get inputDeviceService =>
+      fakeGateInputDeviceService();
+
   _FakeMicController(super.ref);
 
   @override

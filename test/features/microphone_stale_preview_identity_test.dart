@@ -25,6 +25,8 @@ import 'package:tunai_pro/core/pro_tuning_data.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
 import 'package:tunai_pro/features/workbench/tabs/live_measurement_controller.dart';
 import 'package:tunai_pro/features/workbench/tabs/room_measurement_controller.dart';
+import 'package:tunai_pro/core/measurement/measurement_input_device_service.dart';
+import '../support/capture_gate_fixtures.dart';
 
 const _points = [
   CalibrationPoint(frequencyHz: 20, correctionDb: 0.5),
@@ -56,6 +58,14 @@ MeasurementMicrophoneProfile _baseProfile() => MeasurementMicrophoneProfile(
     );
 
 class _FakeMicController extends mic.MicMeasurementController {
+  // Capture is gated (Phase 3-D3): the gate's runtime preflight asks this
+  // service for permission + a fresh device list. Serve the known-good chain
+  // the shared fixtures seed, so these tests exercise capture mechanics
+  // rather than re-testing the gate.
+  @override
+  MeasurementInputDeviceService get inputDeviceService =>
+      fakeGateInputDeviceService();
+
   _FakeMicController(super.ref);
 
   @override
@@ -115,7 +125,7 @@ DriverChannel _channel(String id) => DriverChannel(
     );
 
 ProProject _project({required MeasurementMicrophoneProfile profile}) =>
-    ProProject(
+    withGateReadySetup(ProProject(
       id: 'proj-identity-1',
       name: 'Identity Test Project',
       dspTarget: 'ADAU1701',
@@ -129,7 +139,7 @@ ProProject _project({required MeasurementMicrophoneProfile profile}) =>
       ]),
       tuningState: TuningProjectState(peqChannels: const []),
       selectedMicrophoneProfile: profile,
-    );
+    ));
 
 Future<ProviderContainer> _seed(MeasurementMicrophoneProfile profile) async {
   final container = ProviderContainer(overrides: [

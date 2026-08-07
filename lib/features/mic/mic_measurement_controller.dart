@@ -49,6 +49,17 @@ class MicMeasurementState {
   final List<double?> recommendedCrossovers; // 추천 크로스오버 주파수
   final String? error;
 
+  /// The ACTUAL sample rate / channel count read from the recorded WAV's own
+  /// fmt chunk (Phase 3-D3A-2) — never the requested RecordConfig value.
+  /// Defaults to the nominal production values so fakes/tests that stub
+  /// [MicMeasurementController.startMeasurement]/[startRoomMeasurement]
+  /// without touching a real WAV keep behaving as "nominal capture" rather
+  /// than spuriously reporting a format mismatch; the real capture path
+  /// (`_readAndParseRecordedWav`) always overwrites these with the value
+  /// actually parsed from the recording.
+  final int actualSampleRate;
+  final int actualChannelCount;
+
   const MicMeasurementState({
     this.status = MeasurementStatus.idle,
     this.message = '',
@@ -60,6 +71,8 @@ class MicMeasurementState {
     this.channelResponses = const {},
     this.recommendedCrossovers = const [],
     this.error,
+    this.actualSampleRate = MicMeasurementController.sampleRate,
+    this.actualChannelCount = 1,
   });
 
   MicMeasurementState copyWith({
@@ -73,6 +86,8 @@ class MicMeasurementState {
     Map<int, List<Map<String, double>>>? channelResponses,
     List<double?>? recommendedCrossovers,
     String? error,
+    int? actualSampleRate,
+    int? actualChannelCount,
   }) =>
       MicMeasurementState(
         status: status ?? this.status,
@@ -87,6 +102,8 @@ class MicMeasurementState {
         recommendedCrossovers:
             recommendedCrossovers ?? this.recommendedCrossovers,
         error: error ?? this.error,
+        actualSampleRate: actualSampleRate ?? this.actualSampleRate,
+        actualChannelCount: actualChannelCount ?? this.actualChannelCount,
       );
 }
 
@@ -200,8 +217,9 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       // FFT 분석 — 항상 raw(uncalibrated) 1/3옥타브 응답을 생성한다.
       state = state.copyWith(
           status: MeasurementStatus.analyzing, message: 'FFT 분석 중...');
-      final samples = await _readAndParseRecordedWav(recPath);
-      final rawResponse = _analyzeFFT(samples, speakerProfile: speakerProfile);
+      final wavResult = await _readAndParseRecordedWav(recPath);
+      final rawResponse =
+          _analyzeFFT(wavResult.samples, speakerProfile: speakerProfile);
       final calibration =
           _applyCalibration(rawResponse: rawResponse, curve: calibrationCurve);
 
@@ -213,6 +231,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         calibrationStatus: calibration.status,
         calibrationCurveChecksum: calibration.curveChecksum,
         calibrationWarnings: calibration.warnings,
+        actualSampleRate: wavResult.actualSampleRate,
+        actualChannelCount: wavResult.actualChannelCount,
       );
       _recordSession(channelCount: 1);
     } catch (e) {
@@ -344,8 +364,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       await _safeStopRecorderAndPlayer();
     }
 
-    final samples = await _readAndParseRecordedWav(recPath);
-    return _analyzeFFT(samples);
+    final wavResult = await _readAndParseRecordedWav(recPath);
+    return _analyzeFFT(wavResult.samples);
   }
 
   List<double?> _recommendCrossovers(
@@ -627,11 +647,17 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   /// AudioEncoder.wav, which is PCM16 on every platform this app ships to.
   ///
   /// Sample-rate/channel MISMATCH (actual vs. this controller's expected
-  /// sampleRate/mono) is recorded via debugPrint only — no state field yet
-  /// and no Capture blocking. That enforcement is Phase 3-D3's job, once a
-  /// UI/gate exists to act on it; recording it here would be premature
-  /// plumbing with no consumer.
-  Future<Float64List> _readAndParseRecordedWav(String recPath) async {
+  /// sampleRate/mono) is still only debugPrint'd here — this function stays
+  /// the single WAV-parsing chokepoint and does not itself decide policy.
+  /// The actual parsed `sampleRate`/`channelCount` ARE now returned (Phase
+  /// 3-D3A-2) so callers can pin them into capture provenance / the Accept
+  /// gate; nothing re-parses the WAV a second time to get them.
+  Future<
+      ({
+        Float64List samples,
+        int actualSampleRate,
+        int actualChannelCount,
+      })> _readAndParseRecordedWav(String recPath) async {
     final pcmBytes = await File(recPath).readAsBytes();
     final wav = MeasurementWavParser.parse(pcmBytes);
     if (!wav.isSuccess) {
@@ -645,7 +671,11 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     }
     final normalized =
         MeasurementWavParser.extractNormalizedSamples(pcmBytes, wav);
-    return Float64List.fromList(normalized);
+    return (
+      samples: Float64List.fromList(normalized),
+      actualSampleRate: wav.sampleRate ?? sampleRate,
+      actualChannelCount: wav.channelCount ?? 1,
+    );
   }
 
   List<Map<String, double>> _analyzeFFT(Float64List samples,
@@ -872,8 +902,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
 
       state = state.copyWith(
           status: MeasurementStatus.analyzing, message: 'FFT 분석 중...');
-      final samples = await _readAndParseRecordedWav(recPath);
-      final rawResponse = _analyzeFFT(samples);
+      final wavResult = await _readAndParseRecordedWav(recPath);
+      final rawResponse = _analyzeFFT(wavResult.samples);
       final calibration =
           _applyCalibration(rawResponse: rawResponse, curve: calibrationCurve);
 
@@ -885,6 +915,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         calibrationStatus: calibration.status,
         calibrationCurveChecksum: calibration.curveChecksum,
         calibrationWarnings: calibration.warnings,
+        actualSampleRate: wavResult.actualSampleRate,
+        actualChannelCount: wavResult.actualChannelCount,
       );
       _recordSession(channelCount: 1);
     } catch (e) {

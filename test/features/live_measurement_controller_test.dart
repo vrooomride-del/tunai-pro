@@ -51,10 +51,20 @@ import 'package:tunai_pro/core/transport/adau1701_tuning_transport.dart';
 import 'package:tunai_pro/core/transport/icp5_raw_state_read.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
 import 'package:tunai_pro/features/workbench/tabs/live_measurement_controller.dart';
+import 'package:tunai_pro/core/measurement/measurement_input_device_service.dart';
+import '../support/capture_gate_fixtures.dart';
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
 
 class _FakeMicController extends mic.MicMeasurementController {
+  // Capture is gated (Phase 3-D3): the gate's runtime preflight asks this
+  // service for permission + a fresh device list. Serve the known-good chain
+  // the shared fixtures seed, so these tests exercise capture mechanics
+  // rather than re-testing the gate.
+  @override
+  MeasurementInputDeviceService get inputDeviceService =>
+      fakeGateInputDeviceService();
+
   _FakeMicController(super.ref);
   bool? lastBleWarmup;
   int callCount = 0;
@@ -189,7 +199,8 @@ ParsedMeasurementData _frd(String id) => ParsedMeasurementData(
       ],
     );
 
-ProProject _fourChannelProject({bool anyFrdAlready = false}) => ProProject(
+ProProject _fourChannelProject({bool anyFrdAlready = false}) =>
+    withGateReadySetup(ProProject(
       id: 'proj-1',
       name: 'Test Project',
       dspTarget: 'ADAU1701',
@@ -206,7 +217,7 @@ ProProject _fourChannelProject({bool anyFrdAlready = false}) => ProProject(
           PeqBand(id: 'existing-band', frequencyHz: 500, gainDb: -2.0, q: 1.2),
         ]),
       ]),
-    );
+    ));
 
 // ── Harness ───────────────────────────────────────────────────────────────────
 
