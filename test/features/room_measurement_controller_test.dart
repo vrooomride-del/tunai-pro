@@ -29,10 +29,17 @@ import 'package:tunai_pro/core/deploy/pro_hardware_write_plan.dart';
 import 'package:tunai_pro/core/calibration/calibration_types.dart';
 import 'package:tunai_pro/core/orchestrator/room_closed_loop.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
+import 'package:tunai_pro/core/pro_correction_cycle.dart'
+    show CorrectionCycleDecision;
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
 import 'package:tunai_pro/core/room_measurement_data.dart';
+import 'package:tunai_pro/core/room_workflow_persistence.dart'
+    show
+        PersistedRoomClosedLoopResult,
+        RoomAutoPeqApproval,
+        VerifiedDeploymentReceipt;
 import 'package:tunai_pro/core/measurement/measurement_capture_provenance.dart';
 import 'package:tunai_pro/core/measurement/measurement_quality_snapshot.dart';
 import 'package:tunai_pro/features/mic/mic_measurement_controller.dart' as mic;
@@ -592,6 +599,104 @@ void main() {
     });
   });
 
+  group('12. Phase 3-F3 — Closed Loop persistence + invalidation', () {
+    test(
+        'a real After 2/2 evaluation persists a PersistedRoomClosedLoopResult '
+        'into roomState (not just session state)', () async {
+      final beforeRoom = RoomMeasurementProjectState(
+        before: RoomMeasurementSnapshot(
+          leftSystemFrd: _measurement(
+              side: RoomSystemSide.left,
+              phase: RoomMeasurementPhase.before,
+              projectId: 'room-proj-1',
+              magBase: -6.0),
+          rightSystemFrd: _measurement(
+              side: RoomSystemSide.right,
+              phase: RoomMeasurementPhase.before,
+              projectId: 'room-proj-1',
+              magBase: -6.0),
+        ),
+      );
+      final seed = _project().copyWith(roomState: beforeRoom);
+      final h = await _buildHarness(seedProject: seed);
+      h.authorizeAfterMode();
+      h.ctrl.setMode(RoomMeasurementPhase.after);
+      h.ctrl.markReady();
+      await h.ctrl.capture();
+      await h.ctrl.accept();
+      h.ctrl.markReady();
+      await h.ctrl.capture();
+      await h.ctrl.accept();
+
+      final persisted = h.project.roomState.closedLoopResult;
+      expect(persisted, isNotNull);
+      expect(persisted!.decision, h.state.closedLoopResult!.decision);
+      expect(
+          persisted.matchesCurrent(
+              h.project.roomState.before, h.project.roomState.after),
+          isTrue);
+    });
+
+    test(
+        'capturing a new Before side invalidates a persisted approval, '
+        'deployment receipt, AND closed-loop verdict', () async {
+      final h = await _buildHarness();
+      // Seed roomState with a persisted approval/receipt/closedLoopResult,
+      // as if a full prior cycle had already completed for THIS Before pair.
+      final priorBefore = RoomMeasurementSnapshot(
+        leftSystemFrd: _measurement(
+            side: RoomSystemSide.left,
+            phase: RoomMeasurementPhase.before,
+            projectId: 'room-proj-1'),
+        rightSystemFrd: _measurement(
+            side: RoomSystemSide.right,
+            phase: RoomMeasurementPhase.before,
+            projectId: 'room-proj-1'),
+      );
+      await h.container.read(proProjectStoreProvider.notifier).updateRoomState(
+            'room-proj-1',
+            h.project.roomState.copyWith(
+              before: priorBefore,
+              approval: RoomAutoPeqApproval(
+                projectId: 'room-proj-1',
+                approvedPackageId: 'old-pkg',
+                approvedAt: DateTime.utc(2025, 1, 1),
+              ),
+              deploymentReceipt: VerifiedDeploymentReceipt(
+                projectId: 'room-proj-1',
+                packageId: 'old-pkg',
+                planId: 'old-pkg@2025-01-01T00:00:00.000Z',
+                dspTarget: 'ADAU1701',
+                executed: true,
+                allReadbackVerified: true,
+                verifiedAt: DateTime.utc(2025, 1, 1),
+              ),
+              closedLoopResult: PersistedRoomClosedLoopResult.fromResult(
+                projectId: 'room-proj-1',
+                before: priorBefore,
+                after: RoomMeasurementSnapshot.empty,
+                decision: CorrectionCycleDecision.improvedAndComplete,
+                evaluatedAt: DateTime.utc(2025, 1, 1),
+              ),
+            ),
+          );
+      expect(h.project.roomState.approval, isNotNull);
+      expect(h.project.roomState.deploymentReceipt, isNotNull);
+      expect(h.project.roomState.closedLoopResult, isNotNull);
+
+      // A fresh Before capture (both sides — stepIndex resets naturally on
+      // a new controller session).
+      h.ctrl.markReady();
+      await h.ctrl.capture();
+      await h.ctrl.accept();
+
+      expect(h.project.roomState.approval, isNull,
+          reason: 'the correction was generated against the OLD Before data');
+      expect(h.project.roomState.deploymentReceipt, isNull);
+      expect(h.project.roomState.closedLoopResult, isNull);
+    });
+  });
+
   group('10. Existing project JSON decode compatibility', () {
     test('project JSON without roomState decodes to empty Room state', () {
       final legacyJson = _project().toJson()..remove('roomState');
@@ -599,6 +704,54 @@ void main() {
       expect(decoded.roomState.before.isComplete, isFalse);
       expect(decoded.roomState.after.isComplete, isFalse);
       expect(decoded.tuningState.peqChannels, isNotEmpty);
+    });
+
+    test(
+        'Phase 3-F3 — a pre-3-F3 roomState (before/after present, no '
+        'approval/deploymentReceipt/closedLoopResult keys at all) decodes '
+        'with all three as safe null defaults', () {
+      final beforeRoom = RoomMeasurementProjectState(
+        before: RoomMeasurementSnapshot(
+          leftSystemFrd: _measurement(
+              side: RoomSystemSide.left,
+              phase: RoomMeasurementPhase.before,
+              projectId: 'room-proj-1'),
+        ),
+      );
+      final json = beforeRoom.toJson();
+      expect(json.containsKey('approval'), isFalse);
+      expect(json.containsKey('deploymentReceipt'), isFalse);
+      expect(json.containsKey('closedLoopResult'), isFalse);
+
+      final decoded = RoomMeasurementProjectState.fromJson(json);
+      expect(decoded.before.leftSystemFrd, isNotNull);
+      expect(decoded.approval, isNull);
+      expect(decoded.deploymentReceipt, isNull);
+      expect(decoded.closedLoopResult, isNull);
+    });
+
+    test(
+        'Phase 3-F3 — corrupt approval/deploymentReceipt/closedLoopResult '
+        'values never destroy the enclosing roomState decode', () {
+      final beforeRoom = RoomMeasurementProjectState(
+        before: RoomMeasurementSnapshot(
+          leftSystemFrd: _measurement(
+              side: RoomSystemSide.left,
+              phase: RoomMeasurementPhase.before,
+              projectId: 'room-proj-1'),
+        ),
+      );
+      final json = beforeRoom.toJson();
+      json['approval'] = 'not-a-map';
+      json['deploymentReceipt'] = 12345;
+      json['closedLoopResult'] = <String, dynamic>{'decision': 'bogus'};
+
+      final decoded = RoomMeasurementProjectState.fromJson(json);
+      expect(decoded.before.leftSystemFrd, isNotNull,
+          reason: 'the rest of roomState must survive corrupt new fields');
+      expect(decoded.approval, isNull);
+      expect(decoded.deploymentReceipt, isNull);
+      expect(decoded.closedLoopResult, isNull);
     });
 
     test(

@@ -19,9 +19,13 @@ import 'package:tunai_pro/core/hardware/hardware_connection_readiness.dart';
 import 'package:tunai_pro/core/pro_correction_cycle.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
+import 'package:tunai_pro/core/orchestrator/room_closed_loop.dart';
 import 'package:tunai_pro/core/room_measurement_data.dart';
+import 'package:tunai_pro/core/room_workflow_persistence.dart'
+    show PersistedRoomClosedLoopResult;
 import 'package:tunai_pro/core/workflow/measurement_workflow_provider.dart';
 import 'package:tunai_pro/core/workflow/measurement_workflow_readiness.dart';
+import 'package:tunai_pro/features/workbench/tabs/room_auto_peq_controller.dart';
 import 'package:tunai_pro/features/workbench/tabs/room_measurement_controller.dart';
 
 import '../support/capture_gate_fixtures.dart';
@@ -109,19 +113,49 @@ class GoldenWalk {
         ),
       );
 
-  void approveAutoPeq() => goldenApproveRoomCorrection(c);
+  Future<void> approveAutoPeq() => goldenApproveRoomCorrection(c);
 
-  void deploy({HardwareWriteExecutionResult? result}) =>
-      c.read(lastHardwareWriteResultProvider.notifier).state =
-          result ?? goldenWriteResult();
+  /// Sets the session write result exactly as Deploy tab's HardwareApplyFlow
+  /// .onResult does, AND records the Phase 3-F3 restart-safe
+  /// VerifiedDeploymentReceipt the same call site now also produces — so
+  /// walks through this helper observe the real production side effect.
+  Future<void> deploy({HardwareWriteExecutionResult? result}) async {
+    final r = result ?? goldenWriteResult();
+    c.read(lastHardwareWriteResultProvider.notifier).state = r;
+    await c
+        .read(roomAutoPeqControllerProvider(kGoldenProjectId).notifier)
+        .recordVerifiedDeployment(r);
+  }
 
-  /// Records a Closed Loop verdict the way RoomMeasurementController does, so
-  /// the workflow observes a real controller value rather than a fabricated
-  /// one.
-  void recordClosedLoopVerdict() {
-    final ctrl =
-        c.read(roomMeasurementControllerProvider(kGoldenProjectId).notifier);
-    ctrl.setMode(RoomMeasurementPhase.after);
+  /// Evaluates and persists a REAL Closed Loop verdict for the project's
+  /// current Before/After snapshots — the same RoomClosedLoopEvaluator call
+  /// and the same PersistedRoomClosedLoopResult shape
+  /// RoomMeasurementController.accept() produces on the After 2/2
+  /// transition, just invoked directly rather than through a full
+  /// capture/accept cycle (this file already takes the equivalent shortcut
+  /// for hardware writes — see [deploy]). Returns the real decision so
+  /// callers can assert against it without hard-coding a verdict.
+  CorrectionCycleDecision? recordClosedLoopVerdict() {
+    final p = project;
+    final result = RoomClosedLoopEvaluator.evaluate(
+      projectId: kGoldenProjectId,
+      before: p.roomState.before,
+      after: p.roomState.after,
+    );
+    if (result == null) return null;
+    store.updateRoomState(
+      kGoldenProjectId,
+      p.roomState.copyWith(
+        closedLoopResult: PersistedRoomClosedLoopResult.fromResult(
+          projectId: kGoldenProjectId,
+          before: p.roomState.before,
+          after: p.roomState.after,
+          decision: result.decision,
+          evaluatedAt: DateTime.now(),
+        ),
+      ),
+    );
+    return result.decision;
   }
 }
 
@@ -196,7 +230,7 @@ void main() {
       seen.add(w.action);
 
       // ── 8. correction approved ───────────────────────────────────────
-      w.approveAutoPeq();
+      await w.approveAutoPeq();
       expect(w.readiness.roomAutoPeqApproved, isTrue);
       expect(w.readiness.correctionDeployedAndVerified, isFalse,
           reason: 'approved is not deployed');
@@ -211,7 +245,7 @@ void main() {
       expect(w.action, MeasurementWorkflowAction.deployRoomCorrection);
 
       // ── 9. matching write, readback verified ─────────────────────────
-      w.deploy();
+      await w.deploy();
       expect(w.readiness.correctionDeployedAndVerified, isTrue);
       expect(w.readiness.afterAvailable, isTrue);
       expect(w.action, MeasurementWorkflowAction.measureRoomAfter);
@@ -333,9 +367,9 @@ void main() {
       for (final entry in cases.entries) {
         final w = await upToRoomBefore();
         addTearDown(w.c.dispose);
-        w.approveAutoPeq();
+        await w.approveAutoPeq();
         await goldenConnectHardware(w.c);
-        w.deploy(result: entry.value);
+        await w.deploy(result: entry.value);
 
         expect(w.readiness.correctionDeployedAndVerified, isFalse,
             reason: entry.key);
@@ -349,9 +383,9 @@ void main() {
         () async {
       final w = await upToRoomBefore();
       addTearDown(w.c.dispose);
-      w.approveAutoPeq();
+      await w.approveAutoPeq();
       await goldenConnectHardware(w.c);
-      w.deploy();
+      await w.deploy();
       await w.measureRoomAfter(count: 2, mismatched: true);
 
       expect(w.readiness.afterMeasurementComplete, isTrue);
@@ -373,7 +407,7 @@ void main() {
       await w.measureDrivers(count: 4);
       await w.completeFactoryTuning();
       await w.measureRoomBefore(count: 2);
-      w.approveAutoPeq();
+      await w.approveAutoPeq();
       return w;
     }
 
@@ -403,7 +437,7 @@ void main() {
       final w = await atDeployStep();
       addTearDown(w.c.dispose);
       await goldenConnectHardware(w.c);
-      w.deploy();
+      await w.deploy();
       expect(w.action, MeasurementWorkflowAction.measureRoomAfter);
 
       goldenDisconnectHardware(w.c);
@@ -428,9 +462,9 @@ void main() {
       await w.measureDrivers(count: 4);
       await w.completeFactoryTuning();
       await w.measureRoomBefore(count: 2);
-      w.approveAutoPeq();
+      await w.approveAutoPeq();
       await goldenConnectHardware(w.c);
-      w.deploy();
+      await w.deploy();
       expect(w.action, MeasurementWorkflowAction.measureRoomAfter);
 
       // Switch to a brand-new project B.
@@ -463,9 +497,9 @@ void main() {
       await w.measureDrivers(count: 4);
       await w.completeFactoryTuning();
       await w.measureRoomBefore(count: 2);
-      w.approveAutoPeq();
+      await w.approveAutoPeq();
       await goldenConnectHardware(w.c);
-      w.deploy();
+      await w.deploy();
 
       // Project B has its OWN (empty) Auto PEQ state, so A's global write
       // result has no approved package to match against.
@@ -480,8 +514,24 @@ void main() {
     });
   });
 
-  group('5. restart / reopen (§11)', () {
-    test('persisted project data survives; hardware readiness does not',
+  group('5. restart / reopen (§11, extended Phase 3-F3 §10/§15G)', () {
+    /// Simulates an app restart: the project JSON round-trips through
+    /// encode/decode (proving persistence, not just in-memory carry-over),
+    /// a brand new ProviderContainer is built on a fresh SharedPreferences
+    /// snapshot seeded with ONLY that JSON, and it becomes the current
+    /// project — mirroring exactly what ProProjectStoreNotifier does on a
+    /// real cold launch.
+    Future<ProviderContainer> restart(ProProject project) async {
+      final persisted = ProProject.fromJson(project.toJson());
+      SharedPreferences.setMockInitialValues({});
+      final fresh = ProviderContainer();
+      final store = fresh.read(proProjectStoreProvider.notifier);
+      await store.addProject(persisted);
+      await store.setCurrentProject(kGoldenProjectId);
+      return fresh;
+    }
+
+    test('hardware readiness does not survive; persisted project data does',
         () async {
       final w = await GoldenWalk.start();
       addTearDown(w.c.dispose);
@@ -495,15 +545,8 @@ void main() {
       await goldenConnectHardware(w.c);
       expect(w.readiness.hardwareReadyForDeploy, isTrue);
 
-      // A restart: the project JSON survives, the in-memory session does not.
-      final persisted = ProProject.fromJson(w.project.toJson());
-      SharedPreferences.setMockInitialValues({});
-      final fresh = ProviderContainer();
+      final fresh = await restart(w.project);
       addTearDown(fresh.dispose);
-      final store = fresh.read(proProjectStoreProvider.notifier);
-      await store.addProject(persisted);
-      await store.setCurrentProject(kGoldenProjectId);
-
       final r = fresh.read(measurementWorkflowReadinessProvider);
       expect(r.microphoneSelected, isTrue);
       expect(
@@ -518,10 +561,148 @@ void main() {
           reason: 'a live session must never survive a restart');
       expect(r.hardwareConnectionState, HardwareConnectionState.disconnected);
 
-      // The approval and the write result are session state in this build,
-      // so a restart correctly lands back on the Deploy step.
+      // Nothing was ever approved in this walk, so this correctly still
+      // shows unapproved after restart — not a leak, a fresh project state.
       expect(r.roomAutoPeqApproved, isFalse);
       expect(r.correctionDeployedAndVerified, isFalse);
+    });
+
+    test(
+        'CASE A — approve, then restart: approval survives, Deploy still '
+        'required', () async {
+      final w = await GoldenWalk.start();
+      addTearDown(w.c.dispose);
+      await w.createProject();
+      await w.selectMicrophone();
+      await w.selectInputDevice();
+      await w.runSetupCheck();
+      await w.measureDrivers(count: 4);
+      await w.completeFactoryTuning();
+      await w.measureRoomBefore(count: 2);
+      await w.approveAutoPeq();
+      expect(w.action, MeasurementWorkflowAction.deployRoomCorrection);
+
+      final fresh = await restart(w.project);
+      addTearDown(fresh.dispose);
+      final r = fresh.read(measurementWorkflowReadinessProvider);
+      expect(r.roomAutoPeqApproved, isTrue,
+          reason: 'Phase 3-F3 — approval is persisted, not session-only');
+      expect(r.correctionDeployedAndVerified, isFalse,
+          reason: 'approval alone was never a deploy');
+      expect(fresh.read(activeAdau1701ContextProvider), isNull);
+      expect(r.hardwareReadyForDeploy, isFalse);
+      expect(r.nextRecommendedAction,
+          MeasurementWorkflowAction.deployRoomCorrection);
+    });
+
+    test(
+        'CASE B — approve, verified deploy, then restart: correction stays '
+        'verified, hardware live-ready is false, next is measureRoomAfter',
+        () async {
+      final w = await GoldenWalk.start();
+      addTearDown(w.c.dispose);
+      await w.createProject();
+      await w.selectMicrophone();
+      await w.selectInputDevice();
+      await w.runSetupCheck();
+      await w.measureDrivers(count: 4);
+      await w.completeFactoryTuning();
+      await w.measureRoomBefore(count: 2);
+      await w.approveAutoPeq();
+      await goldenConnectHardware(w.c);
+      await w.deploy();
+      expect(w.action, MeasurementWorkflowAction.measureRoomAfter);
+
+      final fresh = await restart(w.project);
+      addTearDown(fresh.dispose);
+      final r = fresh.read(measurementWorkflowReadinessProvider);
+
+      expect(fresh.read(activeAdau1701ContextProvider), isNull);
+      expect(r.hardwareReadyForDeploy, isFalse,
+          reason: 'no live session exists right after a cold launch');
+      expect(r.hardwareConnectionState, HardwareConnectionState.disconnected);
+
+      expect(r.roomAutoPeqApproved, isTrue);
+      expect(r.correctionDeployedAndVerified, isTrue,
+          reason: 'Phase 3-F3 — proven from the persisted receipt, never '
+              'from hardware connectivity');
+      expect(r.afterAvailable, isTrue);
+      expect(
+          r.nextRecommendedAction, MeasurementWorkflowAction.measureRoomAfter,
+          reason: 'Deploy must never be required again after a restart');
+    });
+
+    test(
+        'CASE C — Closed Loop complete, then restart: workflow complete '
+        'persists; hardware shows disconnected', () async {
+      final w = await GoldenWalk.start();
+      addTearDown(w.c.dispose);
+      await w.createProject();
+      await w.selectMicrophone();
+      await w.selectInputDevice();
+      await w.runSetupCheck();
+      await w.measureDrivers(count: 4);
+      await w.completeFactoryTuning();
+      await w.measureRoomBefore(count: 2);
+      await w.approveAutoPeq();
+      await goldenConnectHardware(w.c);
+      await w.deploy();
+      await w.measureRoomAfter(count: 2);
+      expect(w.readiness.beforeAfterComparable, isTrue);
+      final decision = w.recordClosedLoopVerdict();
+      expect(decision, isNotNull,
+          reason: 'a comparable 2/2 Before/After pair always evaluates');
+      expect(w.readiness.closedLoopDecision, decision);
+      final wasComplete =
+          decision == CorrectionCycleDecision.improvedAndComplete;
+      expect(w.readiness.closedLoopComplete, wasComplete);
+
+      final fresh = await restart(w.project);
+      addTearDown(fresh.dispose);
+      final r = fresh.read(measurementWorkflowReadinessProvider);
+
+      expect(r.closedLoopDecision, decision,
+          reason: 'Phase 3-F3 — the verdict is persisted, not re-derived');
+      expect(r.closedLoopComplete, wasComplete);
+      if (wasComplete) {
+        expect(r.nextRecommendedAction, MeasurementWorkflowAction.complete);
+      }
+      expect(fresh.read(activeAdau1701ContextProvider), isNull);
+      expect(r.hardwareConnectionState, HardwareConnectionState.disconnected,
+          reason: 'Hardware row must show disconnected — never "still '
+              'applying" — for a session that was never re-established');
+    });
+
+    test(
+        'a new Room After after a persisted improvedAndComplete verdict '
+        'invalidates it — stale complete must never survive', () async {
+      final w = await GoldenWalk.start();
+      addTearDown(w.c.dispose);
+      await w.createProject();
+      await w.selectMicrophone();
+      await w.selectInputDevice();
+      await w.runSetupCheck();
+      await w.measureDrivers(count: 4);
+      await w.completeFactoryTuning();
+      await w.measureRoomBefore(count: 2);
+      await w.approveAutoPeq();
+      await goldenConnectHardware(w.c);
+      await w.deploy();
+      await w.measureRoomAfter(count: 2);
+      w.recordClosedLoopVerdict();
+      final hadResult = w.project.roomState.closedLoopResult != null;
+      expect(hadResult, isTrue);
+
+      // A fresh After capture (e.g. via startNewAfterSession + a new
+      // accept()) must invalidate the stale verdict. This walk drives the
+      // controller directly, which is the exact call site that owns this
+      // invalidation.
+      final ctrl = w.c
+          .read(roomMeasurementControllerProvider(kGoldenProjectId).notifier);
+      await ctrl.startNewAfterSession();
+      expect(w.project.roomState.closedLoopResult, isNull,
+          reason: 'startNewAfterSession must clear the stale verdict');
+      expect(w.readiness.closedLoopComplete, isFalse);
     });
   });
 

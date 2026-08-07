@@ -50,6 +50,8 @@ import '../../../core/pro_acoustic_data.dart'
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/room_measurement_data.dart';
+import '../../../core/room_workflow_persistence.dart'
+    show PersistedRoomClosedLoopResult;
 import '../../mic/mic_measurement_controller.dart' as mic;
 import 'live_measurement_controller.dart' show TransportKind;
 import '../../../core/deploy/pro_hardware_context_provider.dart';
@@ -275,6 +277,9 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     return RoomAfterGate.evaluate(
       approvedPackageId: approvedPackageId,
       lastResult: _ref.read(lastHardwareWriteResultProvider),
+      // Phase 3-F3 — restart-safe fallback: proven only from persisted
+      // identity, never from live hardware connectivity.
+      persistedReceipt: _project?.roomState.deploymentReceipt,
     );
   }
 
@@ -386,7 +391,14 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     if (project == null) return;
     await _ref.read(proProjectStoreProvider.notifier).updateRoomState(
           projectId,
-          project.roomState.copyWith(after: RoomMeasurementSnapshot.empty),
+          project.roomState.copyWith(
+            after: RoomMeasurementSnapshot.empty,
+            // Phase 3-F3 §8 — a stale persisted verdict must never survive
+            // the After data it described being wiped. approval/
+            // deploymentReceipt are untouched: the correction itself is
+            // still verified-deployed, only After needs re-measurement.
+            clearClosedLoopResult: true,
+          ),
         );
     state = const RoomMeasurementState(mode: RoomMeasurementPhase.after);
   }
@@ -574,12 +586,18 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     final wasCompleteBefore = _snapshotFor(state.mode).isComplete;
     final updatedSnapshot =
         _snapshotFor(state.mode).withSide(side, measurement);
-    final updatedRoom = state.mode == RoomMeasurementPhase.before
-        ? currentRoom.copyWith(before: updatedSnapshot)
+    var updatedRoom = state.mode == RoomMeasurementPhase.before
+        ? currentRoom.copyWith(
+            before: updatedSnapshot,
+            // Phase 3-F3 §2/§5/§7 — any change to Before invalidates the
+            // downstream approval, deployment receipt, and closed-loop
+            // verdict: all three described a correction/comparison built
+            // against the OLD Before data.
+            clearApproval: true,
+            clearDeploymentReceipt: true,
+            clearClosedLoopResult: true,
+          )
         : currentRoom.copyWith(after: updatedSnapshot);
-    await _ref
-        .read(proProjectStoreProvider.notifier)
-        .updateRoomState(projectId, updatedRoom);
 
     // Evaluate exactly once: only on the transition into After 2/2, never
     // on an already-complete pair (defensive — accept() is structurally
@@ -610,8 +628,25 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
           before: currentRoom.before,
           after: updatedRoom.after,
         );
+        if (evaluation != null) {
+          // Phase 3-F3 §7 — persist the verdict so Home/restart can restore
+          // "workflow complete" without re-deriving a second verdict.
+          updatedRoom = updatedRoom.copyWith(
+            closedLoopResult: PersistedRoomClosedLoopResult.fromResult(
+              projectId: projectId,
+              before: currentRoom.before,
+              after: updatedRoom.after,
+              decision: evaluation.decision,
+              evaluatedAt: DateTime.now(),
+            ),
+          );
+        }
       }
     }
+
+    await _ref
+        .read(proProjectStoreProvider.notifier)
+        .updateRoomState(projectId, updatedRoom);
 
     _ref.read(mic.micMeasurementProvider.notifier).reset();
     state = state.copyWith(

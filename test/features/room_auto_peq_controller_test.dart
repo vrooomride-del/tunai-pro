@@ -18,12 +18,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tunai_pro/core/calibration/calibration_types.dart';
+import 'package:tunai_pro/core/deploy/pro_hardware_capability.dart';
+import 'package:tunai_pro/core/deploy/pro_hardware_write_executor.dart';
+import 'package:tunai_pro/core/deploy/pro_hardware_write_plan.dart';
 import 'package:tunai_pro/core/pro_acoustic_data.dart';
 import 'package:tunai_pro/core/pro_export_data.dart';
 import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
 import 'package:tunai_pro/core/room_measurement_data.dart';
+import 'package:tunai_pro/core/room_workflow_persistence.dart'
+    show VerifiedDeploymentReceipt;
 import 'package:tunai_pro/features/workbench/tabs/room_auto_peq_controller.dart';
 import '../support/room_quality_fixtures.dart';
 
@@ -262,6 +267,183 @@ void main() {
 
       expect(h.project.connection, beforeConnection);
       expect(h.project.hardwareState, same(beforeHardwareState));
+    });
+  });
+
+  group('6. Phase 3-F3 — approval persistence + restart hydration', () {
+    test('approve() persists a RoomAutoPeqApproval into roomState', () async {
+      final h = await _buildHarness();
+      h.ctrl.generate();
+      await h.ctrl.approve();
+
+      final approval = h.project.roomState.approval;
+      expect(approval, isNotNull);
+      expect(approval!.projectId, 'room-autopeq-1');
+      expect(approval.approvedPackageId, h.state.approvedPackageId);
+    });
+
+    test(
+        'a fresh controller instance (simulating restart) hydrates '
+        'approvedPackageId from the persisted approval', () async {
+      final h = await _buildHarness();
+      h.ctrl.generate();
+      await h.ctrl.approve();
+      final approvedPackageId = h.state.approvedPackageId;
+
+      // A brand-new provider container reading the SAME persisted project —
+      // no session state carries over, only what was written to disk.
+      final fresh = ProviderContainer();
+      addTearDown(fresh.dispose);
+      await fresh.read(proProjectStoreProvider.notifier).addProject(h.project);
+      final freshState =
+          fresh.read(roomAutoPeqControllerProvider('room-autopeq-1'));
+
+      expect(freshState.approvedPackageId, approvedPackageId);
+      expect(freshState.approvedPackageId, isNotNull);
+      // preApplySnapshot/rollback state are deliberately NOT restart-safe.
+      expect(freshState.preApplySnapshot, isNull);
+      expect(freshState.rollbackPhase, RoomRollbackPhase.none);
+    });
+
+    test(
+        'a project with no persisted approval hydrates to null (safe '
+        'default), not a fabricated one', () async {
+      final h = await _buildHarness();
+      // Never approved anything.
+      final freshState =
+          h.container.read(roomAutoPeqControllerProvider('room-autopeq-1'));
+      expect(freshState.approvedPackageId, isNull);
+    });
+
+    test(
+        'project isolation: project B never hydrates project A\'s '
+        'approval', () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await container
+          .read(proProjectStoreProvider.notifier)
+          .addProject(_readyProject(id: 'proj-a'));
+      await container
+          .read(proProjectStoreProvider.notifier)
+          .addProject(_readyProject(id: 'proj-b'));
+
+      final ctrlA =
+          container.read(roomAutoPeqControllerProvider('proj-a').notifier);
+      ctrlA.generate();
+      await ctrlA.approve();
+
+      final stateB = container.read(roomAutoPeqControllerProvider('proj-b'));
+      expect(stateB.approvedPackageId, isNull);
+
+      final projectB = container
+          .read(proProjectStoreProvider)
+          .projects
+          .firstWhere((p) => p.id == 'proj-b');
+      expect(projectB.roomState.approval, isNull);
+    });
+
+    test(
+        'approving a NEW package invalidates the previous deployment '
+        'receipt and closed-loop verdict', () async {
+      final h = await _buildHarness();
+      h.ctrl.generate();
+      await h.ctrl.approve();
+      final firstPackageId = h.state.approvedPackageId!;
+
+      // Simulate a prior verified deploy + closed-loop verdict sitting in
+      // roomState (as if the user had already completed one cycle).
+      await h.container.read(proProjectStoreProvider.notifier).updateRoomState(
+            'room-autopeq-1',
+            h.project.roomState.copyWith(
+              deploymentReceipt: VerifiedDeploymentReceipt(
+                projectId: 'room-autopeq-1',
+                packageId: firstPackageId,
+                planId: '$firstPackageId@2026-01-01T00:00:00.000Z',
+                dspTarget: 'ADAU1701',
+                executed: true,
+                allReadbackVerified: true,
+                verifiedAt: DateTime.utc(2026, 1, 1),
+              ),
+            ),
+          );
+      expect(h.project.roomState.deploymentReceipt, isNotNull);
+
+      // A brand new approval (new package) must invalidate both.
+      h.ctrl.generate();
+      await h.ctrl.approve();
+      expect(h.state.approvedPackageId, isNot(firstPackageId));
+      expect(h.project.roomState.deploymentReceipt, isNull);
+      expect(h.project.roomState.closedLoopResult, isNull);
+      expect(h.project.roomState.approval!.approvedPackageId,
+          h.state.approvedPackageId);
+    });
+
+    test(
+        'recordVerifiedDeployment persists a receipt only for a matching, '
+        'fully-verified result', () async {
+      final h = await _buildHarness();
+      h.ctrl.generate();
+      await h.ctrl.approve();
+      final packageId = h.state.approvedPackageId!;
+
+      await h.ctrl.recordVerifiedDeployment(HardwareWriteExecutionResult(
+        planId: '$packageId@2026-01-01T00:00:00.000Z',
+        executed: true,
+        rejectionReason: null,
+        outcomes: [
+          const HardwareWriteOpOutcome(
+            op: HardwareWriteOp(
+              channelId: 'ch_wf_l',
+              parameterKind: HardwareParamKind.peqGain,
+              bandIndex: 0,
+              targetValue: -1.0,
+              verification: HardwareParamVerification.captureProven,
+              writable: true,
+              reason: 'test',
+            ),
+            status: HardwareWriteOpStatus.written,
+            report: null,
+            message: 'ok',
+          ),
+        ],
+      ));
+
+      final receipt = h.project.roomState.deploymentReceipt;
+      expect(receipt, isNotNull);
+      expect(receipt!.packageId, packageId);
+      expect(receipt.allReadbackVerified, isTrue);
+    });
+
+    test(
+        'recordVerifiedDeployment ignores a result for an unrelated '
+        'package', () async {
+      final h = await _buildHarness();
+      h.ctrl.generate();
+      await h.ctrl.approve();
+
+      await h.ctrl.recordVerifiedDeployment(const HardwareWriteExecutionResult(
+        planId: 'unrelated-factory-pkg@2026-01-01T00:00:00.000Z',
+        executed: true,
+        rejectionReason: null,
+        outcomes: [
+          HardwareWriteOpOutcome(
+            op: HardwareWriteOp(
+              channelId: 'ch_wf_l',
+              parameterKind: HardwareParamKind.peqGain,
+              bandIndex: 0,
+              targetValue: -1.0,
+              verification: HardwareParamVerification.captureProven,
+              writable: true,
+              reason: 'test',
+            ),
+            status: HardwareWriteOpStatus.written,
+            report: null,
+            message: 'ok',
+          ),
+        ],
+      ));
+
+      expect(h.project.roomState.deploymentReceipt, isNull);
     });
   });
 }

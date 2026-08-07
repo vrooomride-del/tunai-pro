@@ -138,6 +138,9 @@ abstract final class MeasurementWorkflowEvaluator {
     final afterGate = RoomAfterGate.evaluate(
       approvedPackageId: roomApprovedPackageId,
       lastResult: lastHardwareWriteResult,
+      // Phase 3-F3 — restart-safe: proven from the persisted receipt when no
+      // live session result matches, never from hardware connectivity.
+      persistedReceipt: room.deploymentReceipt,
     );
     final deployedAndVerified = afterGate.available;
 
@@ -151,9 +154,22 @@ abstract final class MeasurementWorkflowEvaluator {
             : null);
     final comparable = comparison?.canEvaluate ?? false;
 
+    // Phase 3-F3 §7/§8 — fall back to the persisted verdict only when the
+    // caller supplied none (a fresh session/restart) AND it still matches
+    // the CURRENT Before/After pair; a persisted verdict about superseded
+    // measurements must never be read as describing this pair. When the
+    // caller DID supply a session decision, it always wins — it is by
+    // definition about the pair that was just evaluated.
+    final persistedClosedLoop = room.closedLoopResult;
+    final effectiveClosedLoopDecision = closedLoopDecision ??
+        (persistedClosedLoop != null &&
+                persistedClosedLoop.matchesCurrent(room.before, room.after)
+            ? persistedClosedLoop.decision
+            : null);
+
     // A verdict only counts when the pair was actually comparable. A blocked
     // comparison is never reported as a completed loop.
-    final loopComplete = comparable && closedLoopDecision != null;
+    final loopComplete = comparable && effectiveClosedLoopDecision != null;
 
     // ── Warnings ─────────────────────────────────────────────────────────
     final setupWarnings = <MeasurementWorkflowWarningCode>[
@@ -242,7 +258,7 @@ abstract final class MeasurementWorkflowEvaluator {
       afterMeasurementComplete: afterComplete,
       beforeAfterComparable: comparable,
       closedLoopComplete: loopComplete,
-      closedLoopDecision: loopComplete ? closedLoopDecision : null,
+      closedLoopDecision: loopComplete ? effectiveClosedLoopDecision : null,
       closedLoopWarnings: closedLoopWarnings,
       // Phase 3-F1 — the live ADAU1701 session, derived by
       // HardwareConnectionEvaluator from the existing transport/handshake

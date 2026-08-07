@@ -20,6 +20,7 @@ import '../widgets/deploy_result_summary.dart';
 import '../widgets/hardware_apply_flow.dart';
 import '../../../core/deploy/pro_hardware_write_executor.dart';
 import '../../../core/workbench_tab_provider.dart';
+import 'room_auto_peq_controller.dart';
 import '../../../shared/pro_widgets.dart';
 import '../../../shared/components/section_header.dart';
 import '../../../shared/components/info_row.dart';
@@ -318,6 +319,15 @@ class _DeployTabState extends ConsumerState<DeployTab> {
               // can gate on the same real write result instead of a weaker,
               // local-only "apply succeeded" signal.
               ref.read(lastHardwareWriteResultProvider.notifier).state = result;
+              // Phase 3-F3 §3 — persist a restart-safe VerifiedDeploymentReceipt
+              // when this result is a genuine, fully-verified success for
+              // Room's currently-approved correction or rollback plan. No-op
+              // for Factory packages, ack-only/partial results, or a
+              // mismatched plan — never fabricated. See
+              // RoomAutoPeqController.recordVerifiedDeployment.
+              ref
+                  .read(roomAutoPeqControllerProvider(project.id).notifier)
+                  .recordVerifiedDeployment(result);
             },
           ),
           if (_lastHardwareResult != null) ...[

@@ -23,6 +23,7 @@
 
 import '../deploy/pro_hardware_write_executor.dart'
     show HardwareWriteExecutionResult;
+import '../room_workflow_persistence.dart' show VerifiedDeploymentReceipt;
 
 /// Phase 3-D3A-3 — a typed reason alongside the existing free-text
 /// [RoomAfterGateResult.blockedReason], added additively (the string stays
@@ -66,10 +67,22 @@ abstract final class RoomAfterGate {
   /// [approvedPackageId] is the exact DspExportPackage.id the caller most
   /// recently approved for this project (RoomAutoPeqState.approvedPackageId
   /// or .rollbackApprovedPackageId — this helper is generic to both).
-  /// [lastResult] is lastHardwareWriteResultProvider's current value.
+  /// [lastResult] is lastHardwareWriteResultProvider's current value —
+  /// session-only, null after every app restart.
+  ///
+  /// [persistedReceipt] (Phase 3-F3) is the project's restart-safe
+  /// VerifiedDeploymentReceipt, if any. It is consulted ONLY when
+  /// [lastResult] is absent or does not match [approvedPackageId] — a live
+  /// session result always takes precedence, so a fresh failed retry is
+  /// never masked by an older, still-persisted successful receipt. This is
+  /// the ONLY way this gate can return available() after a restart, when
+  /// activeAdau1701ContextProvider is necessarily null: approval and
+  /// deployment-verification are proven from persisted identity, never from
+  /// "hardware is currently connected".
   static RoomAfterGateResult evaluate({
     required String? approvedPackageId,
     required HardwareWriteExecutionResult? lastResult,
+    VerifiedDeploymentReceipt? persistedReceipt,
   }) {
     if (approvedPackageId == null) {
       return const RoomAfterGateResult.blocked(
@@ -77,19 +90,31 @@ abstract final class RoomAfterGate {
         RoomAfterBlockerCode.correctionNotApproved,
       );
     }
-    if (lastResult == null) {
-      return const RoomAfterGateResult.blocked(
-        'Deploy 탭에서 하드웨어에 실제로 적용해야 사용 가능합니다.',
-        RoomAfterBlockerCode.correctionNotDeployed,
-      );
-    }
+
     // HardwareWriteApproval.planIdFor = '$sourceExportPackageId@$generatedAt'
     // (pro_hardware_write_approval.dart). Deploy tab rebuilds its own
     // HardwareWritePlan (and therefore a fresh generatedAt) from the
     // persisted DspExportPackage independently of when this controller built
     // its copy, so only the exportPackageId prefix is a stable, comparable
     // identity — never the full string.
-    if (!lastResult.planId.startsWith('$approvedPackageId@')) {
+    final sessionMatches = lastResult != null &&
+        lastResult.planId.startsWith('$approvedPackageId@');
+
+    if (!sessionMatches &&
+        persistedReceipt != null &&
+        persistedReceipt.matchesApprovedPackage(approvedPackageId) &&
+        persistedReceipt.executed &&
+        persistedReceipt.allReadbackVerified) {
+      return const RoomAfterGateResult.available();
+    }
+
+    if (lastResult == null) {
+      return const RoomAfterGateResult.blocked(
+        'Deploy 탭에서 하드웨어에 실제로 적용해야 사용 가능합니다.',
+        RoomAfterBlockerCode.correctionNotDeployed,
+      );
+    }
+    if (!sessionMatches) {
       return const RoomAfterGateResult.blocked(
         '현재 승인된 Room 보정 계획과 일치하는 Deploy 결과가 없습니다 — 다시 승인 후 Deploy에서 적용하세요.',
         RoomAfterBlockerCode.staleHardwareResult,

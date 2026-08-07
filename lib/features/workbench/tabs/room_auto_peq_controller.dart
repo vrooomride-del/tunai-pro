@@ -30,12 +30,16 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/deploy/pro_hardware_write_executor.dart'
+    show HardwareWriteExecutionResult;
 import '../../../core/orchestrator/room_auto_peq.dart';
 import '../../../core/orchestrator/room_before_pair_quality_gate.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_tuning_data.dart';
 import '../../../core/room_measurement_data.dart';
+import '../../../core/room_workflow_persistence.dart'
+    show RoomAutoPeqApproval, VerifiedDeploymentReceipt;
 
 enum RoomAutoPeqPhase { idle, confirmPending, noChange, approved }
 
@@ -112,8 +116,25 @@ class RoomAutoPeqController extends StateNotifier<RoomAutoPeqState> {
   final Ref _ref;
   final String projectId;
 
-  RoomAutoPeqController(this._ref, this.projectId)
-      : super(const RoomAutoPeqState());
+  /// Phase 3-F3 — hydrates approvedPackageId from the project's persisted
+  /// RoomAutoPeqApproval at construction time, so an app restart or project
+  /// reopen restores the approval instead of losing it. preApplySnapshot and
+  /// rollback state are deliberately NOT restored here — restart-safety was
+  /// only ever specified for approval/deployment/closed-loop.
+  RoomAutoPeqController(Ref ref, this.projectId)
+      : _ref = ref,
+        super(RoomAutoPeqState(
+          approvedPackageId: _hydrateApprovedPackageId(ref, projectId),
+        ));
+
+  static String? _hydrateApprovedPackageId(Ref ref, String projectId) {
+    final project = ref
+        .read(proProjectStoreProvider)
+        .projects
+        .where((p) => p.id == projectId)
+        .firstOrNull;
+    return project?.roomState.approval?.approvedPackageId;
+  }
 
   ProProject? get _project => _ref
       .read(proProjectStoreProvider)
@@ -253,6 +274,25 @@ class RoomAutoPeqController extends StateNotifier<RoomAutoPeqState> {
     await _ref
         .read(proProjectStoreProvider.notifier)
         .updateExportState(projectId, updated);
+
+    // Phase 3-F3 §2 — persist the approval so it survives a restart, and
+    // invalidate the previous deployment receipt/closed-loop verdict: both
+    // described whatever was approved BEFORE this new package, and must not
+    // be read as still describing the current correction.
+    final approvedAt = DateTime.now();
+    await _ref.read(proProjectStoreProvider.notifier).updateRoomState(
+          projectId,
+          project.roomState.copyWith(
+            approval: RoomAutoPeqApproval(
+              projectId: projectId,
+              approvedPackageId: packageId,
+              approvedAt: approvedAt,
+            ),
+            clearDeploymentReceipt: true,
+            clearClosedLoopResult: true,
+          ),
+        );
+
     state = state.copyWith(
       phase: RoomAutoPeqPhase.approved,
       approvedPackageId: packageId,
@@ -312,5 +352,34 @@ class RoomAutoPeqController extends StateNotifier<RoomAutoPeqState> {
       clearError: true,
     );
     return true;
+  }
+
+  /// Phase 3-F3 §3 — records a restart-safe [VerifiedDeploymentReceipt] when
+  /// [result] is a genuine, fully-verified success for THIS project's
+  /// currently-approved correction OR rollback plan. No-op (no store write)
+  /// for every other case — an unrelated (e.g. Factory) package, an
+  /// ack-only/partial/failed result, or no approval at all; see
+  /// VerifiedDeploymentReceipt.fromExecutionResult, which owns the actual
+  /// matching/creation contract. Called by Deploy tab's HardwareApplyFlow
+  /// .onResult alongside the existing lastHardwareWriteResultProvider write
+  /// — zero hardware I/O happens here, only a persistence write from an
+  /// already-executed result.
+  Future<void> recordVerifiedDeployment(
+      HardwareWriteExecutionResult result) async {
+    final project = _project;
+    if (project == null) return;
+    final receipt = VerifiedDeploymentReceipt.fromExecutionResult(
+      result: result,
+      projectId: projectId,
+      dspTarget: project.dspTarget,
+      approvedPackageId: state.approvedPackageId,
+      rollbackApprovedPackageId: state.rollbackApprovedPackageId,
+      verifiedAt: DateTime.now(),
+    );
+    if (receipt == null) return;
+    await _ref.read(proProjectStoreProvider.notifier).updateRoomState(
+          projectId,
+          project.roomState.copyWith(deploymentReceipt: receipt),
+        );
   }
 }

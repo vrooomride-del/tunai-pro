@@ -21,6 +21,8 @@ import 'package:tunai_pro/core/pro_project.dart';
 import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/pro_tuning_data.dart';
 import 'package:tunai_pro/core/room_measurement_data.dart';
+import 'package:tunai_pro/core/room_workflow_persistence.dart'
+    show RoomAutoPeqApproval;
 import 'package:tunai_pro/core/transport/icp5_transports.dart';
 import 'package:tunai_pro/features/workbench/tabs/room_auto_peq_controller.dart';
 
@@ -294,12 +296,33 @@ class FakeHandshakenTransport extends Icp5UsbTransport {
   String? get detectedProfile => _ready ? 'ICP5-ADAU1701' : null;
 }
 
-/// Approves a Room correction, as RoomAutoPeqController.approve() does.
-void goldenApproveRoomCorrection(
+/// Approves a Room correction, as RoomAutoPeqController.approve() does —
+/// including the Phase 3-F3 persistence side effect (a restart-safe
+/// RoomAutoPeqApproval written into roomState, with any previous deployment
+/// receipt/closed-loop verdict invalidated), so restart tests observe the
+/// same on-disk state a real approval produces.
+Future<void> goldenApproveRoomCorrection(
   ProviderContainer c, {
   String projectId = kGoldenProjectId,
   String packageId = kGoldenPackageId,
-}) {
+}) async {
   c.read(roomAutoPeqControllerProvider(projectId).notifier).state =
-      const RoomAutoPeqState(approvedPackageId: kGoldenPackageId);
+      RoomAutoPeqState(approvedPackageId: packageId);
+  final store = c.read(proProjectStoreProvider.notifier);
+  final project = c
+      .read(proProjectStoreProvider)
+      .projects
+      .firstWhere((p) => p.id == projectId);
+  await store.updateRoomState(
+    projectId,
+    project.roomState.copyWith(
+      approval: RoomAutoPeqApproval(
+        projectId: projectId,
+        approvedPackageId: packageId,
+        approvedAt: DateTime.now(),
+      ),
+      clearDeploymentReceipt: true,
+      clearClosedLoopResult: true,
+    ),
+  );
 }

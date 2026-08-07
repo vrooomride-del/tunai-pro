@@ -6,6 +6,11 @@
 // requiredFullSystemChannelIds) — the two live side by side in ProProject.
 
 import 'pro_acoustic_data.dart' show ParsedMeasurementData;
+import 'room_workflow_persistence.dart'
+    show
+        PersistedRoomClosedLoopResult,
+        RoomAutoPeqApproval,
+        VerifiedDeploymentReceipt;
 
 enum RoomSystemSide {
   left,
@@ -152,36 +157,108 @@ class RoomMeasurementProjectState {
   final RoomMeasurementSnapshot before;
   final RoomMeasurementSnapshot after;
 
+  /// Phase 3-F3 — restart-safe Room Auto PEQ approval record. Additive: a
+  /// project persisted before this phase decodes with this null (unapproved
+  /// safe default), never fabricated from any other field.
+  final RoomAutoPeqApproval? approval;
+
+  /// Phase 3-F3 — restart-safe proof that a specific plan actually executed
+  /// and was fully DSP-readback verified. Single slot: always overwritten by
+  /// the most recent Room-relevant verified deploy (correction or
+  /// rollback), mirroring lastHardwareWriteResultProvider's existing
+  /// single-slot "most recent write wins" semantics.
+  final VerifiedDeploymentReceipt? deploymentReceipt;
+
+  /// Phase 3-F3 — restart-safe summary of the real RoomClosedLoopEvaluator
+  /// verdict for the current Before/After pair. Actively cleared by the
+  /// controller on any Before/After change (see
+  /// RoomMeasurementController.accept()/startNewAfterSession()); callers
+  /// should also check [PersistedRoomClosedLoopResult.matchesCurrent] as a
+  /// second layer before treating it as authoritative.
+  final PersistedRoomClosedLoopResult? closedLoopResult;
+
   const RoomMeasurementProjectState({
     this.before = RoomMeasurementSnapshot.empty,
     this.after = RoomMeasurementSnapshot.empty,
+    this.approval,
+    this.deploymentReceipt,
+    this.closedLoopResult,
   });
 
   RoomMeasurementProjectState copyWith({
     RoomMeasurementSnapshot? before,
     RoomMeasurementSnapshot? after,
+    RoomAutoPeqApproval? approval,
+    bool clearApproval = false,
+    VerifiedDeploymentReceipt? deploymentReceipt,
+    bool clearDeploymentReceipt = false,
+    PersistedRoomClosedLoopResult? closedLoopResult,
+    bool clearClosedLoopResult = false,
   }) =>
       RoomMeasurementProjectState(
         before: before ?? this.before,
         after: after ?? this.after,
+        approval: clearApproval ? null : (approval ?? this.approval),
+        deploymentReceipt: clearDeploymentReceipt
+            ? null
+            : (deploymentReceipt ?? this.deploymentReceipt),
+        closedLoopResult: clearClosedLoopResult
+            ? null
+            : (closedLoopResult ?? this.closedLoopResult),
       );
 
   Map<String, dynamic> toJson() => {
         'before': before.toJson(),
         'after': after.toJson(),
+        if (approval != null) 'approval': approval!.toJson(),
+        if (deploymentReceipt != null)
+          'deploymentReceipt': deploymentReceipt!.toJson(),
+        if (closedLoopResult != null)
+          'closedLoopResult': closedLoopResult!.toJson(),
       };
 
-  factory RoomMeasurementProjectState.fromJson(Map<String, dynamic> j) =>
-      RoomMeasurementProjectState(
-        before: j['before'] != null
-            ? RoomMeasurementSnapshot.fromJson(
-                Map<String, dynamic>.from(j['before'] as Map))
-            : RoomMeasurementSnapshot.empty,
-        after: j['after'] != null
-            ? RoomMeasurementSnapshot.fromJson(
-                Map<String, dynamic>.from(j['after'] as Map))
-            : RoomMeasurementSnapshot.empty,
-      );
+  factory RoomMeasurementProjectState.fromJson(Map<String, dynamic> j) {
+    RoomAutoPeqApproval? approval;
+    try {
+      approval = j['approval'] != null
+          ? RoomAutoPeqApproval.fromJson(
+              Map<String, dynamic>.from(j['approval'] as Map))
+          : null;
+    } catch (_) {
+      approval = null;
+    }
+    VerifiedDeploymentReceipt? deploymentReceipt;
+    try {
+      deploymentReceipt = j['deploymentReceipt'] != null
+          ? VerifiedDeploymentReceipt.fromJson(
+              Map<String, dynamic>.from(j['deploymentReceipt'] as Map))
+          : null;
+    } catch (_) {
+      deploymentReceipt = null;
+    }
+    PersistedRoomClosedLoopResult? closedLoopResult;
+    try {
+      closedLoopResult = j['closedLoopResult'] != null
+          ? PersistedRoomClosedLoopResult.fromJson(
+              Map<String, dynamic>.from(j['closedLoopResult'] as Map))
+          : null;
+    } catch (_) {
+      closedLoopResult = null;
+    }
+    return RoomMeasurementProjectState(
+      before: j['before'] != null
+          ? RoomMeasurementSnapshot.fromJson(
+              Map<String, dynamic>.from(j['before'] as Map))
+          : RoomMeasurementSnapshot.empty,
+      after: j['after'] != null
+          ? RoomMeasurementSnapshot.fromJson(
+              Map<String, dynamic>.from(j['after'] as Map))
+          : RoomMeasurementSnapshot.empty,
+      approval: approval,
+      deploymentReceipt: deploymentReceipt,
+      closedLoopResult: closedLoopResult,
+    );
+  }
 
   static RoomMeasurementProjectState createDefault() =>
       const RoomMeasurementProjectState();

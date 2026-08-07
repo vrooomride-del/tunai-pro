@@ -83,13 +83,13 @@ final Map<String, _StageBuilder> _stages = <String, _StageBuilder>{
   },
   'deployRoomCorrection': () async {
     final w = await _stages['generateRoomAutoPeq']!();
-    w.approveAutoPeq();
+    await w.approveAutoPeq();
     return w;
   },
   'measureRoomAfter': () async {
     final w = await _stages['deployRoomCorrection']!();
     await goldenConnectHardware(w.c);
-    w.deploy();
+    await w.deploy();
     return w;
   },
   'reviewClosedLoop': () async {
