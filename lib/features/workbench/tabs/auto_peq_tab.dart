@@ -24,12 +24,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/deploy/pro_hardware_context_provider.dart';
 import '../../../core/orchestrator/pro_guided_ai_controller.dart'
     show ProGuidedAiController, FrdReadiness;
+import '../../../core/orchestrator/room_after_gate.dart';
+import '../../../core/orchestrator/room_auto_peq.dart'
+    show roomAutoPeqMinHz, roomAutoPeqMaxHz;
+import '../../../core/pro_correction_cycle.dart' show CorrectionCycleDecision;
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/workbench_tab_provider.dart';
 import '../../../shared/pro_widgets.dart';
+import 'room_auto_peq_controller.dart';
+import 'room_measurement_controller.dart'
+    show roomMeasurementControllerProvider;
 
 class AutoPeqTab extends ConsumerWidget {
   final String projectId;
@@ -59,6 +67,10 @@ class AutoPeqTab extends ConsumerWidget {
         _ReadinessCard(readiness: readiness),
         const SizedBox(height: 12),
         _ActionCard(ready: ready),
+        if (project != null) ...[
+          const SizedBox(height: 20),
+          _RoomAutoPeqCard(projectId: projectId, project: project),
+        ],
       ]),
     );
   }
@@ -214,5 +226,235 @@ class _ActionCard extends ConsumerWidget {
         ),
       ]),
     );
+  }
+}
+
+// ── Room Auto PEQ ─────────────────────────────────────────────────────────────
+//
+// Independent readiness/candidate path for the Phase 2 Stereo Room flow —
+// Before Left+Right = 2/2, entirely separate from the Factory 4-driver
+// readiness above. Reuses the same CandidateGenerator/CandidateSafetyPolicy/
+// approval gate/DspExportPackage/HardwareWritePlan pipeline
+// (RoomAutoPeqController -> lib/core/orchestrator/room_auto_peq.dart), just
+// called directly instead of through the 4-channel orchestrator plan. On
+// approval this only persists the DspExportPackage into exportState and
+// hands off to Deploy — the exact same HardwareApplyFlow gate the Factory
+// path already uses performs the actual write, on a separate explicit user
+// action there.
+
+class _RoomAutoPeqCard extends ConsumerWidget {
+  final String projectId;
+  final ProProject project;
+  const _RoomAutoPeqCard({required this.projectId, required this.project});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ctrl = ref.read(roomAutoPeqControllerProvider(projectId).notifier);
+    final state = ref.watch(roomAutoPeqControllerProvider(projectId));
+    final before = project.roomState.before;
+    final roomReady = before.isComplete;
+
+    // Worsened verdict lives on RoomMeasurementController's closed-loop
+    // result, not here — cross-read it (and the shared hardware-result
+    // provider) so a rollback CTA can appear without a second, duplicate
+    // evaluation or state store.
+    final loopResult = ref
+        .watch(roomMeasurementControllerProvider(projectId))
+        .closedLoopResult;
+    final lastHardwareResult = ref.watch(lastHardwareWriteResultProvider);
+    final worsened = loopResult?.decision == CorrectionCycleDecision.worsened;
+    final rollbackGate = RoomAfterGate.evaluate(
+      approvedPackageId: state.rollbackApprovedPackageId,
+      lastResult: lastHardwareResult,
+    );
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kProSurface,
+        border: Border.all(color: kProBorder),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.speaker_group_outlined, color: kProAccent, size: 18),
+          const SizedBox(width: 8),
+          Text('Room Auto PEQ', style: proTitle(size: 15)),
+        ]),
+        const SizedBox(height: 6),
+        Text(
+          'Stereo Room 측정(Left/Right 전체 스피커)을 기준으로 Woofer PEQ만 '
+          '저역(${roomAutoPeqMinHz.toStringAsFixed(0)}-${roomAutoPeqMaxHz.toStringAsFixed(0)} Hz) '
+          '범위에서 cut-only 보정합니다. Tweeter, XO, phase, delay는 변경하지 않습니다.',
+          style: proSubtitle(size: 11),
+        ),
+        const SizedBox(height: 10),
+        Row(children: [
+          Icon(
+            roomReady
+                ? Icons.check_circle_outline
+                : Icons.warning_amber_outlined,
+            size: 14,
+            color: roomReady ? kProGreen : kProAmber,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Before Left+Right: ${before.readyCount}/2',
+            style: TextStyle(
+                fontSize: 11, color: roomReady ? kProGreen : kProAmber),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        if (state.phase == RoomAutoPeqPhase.idle) ...[
+          FilledButton.icon(
+            onPressed: roomReady ? ctrl.generate : null,
+            icon: const Icon(Icons.auto_fix_high, size: 15),
+            label: const Text('Room Auto PEQ 후보 생성'),
+            style: FilledButton.styleFrom(
+              backgroundColor: kProAccent,
+              disabledBackgroundColor: kProBorder,
+            ),
+          ),
+        ] else if (state.phase == RoomAutoPeqPhase.noChange) ...[
+          const Text('보정할 내용이 없습니다 — Room 응답이 이미 목표 범위 내에 있습니다.',
+              style: TextStyle(fontSize: 11, color: Colors.white54)),
+        ] else if (state.phase == RoomAutoPeqPhase.confirmPending) ...[
+          for (final c in state.candidates.where((c) => c.hasChange))
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Text(
+                '${c.side.label} → ${c.channelId}: ${c.applyResult.applied.length}개 밴드 '
+                '(cut ${c.applyResult.applied.map((b) => b.gainDb.toStringAsFixed(1)).join(", ")} dB)',
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: ctrl.cancel,
+                style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: kProBorder)),
+                child: const Text('취소', style: TextStyle(fontSize: 12)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton(
+                onPressed: () async {
+                  final approved = await ctrl.approve();
+                  if (approved) {
+                    ref.read(workbenchTabProvider.notifier).go(kTabDeploy);
+                  }
+                },
+                style: FilledButton.styleFrom(backgroundColor: kProGreen),
+                child: const Text('승인 — Deploy로 이동',
+                    style: TextStyle(fontSize: 12)),
+              ),
+            ),
+          ]),
+        ] else if (state.phase == RoomAutoPeqPhase.approved) ...[
+          const Text('승인 완료 — Deploy 탭에서 하드웨어에 실제로 적용하세요.',
+              style: TextStyle(fontSize: 11, color: kProGreen)),
+        ],
+        if (worsened) ...[
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: kProBorder),
+          const SizedBox(height: 12),
+          _RollbackSection(
+            projectId: projectId,
+            ctrl: ctrl,
+            state: state,
+            rollbackGate: rollbackGate,
+          ),
+        ],
+        if (state.error != null) ...[
+          const SizedBox(height: 8),
+          Text(state.error!,
+              style: const TextStyle(color: kProRed, fontSize: 11)),
+        ],
+        const SizedBox(height: 8),
+        Text('승인 전에는 어떤 값도 하드웨어에 기록되지 않습니다.', style: proSubtitle(size: 10)),
+      ]),
+    );
+  }
+}
+
+// ── Rollback (worsened verdict) ─────────────────────────────────────────────
+//
+// Shown only when the Room Closed Loop evaluated a `worsened` decision.
+// requestRollback() builds a rollback DspExportPackage/HardwareWritePlan
+// from RoomAutoPeqController's pre-apply snapshot (captured at the original
+// approve() call) and routes it through the identical exportState -> Deploy
+// -> HardwareApplyFlow path as a normal correction. No automatic write:
+// completion is only reported once RoomAfterGate confirms the rollback
+// package's own planId was actually DSP-readback-verified — never merely
+// "approved" or "Deploy tab opened".
+
+class _RollbackSection extends ConsumerWidget {
+  final String projectId;
+  final RoomAutoPeqController ctrl;
+  final RoomAutoPeqState state;
+  final RoomAfterGateResult rollbackGate;
+  const _RollbackSection({
+    required this.projectId,
+    required this.ctrl,
+    required this.state,
+    required this.rollbackGate,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Row(children: [
+        Icon(Icons.trending_down, size: 14, color: kProRed),
+        SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Closed Loop 판정: 악화(worsened) — 적용 전 상태로 되돌릴 수 있습니다.',
+            style: TextStyle(fontSize: 11, color: kProRed),
+          ),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      if (state.rollbackPhase == RoomRollbackPhase.none) ...[
+        OutlinedButton.icon(
+          onPressed: () async {
+            final approved = await ctrl.requestRollback();
+            if (approved) {
+              ref.read(workbenchTabProvider.notifier).go(kTabDeploy);
+            }
+          },
+          icon: const Icon(Icons.undo, size: 15),
+          label: const Text('적용 전 상태로 되돌리기'),
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: kProRed),
+            foregroundColor: kProRed,
+          ),
+        ),
+      ] else ...[
+        Row(children: [
+          Icon(
+            rollbackGate.available
+                ? Icons.check_circle_outline
+                : Icons.hourglass_empty,
+            size: 14,
+            color: rollbackGate.available ? kProGreen : kProAmber,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              rollbackGate.available
+                  ? '복구 완료 — 하드웨어가 적용 전 상태로 확인되었습니다.'
+                  : (rollbackGate.blockedReason ?? 'Deploy 탭에서 승인 후 적용하세요.'),
+              style: TextStyle(
+                fontSize: 11,
+                color: rollbackGate.available ? kProGreen : kProAmber,
+              ),
+            ),
+          ),
+        ]),
+      ],
+    ]);
   }
 }

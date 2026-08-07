@@ -11,6 +11,7 @@ import 'pro_simulation_data.dart';
 import 'pro_hardware_connection_data.dart';
 import 'pro_deploy_package_data.dart';
 import 'pro_address_validation_data.dart';
+import 'room_measurement_data.dart';
 
 enum ProfileStatus { draft, measured, tuned, verified, deployed }
 
@@ -86,6 +87,7 @@ class ProProject {
   final HardwareProjectState hardwareState;
   final DeployProjectState deployState;
   final AddressValidationProjectState addressValidationState;
+  final RoomMeasurementProjectState roomState;
 
   /// Closed-loop correction cycles for this project.
   /// Each entry records one before/apply/deploy/after pass.
@@ -120,6 +122,7 @@ class ProProject {
     HardwareProjectState? hardwareState,
     DeployProjectState? deployState,
     AddressValidationProjectState? addressValidationState,
+    RoomMeasurementProjectState? roomState,
     this.correctionCycles = const [],
     this.factoryProfiles = const [],
   })  : acousticState =
@@ -135,7 +138,8 @@ class ProProject {
         hardwareState = hardwareState ?? HardwareProjectState.createDefault(),
         deployState = deployState ?? DeployProjectState.createDefault(),
         addressValidationState = addressValidationState ??
-            AddressValidationProjectState.createDefault();
+            AddressValidationProjectState.createDefault(),
+        roomState = roomState ?? RoomMeasurementProjectState.createDefault();
 
   factory ProProject.create({
     required String name,
@@ -182,6 +186,7 @@ class ProProject {
     HardwareProjectState? hardwareState,
     DeployProjectState? deployState,
     AddressValidationProjectState? addressValidationState,
+    RoomMeasurementProjectState? roomState,
     List<CorrectionCycle>? correctionCycles,
     List<FactorySoundProfile>? factoryProfiles,
   }) =>
@@ -211,6 +216,7 @@ class ProProject {
         deployState: deployState ?? this.deployState,
         addressValidationState:
             addressValidationState ?? this.addressValidationState,
+        roomState: roomState ?? this.roomState,
         correctionCycles: correctionCycles ?? this.correctionCycles,
         factoryProfiles: factoryProfiles ?? this.factoryProfiles,
       );
@@ -245,6 +251,7 @@ class ProProject {
         'hardwareState': hardwareState.toJson(),
         'deployState': deployState.toJson(),
         'addressValidationState': addressValidationState.toJson(),
+        'roomState': roomState.toJson(),
         if (correctionCycles.isNotEmpty)
           'correctionCycles': correctionCycles.map((c) => c.toJson()).toList(),
         if (factoryProfiles.isNotEmpty)
@@ -308,6 +315,7 @@ class ProProject {
             ? AddressValidationProjectState.fromJson(
                 Map<String, dynamic>.from(j['addressValidationState'] as Map))
             : null,
+        roomState: _decodeRoomState(j['roomState']),
         correctionCycles: (j['correctionCycles'] as List? ?? [])
             .map((e) =>
                 CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -317,6 +325,21 @@ class ProProject {
                 Map<String, dynamic>.from(e as Map)))
             .toList(),
       );
+
+  /// Isolated decode: a malformed roomState (e.g. from a future schema this
+  /// build doesn't understand) must not fail the whole project decode — the
+  /// rest of the project (driverChannels FRD, PEQ, XO, gain, delay) still
+  /// needs to load. Falls back to an empty Room state.
+  static RoomMeasurementProjectState _decodeRoomState(Object? raw) {
+    if (raw == null) return RoomMeasurementProjectState.createDefault();
+    try {
+      return RoomMeasurementProjectState.fromJson(
+          Map<String, dynamic>.from(raw as Map));
+    } catch (e) {
+      debugPrint('ProProject: skipping unparsable roomState ($e)');
+      return RoomMeasurementProjectState.createDefault();
+    }
+  }
 
   static String encodeList(List<ProProject> list) =>
       jsonEncode(list.map((p) => p.toJson()).toList());

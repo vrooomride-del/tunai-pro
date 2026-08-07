@@ -480,6 +480,178 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     return file;
   }
 
+  // ── Phase 2: Stereo Room Measurement ─────────────────────────────────────
+
+  /// Whole-system Left or Right measurement: plays a STEREO pink-noise WAV
+  /// with only [leftActive]'s channel carrying signal (the other channel is
+  /// exact zero PCM, so the opposite speaker is silent for the whole test —
+  /// no DSP mute/output-gain write involved). The woofer and tweeter on the
+  /// active side play together through the existing crossover, exactly as
+  /// wired today.
+  ///
+  /// Recording/FFT is untouched: the microphone capture stays mono (it
+  /// records the room's acoustic response, not the stereo file being
+  /// played), so this reuses the identical record → FFT pipeline as
+  /// [startMeasurement] — only the WAV fed to the player changes.
+  Future<void> startRoomMeasurement({
+    required bool leftActive,
+    bool bleWarmup = false,
+  }) async {
+    try {
+      final hasPermission = await _recorder.hasPermission();
+      if (!hasPermission) {
+        state = state.copyWith(
+          status: MeasurementStatus.error,
+          error: 'MIC_PERMISSION_DENIED',
+        );
+        return;
+      }
+
+      state = state.copyWith(
+          status: MeasurementStatus.playing, message: '핑크노이즈 생성 중...');
+      final warmup = bleWarmup ? _bleWarmupSec : 0;
+      final wavFile = await _generateStereoPinkNoise(
+        leftActive: leftActive,
+        totalSec: warmup + durationSec,
+      );
+
+      final dir = await getTemporaryDirectory();
+      final recPath = '${dir.path}/tunai_pro_room_measurement.wav';
+
+      try {
+        if (bleWarmup) {
+          // Same BLE A2DP warm-up order as startMeasurement(): play first,
+          // wait for codec init, then start recording.
+          await _player.setFilePath(wavFile.path);
+          await _player.play();
+          state = state.copyWith(message: 'BLE 오디오 초기화 중... ($_bleWarmupSec초)');
+          await Future.delayed(Duration(seconds: warmup));
+          await _recorder.start(
+            const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: sampleRate,
+              numChannels: 1,
+            ),
+            path: recPath,
+          );
+        } else {
+          // Same Local/USB order as startMeasurement(): recorder first, then
+          // playback.
+          await _recorder.start(
+            const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: sampleRate,
+              numChannels: 1,
+            ),
+            path: recPath,
+          );
+          await _player.setFilePath(wavFile.path);
+          await _player.play();
+        }
+
+        state = state.copyWith(message: '측정 중... ($durationSec초)');
+        await Future.delayed(const Duration(seconds: durationSec));
+      } finally {
+        await _safeStopRecorderAndPlayer();
+      }
+
+      state = state.copyWith(
+          status: MeasurementStatus.analyzing, message: 'FFT 분석 중...');
+      final pcmBytes = await File(recPath).readAsBytes();
+      final rawPcm = Uint8List.sublistView(pcmBytes, 44);
+      final samples = _pcmToFloat(rawPcm);
+      final response = _analyzeFFT(samples);
+
+      state = state.copyWith(
+        status: MeasurementStatus.done,
+        message: '측정 완료',
+        frequencyResponse: response,
+      );
+      _recordSession(channelCount: 1);
+    } catch (e) {
+      state = state.copyWith(
+        status: MeasurementStatus.error,
+        error: e.toString(),
+      );
+    }
+  }
+
+  Future<File> _generateStereoPinkNoise({
+    required bool leftActive,
+    int totalSec = durationSec,
+  }) async {
+    final dir = await getTemporaryDirectory();
+    final side = leftActive ? 'l' : 'r';
+    final file = File('${dir.path}/pink_noise_room_${side}_${totalSec}s.wav');
+    final wavBytes = buildStereoPinkNoiseWavBytes(
+        leftActive: leftActive, totalSec: totalSec);
+    await file.writeAsBytes(wavBytes);
+    return file;
+  }
+
+  /// Pure function, same Paul Kellet pink-noise algorithm and coefficients
+  /// as [buildPinkNoiseWavBytes] — only the PCM layout changes: interleaved
+  /// stereo with the inactive channel forced to exact-zero samples so the
+  /// opposite speaker gets no signal at all (not just attenuated).
+  @visibleForTesting
+  static Uint8List buildStereoPinkNoiseWavBytes({
+    required bool leftActive,
+    int totalSec = durationSec,
+  }) {
+    final totalSamples = sampleRate * totalSec;
+    final pcm = Int16List(totalSamples * 2); // interleaved L,R,L,R,...
+
+    double b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    final rng = Random();
+    for (int i = 0; i < totalSamples; i++) {
+      final white = rng.nextDouble() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      final pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+      b6 = white * 0.115926;
+      final sample = (pink.clamp(-1.0, 1.0) * 32767).round();
+      if (leftActive) {
+        pcm[i * 2] = sample;
+        pcm[i * 2 + 1] = 0;
+      } else {
+        pcm[i * 2] = 0;
+        pcm[i * 2 + 1] = sample;
+      }
+    }
+
+    const numChannels = 2;
+    final dataSize = totalSamples * numChannels * 2;
+    final header = ByteData(44);
+    void setStr(int offset, String s) {
+      for (int i = 0; i < s.length; i++) {
+        header.setUint8(offset + i, s.codeUnitAt(i));
+      }
+    }
+
+    setStr(0, 'RIFF');
+    header.setUint32(4, 36 + dataSize, Endian.little);
+    setStr(8, 'WAVE');
+    setStr(12, 'fmt ');
+    header.setUint32(16, 16, Endian.little);
+    header.setUint16(20, 1, Endian.little);
+    header.setUint16(22, numChannels, Endian.little);
+    header.setUint32(24, sampleRate, Endian.little);
+    header.setUint32(28, sampleRate * numChannels * 2, Endian.little);
+    header.setUint16(32, numChannels * 2, Endian.little);
+    header.setUint16(34, 16, Endian.little);
+    setStr(36, 'data');
+    header.setUint32(40, dataSize, Endian.little);
+
+    final wavBytes = BytesBuilder();
+    wavBytes.add(header.buffer.asUint8List());
+    wavBytes.add(pcm.buffer.asUint8List());
+    return wavBytes.toBytes();
+  }
+
   /// 순수 함수: 파일시스템/플랫폼 채널에 닿지 않고 핑크노이즈 WAV 바이트를 만든다.
   /// [_generatePinkNoise]에서 그대로 추출한 것 — 바이트 단위로 동일하며 동작 변경
   /// 없음. totalSec으로부터 만들어지는 파일 길이(=바이트 수)를 플러그인 없이

@@ -9,6 +9,13 @@ import '../../../shared/pro_widgets.dart';
 import '../../../shared/components/stat_chip.dart';
 import '../../../shared/components/section_header.dart';
 import 'live_measurement_section.dart';
+import 'room_measurement_section.dart';
+
+/// Which measurement UI MeasureTab shows: Factory per-driver tuning
+/// (existing, default — untouched) or the Phase 2 Stereo Room whole-system
+/// flow. Keyed per project so switching projects doesn't leak the toggle.
+final measureModeIsRoomProvider =
+    StateProvider.family<bool, String>((ref, projectId) => false);
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -74,8 +81,13 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
                 sessions: mStore.sessions, selected: selectedSession),
             // ── Phase C: Driver readiness overview bar ──────────────────────
             _DriverReadinessBar(acoustic: acoustic),
-            // ── Live Measurement: real playback+record+FFT capture per channel
-            LiveMeasurementSection(project: project),
+            // ── Phase 2: Factory Driver Tuning vs Stereo Room Measurement ────
+            _MeasurementModeToggle(projectId: project.id),
+            if (ref.watch(measureModeIsRoomProvider(project.id)))
+              RoomMeasurementSection(project: project)
+            else
+              // ── Live Measurement: real playback+record+FFT capture per channel
+              LiveMeasurementSection(project: project),
             // IntrinsicHeight lets the two side-by-side panels below match
             // height (like the previous Expanded+Row did) without requiring
             // a bounded height from this now-unbounded scrolling Column --
@@ -1696,6 +1708,71 @@ class _ProDropdown<T> extends StatelessWidget {
           onChanged: (v) {
             if (v != null) onChanged(v);
           },
+        ),
+      );
+}
+
+// ── Phase 2: Factory / Room measurement mode toggle ───────────────────────────
+
+class _MeasurementModeToggle extends ConsumerWidget {
+  final String projectId;
+  const _MeasurementModeToggle({required this.projectId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isRoom = ref.watch(measureModeIsRoomProvider(projectId));
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          _ModeTabChip(
+            label: 'Factory Driver Tuning',
+            selected: !isRoom,
+            onTap: () => ref
+                .read(measureModeIsRoomProvider(projectId).notifier)
+                .state = false,
+          ),
+          _ModeTabChip(
+            label: 'Room Measurement',
+            selected: isRoom,
+            onTap: () => ref
+                .read(measureModeIsRoomProvider(projectId).notifier)
+                .state = true,
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _ModeTabChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _ModeTabChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected
+                ? kProAccent.withValues(alpha: 0.15)
+                : Colors.transparent,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: selected ? kProAccent : Colors.white54,
+            ),
+          ),
         ),
       );
 }
