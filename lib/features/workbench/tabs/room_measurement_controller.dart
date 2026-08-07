@@ -320,6 +320,21 @@ class RoomMeasurementController extends StateNotifier<RoomMeasurementState> {
     final side = currentSide;
     if (response == null || side == null) return;
 
+    // Stale-preview guard: identical rationale to
+    // LiveMeasurementController.accept() — if the selected microphone
+    // profile changed after this preview was captured, reject the accept
+    // rather than persist data captured under a no-longer-selected profile.
+    final capturedChecksum = state.capturedMicrophoneSnapshot?.profileChecksum;
+    final currentChecksum = _project?.selectedMicrophoneProfile?.checksum;
+    if (capturedChecksum != currentChecksum) {
+      state = state.copyWith(
+        phase: RoomMeasurementPhaseUi.ready,
+        clearCapturedResponse: true,
+        error: '측정 마이크 프로필이 변경되었습니다 — 다시 Capture하세요.',
+      );
+      return;
+    }
+
     final data = _toParsedMeasurementData(
       calibrated: response,
       raw: state.capturedRawResponse ?? response,

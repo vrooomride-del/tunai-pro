@@ -345,6 +345,15 @@ class MeasurementMicrophoneProfile {
       inputDeviceId ?? '',
       calibrationSource.name,
       calibrationCurve?.checksum ?? '',
+      // CalibrationCurve.checksum hashes points only (see
+      // CalibrationCurve.checksumFor) — angle is metadata about how those
+      // points were measured, not part of the point-identity hash. It must
+      // be included here explicitly, or an orientation-only edit (same
+      // points, different angle) would leave this profile checksum
+      // unchanged and defeat the stale-preview guard in
+      // LiveMeasurementController/RoomMeasurementController.accept(), which
+      // compares exactly this value against a capture-time snapshot.
+      calibrationCurve?.angle.name ?? '',
       sensitivityMvPa?.toStringAsFixed(6) ?? '',
       splReferenceDb?.toStringAsFixed(6) ?? '',
     ].join('|');

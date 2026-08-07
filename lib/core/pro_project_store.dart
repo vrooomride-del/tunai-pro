@@ -209,6 +209,21 @@ class ProProjectStoreNotifier extends StateNotifier<ProProjectStore> {
     ));
   }
 
+  /// Replaces project [id]'s entire microphone profile roster — never
+  /// touches any other project's roster, and never mutates a profile
+  /// object already embedded in a past measurement's
+  /// MeasurementMicrophoneSnapshot (those are immutable copies, unaffected
+  /// by roster edits/deletes). Callers build the new list (add/edit/
+  /// duplicate/delete) and pass it whole, mirroring updateRoomState.
+  Future<void> updateMicrophoneProfiles(
+      String id, List<MeasurementMicrophoneProfile> profiles) async {
+    final project = state.projects.firstWhere((p) => p.id == id);
+    await updateProject(project.copyWith(
+      microphoneProfiles: profiles,
+      updatedAt: DateTime.now(),
+    ));
+  }
+
   Future<void> updateProtectionState(
       String id, ProtectionProjectState protectionState) async {
     final project = state.projects.firstWhere((p) => p.id == id);

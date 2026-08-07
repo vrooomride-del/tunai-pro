@@ -335,6 +335,23 @@ class LiveMeasurementController extends StateNotifier<LiveMeasurementState> {
     final channel = currentChannel;
     if (response == null || channel == null) return;
 
+    // Stale-preview guard: if the selected microphone profile changed after
+    // this preview was captured (e.g. the user edited/switched profiles in
+    // the Profile Manager while a preview was pending), the preview's
+    // calibration no longer reflects the CURRENTLY selected profile. Reject
+    // the accept and force a fresh capture rather than silently persisting
+    // data captured under a profile that is no longer selected.
+    final capturedChecksum = state.capturedMicrophoneSnapshot?.profileChecksum;
+    final currentChecksum = _project?.selectedMicrophoneProfile?.checksum;
+    if (capturedChecksum != currentChecksum) {
+      state = state.copyWith(
+        phase: LiveMeasurementPhase.ready,
+        clearCapturedResponse: true,
+        error: '측정 마이크 프로필이 변경되었습니다 — 다시 Capture하세요.',
+      );
+      return;
+    }
+
     final data = _toParsedMeasurementData(
       calibrated: response,
       raw: state.capturedRawResponse ?? response,

@@ -9,6 +9,7 @@ import '../../../shared/pro_widgets.dart';
 import '../../../shared/components/stat_chip.dart';
 import '../../../shared/components/section_header.dart';
 import 'live_measurement_section.dart';
+import 'microphone_status_card.dart';
 import 'room_measurement_section.dart';
 
 /// Which measurement UI MeasureTab shows: Factory per-driver tuning
@@ -81,6 +82,8 @@ class _MeasureTabState extends ConsumerState<MeasureTab> {
                 sessions: mStore.sessions, selected: selectedSession),
             // ── Phase C: Driver readiness overview bar ──────────────────────
             _DriverReadinessBar(acoustic: acoustic),
+            // ── Phase 3-C: current measurement microphone / calibration state ─
+            MicrophoneStatusCard(project: project),
             // ── Phase 2: Factory Driver Tuning vs Stereo Room Measurement ────
             _MeasurementModeToggle(projectId: project.id),
             if (ref.watch(measureModeIsRoomProvider(project.id)))
@@ -827,7 +830,14 @@ class _ChecklistCard extends StatelessWidget {
         _CheckRow('Hardware connection', isConnected, project.connection.label),
         _CheckRow('Sample rate', true, project.sampleRateLabel),
         _CheckRow('DSP target', true, project.dspTarget),
-        const _CheckRow('Mic profile', true, 'Default'),
+        _CheckRow(
+          'Mic profile',
+          project.selectedMicrophoneProfile != null,
+          project.selectedMicrophoneProfile == null
+              ? 'Not selected'
+              : '${project.selectedMicrophoneProfile!.manufacturer} '
+                  '${project.selectedMicrophoneProfile!.model}',
+        ),
         _CheckRow(
             'Sessions created', sessionCount > 0, '$sessionCount sessions'),
       ]),

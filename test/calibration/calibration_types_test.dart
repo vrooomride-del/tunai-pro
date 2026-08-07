@@ -216,6 +216,184 @@ void main() {
       expect(renamed.checksum, isNot(profile.checksum));
     });
 
+    test(
+        'checksum changes when the calibration curve\'s ORIENTATION alone '
+        'changes — CalibrationCurve.checksum hashes points only, so the '
+        'profile checksum must fold in angle separately or a stale-preview '
+        'guard comparing profile checksums would miss an orientation-only '
+        'edit', () {
+      final points = [
+        const CalibrationPoint(frequencyHz: 20, correctionDb: 0.5),
+        const CalibrationPoint(frequencyHz: 20000, correctionDb: -1.0),
+      ];
+      final curveUnspecified = CalibrationCurve(
+        points: points,
+        angle: CalibrationAngle.unspecified,
+        validMinFrequencyHz: 20,
+        validMaxFrequencyHz: 20000,
+        sourceIdentity: 'test',
+        checksum: CalibrationCurve.checksumFor(points),
+      );
+      final curveZeroDeg = CalibrationCurve(
+        points: points,
+        angle: CalibrationAngle.zeroDegree,
+        validMinFrequencyHz: 20,
+        validMaxFrequencyHz: 20000,
+        sourceIdentity: 'test',
+        checksum: CalibrationCurve.checksumFor(points),
+      );
+      // The curve-level checksum is identical (points-only hash) — this is
+      // the exact trap the profile checksum must not fall into.
+      expect(curveUnspecified.checksum, curveZeroDeg.checksum);
+
+      final profile = MeasurementMicrophoneProfile(
+        id: 'mic1',
+        manufacturer: 'ACME',
+        model: 'M1',
+        connectionType: 'USB',
+        calibrationSource: CalibrationSource.userImported,
+        calibrationCurve: curveUnspecified,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final reoriented = profile.copyWith(calibrationCurve: curveZeroDeg);
+      expect(reoriented.checksum, isNot(profile.checksum));
+    });
+
+    test('checksum changes when serialNumber alone changes', () {
+      final profile = MeasurementMicrophoneProfile(
+        id: 'mic1',
+        manufacturer: 'ACME',
+        model: 'M1',
+        serialNumber: 'SN-1',
+        connectionType: 'USB',
+        calibrationSource: CalibrationSource.uncalibrated,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final resernaled = profile.copyWith(serialNumber: 'SN-2');
+      expect(resernaled.checksum, isNot(profile.checksum));
+    });
+
+    test('checksum changes when inputDeviceId alone changes', () {
+      final profile = MeasurementMicrophoneProfile(
+        id: 'mic1',
+        manufacturer: 'ACME',
+        model: 'M1',
+        connectionType: 'USB',
+        inputDeviceId: 'device-a',
+        calibrationSource: CalibrationSource.uncalibrated,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final moved = profile.copyWith(inputDeviceId: 'device-b');
+      expect(moved.checksum, isNot(profile.checksum));
+    });
+
+    test('checksum changes when calibrationSource alone changes', () {
+      final profile = MeasurementMicrophoneProfile(
+        id: 'mic1',
+        manufacturer: 'ACME',
+        model: 'M1',
+        connectionType: 'USB',
+        calibrationSource: CalibrationSource.userImported,
+        calibrationCurve: _curve(),
+        createdAt: now,
+        updatedAt: now,
+      );
+      final resourced = profile.copyWith(
+          calibrationSource: CalibrationSource.manufacturerFile);
+      expect(resourced.checksum, isNot(profile.checksum));
+    });
+
+    test(
+        'checksum changes when the calibration curve\'s POINTS change '
+        '(re-imported file)', () {
+      final profile = MeasurementMicrophoneProfile(
+        id: 'mic1',
+        manufacturer: 'ACME',
+        model: 'M1',
+        connectionType: 'USB',
+        calibrationSource: CalibrationSource.userImported,
+        calibrationCurve: _curve(),
+        createdAt: now,
+        updatedAt: now,
+      );
+      const newPoints = [
+        CalibrationPoint(frequencyHz: 20, correctionDb: 2.0),
+        CalibrationPoint(frequencyHz: 20000, correctionDb: -2.0),
+      ];
+      final newCurve = CalibrationCurve(
+        points: newPoints,
+        validMinFrequencyHz: 20,
+        validMaxFrequencyHz: 20000,
+        sourceIdentity: 'test2',
+        checksum: CalibrationCurve.checksumFor(newPoints),
+      );
+      final reimported = profile.copyWith(calibrationCurve: newCurve);
+      expect(reimported.checksum, isNot(profile.checksum));
+    });
+
+    test(
+        'checksum changes when sensitivityMvPa or splReferenceDb alone '
+        'changes', () {
+      final profile = MeasurementMicrophoneProfile(
+        id: 'mic1',
+        manufacturer: 'ACME',
+        model: 'M1',
+        connectionType: 'USB',
+        calibrationSource: CalibrationSource.uncalibrated,
+        sensitivityMvPa: 10.0,
+        splReferenceDb: 94.0,
+        createdAt: now,
+        updatedAt: now,
+      );
+      expect(profile.copyWith(sensitivityMvPa: 20.0).checksum,
+          isNot(profile.checksum));
+      expect(profile.copyWith(splReferenceDb: 104.0).checksum,
+          isNot(profile.checksum));
+    });
+
+    test(
+        'checksum is UNCHANGED by display/audit-only curve metadata — '
+        'sourceIdentity and parserWarnings never affect what correction is '
+        'actually applied, so they are deliberately excluded (this is the '
+        'closest analog to a "notes-only" field on this type — '
+        'MeasurementMicrophoneProfile has no separate notes field)', () {
+      const points = [
+        CalibrationPoint(frequencyHz: 20, correctionDb: 0.5),
+        CalibrationPoint(frequencyHz: 20000, correctionDb: -1.0),
+      ];
+      final curveA = CalibrationCurve(
+        points: points,
+        validMinFrequencyHz: 20,
+        validMaxFrequencyHz: 20000,
+        sourceIdentity: 'file_a.cal',
+        checksum: CalibrationCurve.checksumFor(points),
+        parserWarnings: const ['warning A'],
+      );
+      final curveB = CalibrationCurve(
+        points: points,
+        validMinFrequencyHz: 20,
+        validMaxFrequencyHz: 20000,
+        sourceIdentity: 'file_b.cal',
+        checksum: CalibrationCurve.checksumFor(points),
+        parserWarnings: const ['different warning B', 'and another'],
+      );
+      final profile = MeasurementMicrophoneProfile(
+        id: 'mic1',
+        manufacturer: 'ACME',
+        model: 'M1',
+        connectionType: 'USB',
+        calibrationSource: CalibrationSource.userImported,
+        calibrationCurve: curveA,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final relabeled = profile.copyWith(calibrationCurve: curveB);
+      expect(relabeled.checksum, profile.checksum);
+    });
+
     test('JSON round-trip preserves calibration curve', () {
       final profile = MeasurementMicrophoneProfile(
         id: 'mic1',

@@ -103,6 +103,16 @@ class ProProject {
   /// an already-captured measurement means.
   final MeasurementMicrophoneProfile? selectedMicrophoneProfile;
 
+  /// This project's user-managed microphone profile roster (Phase 3-C
+  /// Profile Manager) — every profile the user has registered for this
+  /// project, independent of which one (if any) is currently
+  /// [selectedMicrophoneProfile]. Never shared with or inherited by any
+  /// other project. Selecting a roster entry copies its CURRENT value into
+  /// [selectedMicrophoneProfile]; editing a roster entry afterward never
+  /// retroactively changes a measurement already captured under the
+  /// previous value (see [MeasurementMicrophoneSnapshot]).
+  final List<MeasurementMicrophoneProfile> microphoneProfiles;
+
   /// Closed-loop correction cycles for this project.
   /// Each entry records one before/apply/deploy/after pass.
   final List<CorrectionCycle> correctionCycles;
@@ -138,6 +148,7 @@ class ProProject {
     AddressValidationProjectState? addressValidationState,
     RoomMeasurementProjectState? roomState,
     this.selectedMicrophoneProfile,
+    this.microphoneProfiles = const [],
     this.correctionCycles = const [],
     this.factoryProfiles = const [],
   })  : acousticState =
@@ -204,6 +215,7 @@ class ProProject {
     RoomMeasurementProjectState? roomState,
     MeasurementMicrophoneProfile? selectedMicrophoneProfile,
     bool clearSelectedMicrophoneProfile = false,
+    List<MeasurementMicrophoneProfile>? microphoneProfiles,
     List<CorrectionCycle>? correctionCycles,
     List<FactorySoundProfile>? factoryProfiles,
   }) =>
@@ -237,6 +249,7 @@ class ProProject {
         selectedMicrophoneProfile: clearSelectedMicrophoneProfile
             ? null
             : (selectedMicrophoneProfile ?? this.selectedMicrophoneProfile),
+        microphoneProfiles: microphoneProfiles ?? this.microphoneProfiles,
         correctionCycles: correctionCycles ?? this.correctionCycles,
         factoryProfiles: factoryProfiles ?? this.factoryProfiles,
       );
@@ -274,6 +287,9 @@ class ProProject {
         'roomState': roomState.toJson(),
         if (selectedMicrophoneProfile != null)
           'selectedMicrophoneProfile': selectedMicrophoneProfile!.toJson(),
+        if (microphoneProfiles.isNotEmpty)
+          'microphoneProfiles':
+              microphoneProfiles.map((p) => p.toJson()).toList(),
         if (correctionCycles.isNotEmpty)
           'correctionCycles': correctionCycles.map((c) => c.toJson()).toList(),
         if (factoryProfiles.isNotEmpty)
@@ -340,6 +356,7 @@ class ProProject {
         roomState: _decodeRoomState(j['roomState']),
         selectedMicrophoneProfile:
             _decodeSelectedMicrophoneProfile(j['selectedMicrophoneProfile']),
+        microphoneProfiles: _decodeMicrophoneProfiles(j['microphoneProfiles']),
         correctionCycles: (j['correctionCycles'] as List? ?? [])
             .map((e) =>
                 CorrectionCycle.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -379,6 +396,24 @@ class ProProject {
           'ProProject: skipping unparsable selectedMicrophoneProfile ($e)');
       return null;
     }
+  }
+
+  /// Isolated, per-entry resilient decode: one corrupt roster entry must not
+  /// wipe the rest of the roster or fail the whole project decode.
+  static List<MeasurementMicrophoneProfile> _decodeMicrophoneProfiles(
+      Object? raw) {
+    if (raw is! List) return const [];
+    final result = <MeasurementMicrophoneProfile>[];
+    for (final e in raw) {
+      try {
+        result.add(MeasurementMicrophoneProfile.fromJson(
+            Map<String, dynamic>.from(e as Map)));
+      } catch (err) {
+        debugPrint(
+            'ProProject: skipping unparsable microphoneProfiles entry ($err)');
+      }
+    }
+    return result;
   }
 
   static String encodeList(List<ProProject> list) =>
