@@ -3,6 +3,7 @@
 // No hardware addresses. No SigmaStudio register maps. No hardware write.
 // AI suggests. Expert verifies. AOS protects. DSP executes.
 
+import 'deploy/pro_hardware_capability.dart';
 import 'pro_export_data.dart';
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
@@ -13,21 +14,20 @@ enum DspSampleRate {
   hz192000;
 
   String get label => switch (this) {
-    DspSampleRate.hz48000  => '48 kHz',
-    DspSampleRate.hz96000  => '96 kHz',
-    DspSampleRate.hz192000 => '192 kHz',
-  };
+        DspSampleRate.hz48000 => '48 kHz',
+        DspSampleRate.hz96000 => '96 kHz',
+        DspSampleRate.hz192000 => '192 kHz',
+      };
 
   int get hz => switch (this) {
-    DspSampleRate.hz48000  => 48000,
-    DspSampleRate.hz96000  => 96000,
-    DspSampleRate.hz192000 => 192000,
-  };
+        DspSampleRate.hz48000 => 48000,
+        DspSampleRate.hz96000 => 96000,
+        DspSampleRate.hz192000 => 192000,
+      };
 
   String toJson() => name;
-  static DspSampleRate fromJson(String s) =>
-      DspSampleRate.values.firstWhere((e) => e.name == s,
-          orElse: () => DspSampleRate.hz48000);
+  static DspSampleRate fromJson(String s) => DspSampleRate.values
+      .firstWhere((e) => e.name == s, orElse: () => DspSampleRate.hz48000);
 }
 
 enum DspPrecision {
@@ -36,15 +36,14 @@ enum DspPrecision {
   mixed;
 
   String get label => switch (this) {
-    DspPrecision.fixedPoint   => 'Fixed-Point',
-    DspPrecision.floatingPoint => 'Floating-Point',
-    DspPrecision.mixed        => 'Mixed',
-  };
+        DspPrecision.fixedPoint => 'Fixed-Point',
+        DspPrecision.floatingPoint => 'Floating-Point',
+        DspPrecision.mixed => 'Mixed',
+      };
 
   String toJson() => name;
-  static DspPrecision fromJson(String s) =>
-      DspPrecision.values.firstWhere((e) => e.name == s,
-          orElse: () => DspPrecision.floatingPoint);
+  static DspPrecision fromJson(String s) => DspPrecision.values
+      .firstWhere((e) => e.name == s, orElse: () => DspPrecision.floatingPoint);
 }
 
 enum DspTargetCapabilityType {
@@ -58,15 +57,16 @@ enum DspTargetCapabilityType {
   sigmaStudioPlaceholder;
 
   String get label => switch (this) {
-    DspTargetCapabilityType.peq                    => 'PEQ',
-    DspTargetCapabilityType.crossover              => 'Crossover',
-    DspTargetCapabilityType.gain                   => 'Gain',
-    DspTargetCapabilityType.delay                  => 'Delay',
-    DspTargetCapabilityType.phase                  => 'Phase',
-    DspTargetCapabilityType.limiterPlaceholder     => 'Limiter (Placeholder)',
-    DspTargetCapabilityType.safeloadPlaceholder    => 'SafeLoad (Placeholder)',
-    DspTargetCapabilityType.sigmaStudioPlaceholder => 'SigmaStudio (Placeholder)',
-  };
+        DspTargetCapabilityType.peq => 'PEQ',
+        DspTargetCapabilityType.crossover => 'Crossover',
+        DspTargetCapabilityType.gain => 'Gain',
+        DspTargetCapabilityType.delay => 'Delay',
+        DspTargetCapabilityType.phase => 'Phase',
+        DspTargetCapabilityType.limiterPlaceholder => 'Limiter (Placeholder)',
+        DspTargetCapabilityType.safeloadPlaceholder => 'SafeLoad (Placeholder)',
+        DspTargetCapabilityType.sigmaStudioPlaceholder =>
+          'SigmaStudio (Placeholder)',
+      };
 
   String toJson() => name;
   static DspTargetCapabilityType fromJson(String s) =>
@@ -81,11 +81,11 @@ enum BiquadDraftStatus {
   requiresVerification;
 
   String get label => switch (this) {
-    BiquadDraftStatus.notRequired          => 'Not Required',
-    BiquadDraftStatus.placeholder          => 'Placeholder',
-    BiquadDraftStatus.calculatedDraft      => 'Calculated Draft',
-    BiquadDraftStatus.requiresVerification => 'Requires Verification',
-  };
+        BiquadDraftStatus.notRequired => 'Not Required',
+        BiquadDraftStatus.placeholder => 'Placeholder',
+        BiquadDraftStatus.calculatedDraft => 'Calculated Draft',
+        BiquadDraftStatus.requiresVerification => 'Requires Verification',
+      };
 
   String toJson() => name;
   static BiquadDraftStatus fromJson(String s) =>
@@ -109,11 +109,11 @@ class DspTargetCapability {
   });
 
   Map<String, dynamic> toJson() => {
-    'type': type.toJson(),
-    'supported': supported,
-    if (limit != null) 'limit': limit,
-    if (note != null) 'note': note,
-  };
+        'type': type.toJson(),
+        'supported': supported,
+        if (limit != null) 'limit': limit,
+        if (note != null) 'note': note,
+      };
 
   factory DspTargetCapability.fromJson(Map<String, dynamic> j) =>
       DspTargetCapability(
@@ -167,16 +167,27 @@ class DspTargetProfile {
           maxChannels: 16,
           maxPeqBandsPerChannel: 12,
           capabilities: const [
-            DspTargetCapability(type: DspTargetCapabilityType.peq, supported: true, limit: 12),
-            DspTargetCapability(type: DspTargetCapabilityType.crossover, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.gain, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.delay, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.phase, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.limiterPlaceholder, supported: false,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.peq, supported: true, limit: 12),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.crossover, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.gain, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.delay, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.phase, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.limiterPlaceholder,
+                supported: false,
                 note: 'Not applicable in simulation.'),
-            DspTargetCapability(type: DspTargetCapabilityType.safeloadPlaceholder, supported: false,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.safeloadPlaceholder,
+                supported: false,
                 note: 'Not applicable in simulation.'),
-            DspTargetCapability(type: DspTargetCapabilityType.sigmaStudioPlaceholder, supported: false,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.sigmaStudioPlaceholder,
+                supported: false,
                 note: 'Not applicable in simulation.'),
           ],
         );
@@ -193,21 +204,40 @@ class DspTargetProfile {
           maxChannels: 16,
           maxPeqBandsPerChannel: 12,
           capabilities: const [
-            DspTargetCapability(type: DspTargetCapabilityType.peq, supported: true, limit: 12),
-            DspTargetCapability(type: DspTargetCapabilityType.crossover, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.gain, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.delay, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.phase, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.limiterPlaceholder, supported: false,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.peq, supported: true, limit: 12),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.crossover, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.gain, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.delay, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.phase, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.limiterPlaceholder,
+                supported: false,
                 note: 'Platform-dependent.'),
-            DspTargetCapability(type: DspTargetCapabilityType.safeloadPlaceholder, supported: false,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.safeloadPlaceholder,
+                supported: false,
                 note: 'Not applicable.'),
-            DspTargetCapability(type: DspTargetCapabilityType.sigmaStudioPlaceholder, supported: false,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.sigmaStudioPlaceholder,
+                supported: false,
                 note: 'Not applicable.'),
           ],
         );
 
       case DspTargetPlatform.adau1701:
+        // Final QA closure #2 (Issue B) — read the same authoritative
+        // write-capability source Deploy already gates on
+        // (HardwareDeviceProfiles.adau1701Icp5) instead of a second,
+        // independently-hardcoded number. Previously hardcoded to 6, which
+        // disagreed with Deploy's real evidenced 8-band allowlist and the
+        // PEQ Editor's 10 fixed slots — a single source now backs all three.
+        final maxVerifiedPeqBands = HardwareDeviceProfiles.adau1701Icp5
+            .maxWriteVerifiedPeqBandCount(HardwareParamKind.peqGain);
         return DspTargetProfile(
           platform: platform,
           displayName: 'ADAU1701',
@@ -216,26 +246,47 @@ class DspTargetProfile {
             DspSampleRate.hz48000,
           ],
           maxChannels: 4,
-          maxPeqBandsPerChannel: 6,
-          capabilities: const [
-            DspTargetCapability(type: DspTargetCapabilityType.peq, supported: true, limit: 6,
-                note: '6 biquad stages per channel (5.23 fixed-point).'),
-            DspTargetCapability(type: DspTargetCapabilityType.crossover, supported: true,
+          maxPeqBandsPerChannel: maxVerifiedPeqBands,
+          capabilities: [
+            DspTargetCapability(
+                type: DspTargetCapabilityType.peq,
+                supported: true,
+                limit: maxVerifiedPeqBands,
+                note: '$maxVerifiedPeqBands biquad stages per channel, '
+                    'hardware-write-verified (5.23 fixed-point). Bands '
+                    'beyond this are DSP slots but not currently '
+                    'hardware-deployable.'),
+            const DspTargetCapability(
+                type: DspTargetCapabilityType.crossover,
+                supported: true,
                 note: 'Via biquad cells.'),
-            DspTargetCapability(type: DspTargetCapabilityType.gain, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.delay, supported: true,
+            const DspTargetCapability(
+                type: DspTargetCapabilityType.gain, supported: true),
+            const DspTargetCapability(
+                type: DspTargetCapabilityType.delay,
+                supported: true,
                 note: 'SPDIF delay cells (samples).'),
-            DspTargetCapability(type: DspTargetCapabilityType.phase, supported: false,
+            const DspTargetCapability(
+                type: DspTargetCapabilityType.phase,
+                supported: false,
                 note: 'Phase via biquad approximation only.'),
-            DspTargetCapability(type: DspTargetCapabilityType.limiterPlaceholder, supported: false,
+            const DspTargetCapability(
+                type: DspTargetCapabilityType.limiterPlaceholder,
+                supported: false,
                 note: 'Placeholder — SigmaStudio program required.'),
-            DspTargetCapability(type: DspTargetCapabilityType.safeloadPlaceholder, supported: true,
+            const DspTargetCapability(
+                type: DspTargetCapabilityType.safeloadPlaceholder,
+                supported: true,
                 note: 'SafeLoad available — not implemented here.'),
-            DspTargetCapability(type: DspTargetCapabilityType.sigmaStudioPlaceholder, supported: true,
+            const DspTargetCapability(
+                type: DspTargetCapabilityType.sigmaStudioPlaceholder,
+                supported: true,
                 note: 'Export address map requires SigmaStudio capture.'),
           ],
-          warning: 'Logical profile only. No SigmaStudio addresses are defined.',
-          notes: 'ADAU1701: 28-bit fixed-point. 2 ADC / 2 DAC. 4 audio channels.',
+          warning:
+              'Logical profile only. No SigmaStudio addresses are defined.',
+          notes:
+              'ADAU1701: 28-bit fixed-point. 2 ADC / 2 DAC. 4 audio channels.',
         );
 
       case DspTargetPlatform.adau1466:
@@ -251,42 +302,60 @@ class DspTargetProfile {
           maxChannels: 16,
           maxPeqBandsPerChannel: 12,
           capabilities: const [
-            DspTargetCapability(type: DspTargetCapabilityType.peq, supported: true, limit: 12,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.peq,
+                supported: true,
+                limit: 12,
                 note: '32-bit fixed-point biquads.'),
-            DspTargetCapability(type: DspTargetCapabilityType.crossover, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.gain, supported: true),
-            DspTargetCapability(type: DspTargetCapabilityType.delay, supported: true,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.crossover, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.gain, supported: true),
+            DspTargetCapability(
+                type: DspTargetCapabilityType.delay,
+                supported: true,
                 note: 'Up to 1024 samples at 48 kHz.'),
-            DspTargetCapability(type: DspTargetCapabilityType.phase, supported: true,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.phase,
+                supported: true,
                 note: 'Via all-pass biquad cells.'),
-            DspTargetCapability(type: DspTargetCapabilityType.limiterPlaceholder, supported: false,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.limiterPlaceholder,
+                supported: false,
                 note: 'Placeholder — SigmaStudio program required.'),
-            DspTargetCapability(type: DspTargetCapabilityType.safeloadPlaceholder, supported: true,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.safeloadPlaceholder,
+                supported: true,
                 note: 'SafeLoad available — not implemented here.'),
-            DspTargetCapability(type: DspTargetCapabilityType.sigmaStudioPlaceholder, supported: true,
+            DspTargetCapability(
+                type: DspTargetCapabilityType.sigmaStudioPlaceholder,
+                supported: true,
                 note: 'Export address map requires SigmaStudio capture.'),
           ],
-          warning: 'Logical profile only. No SigmaStudio addresses are defined.',
-          notes: 'ADAU1466: 32-bit fixed-point. 16 channels. Up to 294.912 MHz core clock.',
+          warning:
+              'Logical profile only. No SigmaStudio addresses are defined.',
+          notes:
+              'ADAU1466: 32-bit fixed-point. 16 channels. Up to 294.912 MHz core clock.',
         );
     }
   }
 
   Map<String, dynamic> toJson() => {
-    'platform': platform.toJson(),
-    'displayName': displayName,
-    'precision': precision.toJson(),
-    'supportedSampleRates': supportedSampleRates.map((r) => r.toJson()).toList(),
-    'maxChannels': maxChannels,
-    'maxPeqBandsPerChannel': maxPeqBandsPerChannel,
-    'capabilities': capabilities.map((c) => c.toJson()).toList(),
-    if (warning != null) 'warning': warning,
-    if (notes != null) 'notes': notes,
-  };
+        'platform': platform.toJson(),
+        'displayName': displayName,
+        'precision': precision.toJson(),
+        'supportedSampleRates':
+            supportedSampleRates.map((r) => r.toJson()).toList(),
+        'maxChannels': maxChannels,
+        'maxPeqBandsPerChannel': maxPeqBandsPerChannel,
+        'capabilities': capabilities.map((c) => c.toJson()).toList(),
+        if (warning != null) 'warning': warning,
+        if (notes != null) 'notes': notes,
+      };
 
   factory DspTargetProfile.fromJson(Map<String, dynamic> j) =>
-      DspTargetProfile.forPlatform(
-          DspTargetPlatform.fromJson(j['platform'] as String? ?? 'simulationOnly'));
+      DspTargetProfile.forPlatform(DspTargetPlatform.fromJson(
+          j['platform'] as String? ?? 'simulationOnly'));
 }
 
 class DspParameterSlot {
@@ -309,24 +378,25 @@ class DspParameterSlot {
   });
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'channelId': channelId,
-    'blockType': blockType.toJson(),
-    'logicalName': logicalName,
-    if (slotIndex != null) 'slotIndex': slotIndex,
-    if (addressPlaceholder != null) 'addressPlaceholder': addressPlaceholder,
-    if (notes != null) 'notes': notes,
-  };
+        'id': id,
+        'channelId': channelId,
+        'blockType': blockType.toJson(),
+        'logicalName': logicalName,
+        if (slotIndex != null) 'slotIndex': slotIndex,
+        if (addressPlaceholder != null)
+          'addressPlaceholder': addressPlaceholder,
+        if (notes != null) 'notes': notes,
+      };
 
   factory DspParameterSlot.fromJson(Map<String, dynamic> j) => DspParameterSlot(
-    id: j['id'] as String,
-    channelId: j['channelId'] as String? ?? '',
-    blockType: ExportBlockType.fromJson(j['blockType'] as String? ?? 'peq'),
-    logicalName: j['logicalName'] as String? ?? '',
-    slotIndex: j['slotIndex'] as int?,
-    addressPlaceholder: j['addressPlaceholder'] as String?,
-    notes: j['notes'] as String?,
-  );
+        id: j['id'] as String,
+        channelId: j['channelId'] as String? ?? '',
+        blockType: ExportBlockType.fromJson(j['blockType'] as String? ?? 'peq'),
+        logicalName: j['logicalName'] as String? ?? '',
+        slotIndex: j['slotIndex'] as int?,
+        addressPlaceholder: j['addressPlaceholder'] as String?,
+        notes: j['notes'] as String?,
+      );
 }
 
 class BiquadCoefficientSet {
@@ -354,12 +424,16 @@ class BiquadCoefficientSet {
   });
 
   Map<String, dynamic> toJson() => {
-    'b0': b0, 'b1': b1, 'b2': b2, 'a1': a1, 'a2': a2,
-    'status': status.toJson(),
-    if (warning != null) 'warning': warning,
-    'normalized': normalized,
-    if (source != null) 'source': source,
-  };
+        'b0': b0,
+        'b1': b1,
+        'b2': b2,
+        'a1': a1,
+        'a2': a2,
+        'status': status.toJson(),
+        if (warning != null) 'warning': warning,
+        'normalized': normalized,
+        if (source != null) 'source': source,
+      };
 
   factory BiquadCoefficientSet.fromJson(Map<String, dynamic> j) =>
       BiquadCoefficientSet(
@@ -368,16 +442,22 @@ class BiquadCoefficientSet {
         b2: (j['b2'] as num?)?.toDouble() ?? 0.0,
         a1: (j['a1'] as num?)?.toDouble() ?? 0.0,
         a2: (j['a2'] as num?)?.toDouble() ?? 0.0,
-        status: BiquadDraftStatus.fromJson(j['status'] as String? ?? 'placeholder'),
+        status:
+            BiquadDraftStatus.fromJson(j['status'] as String? ?? 'placeholder'),
         warning: j['warning'] as String?,
         normalized: j['normalized'] as bool? ?? true,
         source: j['source'] as String?,
       );
 
   static const placeholder = BiquadCoefficientSet(
-    b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0,
+    b0: 1.0,
+    b1: 0.0,
+    b2: 0.0,
+    a1: 0.0,
+    a2: 0.0,
     status: BiquadDraftStatus.placeholder,
-    warning: 'Coefficient placeholder only. Final biquad calculation will be added later.',
+    warning:
+        'Coefficient placeholder only. Final biquad calculation will be added later.',
   );
 }
 
@@ -401,27 +481,27 @@ class BiquadDraftStage {
   });
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'channelId': channelId,
-    'sourceBlockId': sourceBlockId,
-    'title': title,
-    'filterSummary': filterSummary,
-    'coefficients': coefficients.toJson(),
-    if (notes != null) 'notes': notes,
-  };
+        'id': id,
+        'channelId': channelId,
+        'sourceBlockId': sourceBlockId,
+        'title': title,
+        'filterSummary': filterSummary,
+        'coefficients': coefficients.toJson(),
+        if (notes != null) 'notes': notes,
+      };
 
   factory BiquadDraftStage.fromJson(Map<String, dynamic> j) => BiquadDraftStage(
-    id: j['id'] as String,
-    channelId: j['channelId'] as String? ?? '',
-    sourceBlockId: j['sourceBlockId'] as String? ?? '',
-    title: j['title'] as String? ?? '',
-    filterSummary: j['filterSummary'] as String? ?? '',
-    coefficients: j['coefficients'] != null
-        ? BiquadCoefficientSet.fromJson(
-            Map<String, dynamic>.from(j['coefficients'] as Map))
-        : BiquadCoefficientSet.placeholder,
-    notes: j['notes'] as String?,
-  );
+        id: j['id'] as String,
+        channelId: j['channelId'] as String? ?? '',
+        sourceBlockId: j['sourceBlockId'] as String? ?? '',
+        title: j['title'] as String? ?? '',
+        filterSummary: j['filterSummary'] as String? ?? '',
+        coefficients: j['coefficients'] != null
+            ? BiquadCoefficientSet.fromJson(
+                Map<String, dynamic>.from(j['coefficients'] as Map))
+            : BiquadCoefficientSet.placeholder,
+        notes: j['notes'] as String?,
+      );
 }
 
 class DspImplementationDraft {
@@ -449,13 +529,18 @@ class DspImplementationDraft {
       .where((s) => s.coefficients.status == BiquadDraftStatus.placeholder)
       .length;
   int get requiresVerificationCount => biquadStages
-      .where((s) => s.coefficients.status == BiquadDraftStatus.requiresVerification)
+      .where((s) =>
+          s.coefficients.status == BiquadDraftStatus.requiresVerification)
       .length;
 
   String get readinessLabel {
-    if (biquadStages.isEmpty && parameterSlots.isEmpty) return 'Target profile ready';
+    if (biquadStages.isEmpty && parameterSlots.isEmpty) {
+      return 'Target profile ready';
+    }
     if (placeholderCount > 0) return 'Biquad placeholders only';
-    if (requiresVerificationCount > 0) return 'Some coefficients require verification';
+    if (requiresVerificationCount > 0) {
+      return 'Some coefficients require verification';
+    }
     if (calculatedCount > 0) return 'Draft coefficients generated';
     return 'Target profile ready';
   }
@@ -465,21 +550,22 @@ class DspImplementationDraft {
     List<DspParameterSlot>? parameterSlots,
     List<BiquadDraftStage>? biquadStages,
     List<String>? warnings,
-  }) => DspImplementationDraft(
-    targetProfile: targetProfile ?? this.targetProfile,
-    parameterSlots: parameterSlots ?? this.parameterSlots,
-    biquadStages: biquadStages ?? this.biquadStages,
-    warnings: warnings ?? this.warnings,
-    createdAt: createdAt,
-  );
+  }) =>
+      DspImplementationDraft(
+        targetProfile: targetProfile ?? this.targetProfile,
+        parameterSlots: parameterSlots ?? this.parameterSlots,
+        biquadStages: biquadStages ?? this.biquadStages,
+        warnings: warnings ?? this.warnings,
+        createdAt: createdAt,
+      );
 
   Map<String, dynamic> toJson() => {
-    'targetProfile': targetProfile.toJson(),
-    'parameterSlots': parameterSlots.map((s) => s.toJson()).toList(),
-    'biquadStages': biquadStages.map((s) => s.toJson()).toList(),
-    'warnings': warnings,
-    'createdAt': createdAt.toIso8601String(),
-  };
+        'targetProfile': targetProfile.toJson(),
+        'parameterSlots': parameterSlots.map((s) => s.toJson()).toList(),
+        'biquadStages': biquadStages.map((s) => s.toJson()).toList(),
+        'warnings': warnings,
+        'createdAt': createdAt.toIso8601String(),
+      };
 
   factory DspImplementationDraft.fromJson(Map<String, dynamic> j) =>
       DspImplementationDraft(
@@ -488,15 +574,15 @@ class DspImplementationDraft {
                 Map<String, dynamic>.from(j['targetProfile'] as Map))
             : DspTargetProfile.forPlatform(DspTargetPlatform.simulationOnly),
         parameterSlots: (j['parameterSlots'] as List? ?? [])
-            .map((e) => DspParameterSlot.fromJson(
-                Map<String, dynamic>.from(e as Map)))
+            .map((e) =>
+                DspParameterSlot.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
         biquadStages: (j['biquadStages'] as List? ?? [])
-            .map((e) => BiquadDraftStage.fromJson(
-                Map<String, dynamic>.from(e as Map)))
+            .map((e) =>
+                BiquadDraftStage.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
         warnings: List<String>.from(j['warnings'] as List? ?? []),
-        createdAt:
-            DateTime.tryParse(j['createdAt'] as String? ?? '') ?? DateTime.now(),
+        createdAt: DateTime.tryParse(j['createdAt'] as String? ?? '') ??
+            DateTime.now(),
       );
 }

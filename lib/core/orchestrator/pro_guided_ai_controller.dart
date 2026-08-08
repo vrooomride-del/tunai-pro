@@ -444,6 +444,13 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
               }
               // Simulate fillNextFreeSlot in applicationOrder to determine the
               // 1-based PEQ slot each candidate will occupy on apply.
+              // Closure #3 §6: mirror the same maxSlotCount cap _runApply
+              // uses so this preview never shows a slot the real apply
+              // would skip.
+              final previewMaxSlot = project.dspTarget == 'ADAU1701'
+                  ? HardwareDeviceProfiles.adau1701Icp5
+                      .maxWriteVerifiedPeqBandCount(HardwareParamKind.peqGain)
+                  : null;
               final slotMap = <int, int?>{};
               if (targetChannel != null) {
                 var simCh = targetChannel;
@@ -451,7 +458,14 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
                     (a, b) => a.applicationOrder.compareTo(b.applicationOrder));
                 for (final sel in sorted) {
                   final norm = simCh.normalized();
-                  final idx = norm.bands.indexWhere((b) => !b.enabled);
+                  var idx = -1;
+                  for (var i = 0; i < norm.bands.length; i++) {
+                    if (previewMaxSlot != null && i >= previewMaxSlot) break;
+                    if (!norm.bands[i].enabled) {
+                      idx = i;
+                      break;
+                    }
+                  }
                   slotMap[sel.applicationOrder] = idx >= 0 ? idx + 1 : null;
                   if (idx >= 0) {
                     simCh = simCh.fillNextFreeSlot(
@@ -459,6 +473,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
                       frequencyHz: sel.scoredCandidate.candidate.frequencyHz,
                       gainDb: sel.scoredCandidate.candidate.gainDb,
                       q: sel.scoredCandidate.candidate.q,
+                      maxSlotCount: previewMaxSlot,
                     );
                   }
                 }
@@ -1295,6 +1310,12 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
           applyBlockedReason =
               '슬롯 부족: $needed개 필요, 채널 ${channelLabel.isNotEmpty ? channelLabel : "—"}에 $availableSlots개 가능';
         }
+        // Closure #3 §6: mirror the same maxSlotCount cap _runApply uses so
+        // this preview never shows a slot the real apply would skip.
+        final previewMaxSlot = project.dspTarget == 'ADAU1701'
+            ? HardwareDeviceProfiles.adau1701Icp5
+                .maxWriteVerifiedPeqBandCount(HardwareParamKind.peqGain)
+            : null;
         final slotMap = <int, int?>{};
         if (targetChannel != null) {
           var simCh = targetChannel;
@@ -1302,7 +1323,14 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             ..sort((a, b) => a.applicationOrder.compareTo(b.applicationOrder));
           for (final sel in sorted) {
             final norm = simCh.normalized();
-            final idx = norm.bands.indexWhere((b) => !b.enabled);
+            var idx = -1;
+            for (var i = 0; i < norm.bands.length; i++) {
+              if (previewMaxSlot != null && i >= previewMaxSlot) break;
+              if (!norm.bands[i].enabled) {
+                idx = i;
+                break;
+              }
+            }
             slotMap[sel.applicationOrder] = idx >= 0 ? idx + 1 : null;
             if (idx >= 0) {
               simCh = simCh.fillNextFreeSlot(
@@ -1310,6 +1338,7 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
                 frequencyHz: sel.scoredCandidate.candidate.frequencyHz,
                 gainDb: sel.scoredCandidate.candidate.gainDb,
                 q: sel.scoredCandidate.candidate.q,
+                maxSlotCount: previewMaxSlot,
               );
             }
           }
@@ -1520,7 +1549,15 @@ class ProGuidedAiController extends StateNotifier<ProGuidedAiState> {
             .where((ch) => ch.channelId == analyzedChannelId)
             .firstOrNull ??
         PeqChannelState.fixed(analyzedChannelId);
-    final result = AcousticApplyEngine.apply(safety, channel);
+    // Closure #3 §6: cap NEW automatic slot allocation to the target's
+    // write-verified PEQ band count (ADAU1701: Band 1-8). Pre-existing
+    // Band 9/10 project data and ADAU1466/simulation behavior are untouched.
+    final maxSlotCount = project.dspTarget == 'ADAU1701'
+        ? HardwareDeviceProfiles.adau1701Icp5
+            .maxWriteVerifiedPeqBandCount(HardwareParamKind.peqGain)
+        : null;
+    final result = AcousticApplyEngine.apply(safety, channel,
+        maxSlotCount: maxSlotCount);
     if (alignedTuningState == null) return result;
     return TuningApplyResult(
       status: result.status,

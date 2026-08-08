@@ -142,6 +142,103 @@ void main() {
     });
   });
 
+  group('startLiveLevelCheck — fail-closed branches', () {
+    test('permission denied throws before touching the recorder', () async {
+      final container =
+          _buildContainer(_FakeInputDeviceApi(permissionGranted: false));
+      addTearDown(container.dispose);
+      final ctrl = container.read(mic.micMeasurementProvider.notifier);
+
+      expect(
+        () => ctrl.startLiveLevelCheck(
+          inputSelection: MeasurementInputDeviceSelection.systemDefault(
+              selectedAt: DateTime.now()),
+        ),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test(
+        'a vanished selected device throws MeasurementInputDeviceUnavailable '
+        '— never silently uses system default', () async {
+      final container = _buildContainer(
+          _FakeInputDeviceApi(permissionGranted: true, devices: const []));
+      addTearDown(container.dispose);
+      final ctrl = container.read(mic.micMeasurementProvider.notifier);
+
+      expect(
+        () => ctrl.startLiveLevelCheck(
+          inputSelection: MeasurementInputDeviceSelection.specificDevice(
+            deviceId: 'dev-gone',
+            labelSnapshot: 'Unplugged Mic',
+            selectedAt: DateTime.now(),
+          ),
+        ),
+        throwsA(isA<MeasurementInputDeviceUnavailable>()),
+      );
+    });
+
+    test('isLiveLevelCheckActive stays false after a failed start', () async {
+      final container =
+          _buildContainer(_FakeInputDeviceApi(permissionGranted: false));
+      addTearDown(container.dispose);
+      final ctrl = container.read(mic.micMeasurementProvider.notifier);
+
+      try {
+        await ctrl.startLiveLevelCheck(
+          inputSelection: MeasurementInputDeviceSelection.systemDefault(
+              selectedAt: DateTime.now()),
+        );
+      } catch (_) {}
+      expect(ctrl.isLiveLevelCheckActive, isFalse);
+    });
+  });
+
+  group('stopLiveLevelCheck — no-op safety', () {
+    test('is safe to call when no live session is active (no-op, no '
+        'exception, no platform channel touched)', () async {
+      final container =
+          _buildContainer(_FakeInputDeviceApi(permissionGranted: true));
+      addTearDown(container.dispose);
+      final ctrl = container.read(mic.micMeasurementProvider.notifier);
+
+      expect(ctrl.isLiveLevelCheckActive, isFalse);
+      await ctrl.stopLiveLevelCheck();
+      expect(ctrl.isLiveLevelCheckActive, isFalse);
+    });
+
+    test('is safe to call repeatedly back-to-back', () async {
+      final container =
+          _buildContainer(_FakeInputDeviceApi(permissionGranted: true));
+      addTearDown(container.dispose);
+      final ctrl = container.read(mic.micMeasurementProvider.notifier);
+
+      await ctrl.stopLiveLevelCheck();
+      await ctrl.stopLiveLevelCheck();
+      await ctrl.stopLiveLevelCheck();
+      expect(ctrl.isLiveLevelCheckActive, isFalse);
+    });
+  });
+
+  group('buildLiveLevelPassEvidence — fail-closed with no prior session', () {
+    test('returns failure() when no live level-check session has ever run',
+        () async {
+      final container =
+          _buildContainer(_FakeInputDeviceApi(permissionGranted: true));
+      addTearDown(container.dispose);
+      final ctrl = container.read(mic.micMeasurementProvider.notifier);
+
+      final result = ctrl.buildLiveLevelPassEvidence(
+        inputSelection: MeasurementInputDeviceSelection.systemDefault(
+            selectedAt: DateTime.now()),
+        representativeDbFs: -20.0,
+        peakDbFs: -15.0,
+        stableDuration: const Duration(seconds: 1),
+      );
+      expect(result.isSuccess, isFalse);
+    });
+  });
+
   group('MeasurementSetupCaptureResult factories', () {
     test('failure() produces isSuccess=false with the given error', () {
       final r = MeasurementSetupCaptureResult.failure('boom');

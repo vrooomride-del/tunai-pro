@@ -144,6 +144,22 @@ class HardwareDeviceProfile {
   bool isWriteEligible(HardwareParamKind kind, {int? bandIndex}) =>
       verificationFor(kind, bandIndex: bandIndex).isWriteEligible;
 
+  /// Final QA closure #2 (Issue B) — the single authoritative count of PEQ
+  /// bands (starting from band 0) that are write-eligible for [kind] on
+  /// this device, counting only a CONTIGUOUS run from band 0 (a gap means
+  /// the bands after it are not reliably usable as "the first N bands").
+  /// Every UI/export surface that claims a PEQ band count for a hardware
+  /// target should read this instead of hardcoding its own number, so
+  /// Export/Deploy/PEQ Editor can never independently drift out of sync
+  /// again. Returns 0 if band 0 itself isn't write-eligible.
+  int maxWriteVerifiedPeqBandCount(HardwareParamKind kind) {
+    var count = 0;
+    while (isWriteEligible(kind, bandIndex: count)) {
+      count++;
+    }
+    return count;
+  }
+
   Map<String, dynamic> toJson() => {
         'deviceId': deviceId,
         'deviceName': deviceName,

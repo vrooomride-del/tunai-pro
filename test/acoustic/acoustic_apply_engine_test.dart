@@ -465,4 +465,114 @@ void main() {
       expect(result.reasons.first, contains('not permitted'));
     });
   });
+
+  // FINAL QA CLOSURE #3 §6/§7 — ADAU1701 automatic PEQ allocation must never
+  // land on Band 9/10 (no write-verified hardware evidence there), while
+  // manual/pre-existing project data on those bands is preserved untouched.
+  group('maxSlotCount — ADAU1701 automatic Band 1-8 cap', () {
+    test('an empty channel only fills slots within maxSlotCount, never '
+        'beyond it', () {
+      final result = AcousticApplyEngine.apply(
+        _permitted([
+          for (var i = 0; i < 10; i++)
+            _sel(
+                featureId: 'f$i',
+                frequencyHz: 200.0 + i * 100,
+                applicationOrder: i + 1),
+        ]),
+        _emptyChannel(),
+        maxSlotCount: 8,
+      );
+      expect(result.applied.length, 8);
+      expect(result.skipped.length, 2);
+      expect(result.status, TuningApplyStatus.partiallyApplied);
+      // Bands 0-7 (1-based slots 1-8) enabled; bands 8-9 (slots 9-10) untouched.
+      final updated = result.updatedChannel.normalized();
+      for (var i = 0; i < 8; i++) {
+        expect(updated.bands[i].enabled, isTrue, reason: 'slot ${i + 1}');
+      }
+      for (var i = 8; i < 10; i++) {
+        expect(updated.bands[i].enabled, isFalse, reason: 'slot ${i + 1}');
+      }
+    });
+
+    test('pre-existing Band 9/10 data is preserved, never cleared or '
+        'overwritten by the cap', () {
+      // Simulate an existing project with Band 9 (index 8) already active
+      // from before this cap existed.
+      var seeded = _emptyChannel();
+      final normSeed = seeded.normalized();
+      final preExisting = normSeed.bands[8].copyWith(
+        enabled: true,
+        status: PeqBandStatus.active,
+        type: PeqBandType.peak,
+        frequencyHz: 5000.0,
+        gainDb: -4.0,
+        q: 2.0,
+      );
+      final seededBands = [...normSeed.bands];
+      seededBands[8] = preExisting;
+      seeded = normSeed.copyWith(bands: seededBands);
+
+      final result = AcousticApplyEngine.apply(
+        _permitted([_sel(featureId: 'new1', frequencyHz: 300.0)]),
+        seeded,
+        maxSlotCount: 8,
+      );
+
+      expect(result.applied.length, 1);
+      final updated = result.updatedChannel.normalized();
+      // Band 9 (index 8) is exactly as it was — new fill went to slot 1.
+      expect(updated.bands[8].frequencyHz, 5000.0);
+      expect(updated.bands[8].gainDb, -4.0);
+      expect(updated.bands[0].enabled, isTrue);
+      expect(updated.bands[0].frequencyHz, 300.0);
+    });
+
+    test('when Band 1-8 is already exhausted, new candidates are all '
+        'skipped with a clear "no deployable slot" reason — no fallback '
+        'to Band 9/10', () {
+      // Fill bands 0-7 only (Band 1-8), leave 8-9 free.
+      var ch = _emptyChannel();
+      for (var i = 0; i < 8; i++) {
+        ch = ch.fillNextFreeSlot(
+          type: PeqBandType.peak,
+          frequencyHz: 500.0 + i * 100,
+          gainDb: -2.0,
+          q: 1.0,
+        );
+      }
+      final result = AcousticApplyEngine.apply(
+        _permitted([_sel(featureId: 'overflow', frequencyHz: 1234.0)]),
+        ch,
+        maxSlotCount: 8,
+      );
+
+      expect(result.applied, isEmpty);
+      expect(result.status, TuningApplyStatus.noSlotAvailable);
+      expect(result.skipped.single.reason, contains('no deployable slot'));
+      expect(result.skipped.single.reason, contains('8-band limit'));
+      // Slots 9-10 remain untouched, not silently used as overflow.
+      final updated = result.updatedChannel.normalized();
+      expect(updated.bands[8].enabled, isFalse);
+      expect(updated.bands[9].enabled, isFalse);
+    });
+
+    test('omitting maxSlotCount preserves the original unrestricted '
+        '10-slot behavior (ADAU1466/simulation regression guard)', () {
+      final result = AcousticApplyEngine.apply(
+        _permitted([
+          for (var i = 0; i < 10; i++)
+            _sel(
+                featureId: 'f$i',
+                frequencyHz: 200.0 + i * 100,
+                applicationOrder: i + 1),
+        ]),
+        _emptyChannel(),
+      );
+      expect(result.applied.length, 10);
+      expect(result.skipped, isEmpty);
+      expect(result.status, TuningApplyStatus.ok);
+    });
+  });
 }

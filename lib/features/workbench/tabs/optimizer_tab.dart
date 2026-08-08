@@ -12,6 +12,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/deploy/pro_hardware_capability.dart';
 import '../../../core/pro_project.dart';
 import '../../../core/pro_project_store.dart';
 import '../../../core/pro_tuning_data.dart';
@@ -116,11 +117,18 @@ class _OptimizerTabState extends ConsumerState<OptimizerTab> {
           );
           // Fixed 10-slot model: fill the next free slot instead of appending a
           // new band, so the DSP's fixed PEQ slot count is never exceeded.
+          // Closure #3 §6: on ADAU1701, new automatic bands are further capped
+          // to the write-verified range (Band 1-8) — pre-existing Band 9/10
+          // data and ADAU1466/simulation behavior are unaffected.
           final updatedCh = existing.fillNextFreeSlot(
             type: PeqBandType.peak,
             frequencyHz: sug.proposedFrequencyHz!,
             gainDb: sug.proposedGainDb!,
             q: sug.proposedQ!,
+            maxSlotCount: project.dspTarget == 'ADAU1701'
+                ? HardwareDeviceProfiles.adau1701Icp5
+                    .maxWriteVerifiedPeqBandCount(HardwareParamKind.peqGain)
+                : null,
           );
           final hasEntry = tuning.peqChannels.any((c) => c.channelId == chId);
           final updatedChannels = hasEntry

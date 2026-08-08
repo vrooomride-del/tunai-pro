@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -15,6 +16,7 @@ import '../../core/akg/measurement_session.dart';
 import '../../core/calibration/calibration_applicator.dart';
 import '../../core/calibration/calibration_types.dart';
 import '../../core/pro_acoustic_data.dart' show MeasurementDataPoint;
+import '../../core/measurement/live_level_check.dart';
 import '../../core/measurement/measurement_input_device.dart';
 import '../../core/measurement/measurement_input_device_service.dart';
 import '../../core/measurement/measurement_pcm_quality_analyzer.dart';
@@ -127,6 +129,259 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   // only the stable portion of the signal.
   static const int _bleWarmupSec = 2;
 
+  // Real-hardware evidence (Final QA closure #2): a fixed 2s pre-roll is not
+  // always enough for real A2DP connection/codec negotiation — on a real
+  // Bluetooth speaker the recorder can start before audible playback has
+  // actually stabilized, producing a capture whose Peak is elevated (some
+  // real tone did land) but whose RMS stays at the noise floor (most of the
+  // window was still silence/settling). Rather than raising the shared
+  // _bleWarmupSec (which every BLE capture path uses, and which cannot be
+  // tuned to a single "correct" number for all devices), runInputLevelCheck
+  // records an EXTRA settling margin beyond the nominal check duration and
+  // analyzes only the trailing steady-state window — the tone keeps playing
+  // for the whole extended recording, so whichever portion is actually
+  // stable ends up inside the analyzed tail regardless of exact BLE timing.
+  static const Duration _levelCheckSettlingMargin = Duration(seconds: 2);
+
+  // ── Measurement Setup Live Level Check ──────────────────────────────────
+  // Single-session bookkeeping: at most one live level-check session may be
+  // active at a time, and it must never overlap with any other use of
+  // _recorder/_player (background noise, the WAV-based level check, Factory/
+  // Room measurement). See stopLiveLevelCheck()'s doc comment and every
+  // other capture method's "exclusivity guard" call at its own top.
+  bool _liveLevelCheckActive = false;
+  String? _liveLevelCheckTempPath;
+  StreamController<LiveLevelReading>? _liveLevelController;
+
+  // Retained (deliberately NOT cleared by stopLiveLevelCheck — see that
+  // method's doc comment) so buildLiveLevelPassEvidence() can still build
+  // evidence using the session that JUST ended, after the caller has
+  // already stopped it per the exclusivity contract. Overwritten by the
+  // next startLiveLevelCheck() call; never persisted, never resources
+  // needing cleanup.
+  MeasurementInputDeviceDescriptor? _lastLiveLevelResolvedDevice;
+  MeasurementInputDeviceSelection? _lastLiveLevelInputSelection;
+
+  /// True while a live level-check session (started by
+  /// [startLiveLevelCheck]) is active. Exposed so callers/tests can assert
+  /// exclusivity without reaching into private state.
+  bool get isLiveLevelCheckActive => _liveLevelCheckActive;
+
+  /// Starts a CONTINUOUS live level-check session: loops a short pink-noise
+  /// test signal (never a single finite play — see the LoopMode.one usage
+  /// below) while continuously polling the resolved [inputSelection]'s real
+  /// input level via the SAME fail-closed device-resolution path every
+  /// other capture method uses (never a system-default silent fallback —
+  /// device unavailable throws [MeasurementInputDeviceUnavailable]).
+  ///
+  /// Returns a broadcast [Stream] of [LiveLevelReading] classified against
+  /// [policy]'s existing WAV-based-check thresholds (see
+  /// [classifyLiveLevel]) — no new arbitrary numbers.
+  ///
+  /// Any previously-active live session (or any other _recorder/_player use)
+  /// must already be stopped — this method always starts from a clean
+  /// exclusivity guard by calling [stopLiveLevelCheck] first, so calling it
+  /// again while already active safely restarts rather than colliding.
+  Future<Stream<LiveLevelReading>> startLiveLevelCheck({
+    required MeasurementInputDeviceSelection inputSelection,
+    MeasurementQualityPolicy? policy,
+    MeasurementLevelCheckSignal signal = MeasurementLevelCheckSignal.leftOnly,
+    Duration pollInterval = const Duration(milliseconds: 200),
+  }) async {
+    final effectivePolicy = policy ?? MeasurementQualityPolicy.proProvisional();
+
+    // Exclusivity guard (item 5): never start over an existing session.
+    await stopLiveLevelCheck();
+
+    final hasPermission = await inputDeviceService.hasPermission();
+    if (!hasPermission) {
+      throw StateError('MIC_PERMISSION_DENIED');
+    }
+
+    // Fail-closed device resolution — identical path to every other capture
+    // method. Never a silent system-default fallback for a specific
+    // selection: throws MeasurementInputDeviceUnavailable if absent.
+    final resolvedDevice =
+        await inputDeviceService.resolveForRecording(inputSelection);
+
+    // A short, fixed-length tone looped via LoopMode.one — genuinely
+    // continuous playback for as long as the live session runs, not one
+    // finite play with a live meter that keeps running after it ends.
+    const toneSeconds = 3;
+    final toneFile = signal == MeasurementLevelCheckSignal.mono
+        ? await _generatePinkNoise(totalSec: toneSeconds)
+        : await _generateStereoPinkNoise(
+            leftActive: signal == MeasurementLevelCheckSignal.leftOnly,
+            totalSec: toneSeconds,
+          );
+
+    final dir = await getTemporaryDirectory();
+    final tempPath = '${dir.path}/tunai_pro_live_level_check_'
+        '${DateTime.now().millisecondsSinceEpoch}.wav';
+
+    try {
+      await _player.setFilePath(toneFile.path);
+      await _player.setLoopMode(LoopMode.one);
+      // Same just_audio lifecycle contract fixed in Closure #3: play()'s
+      // Future only completes when playback FINISHES, never when it starts
+      // — must not be awaited, or a looped track would never return control
+      // here at all.
+      unawaited(_player.play().catchError((_) {}));
+
+      await _recorder.start(
+        RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: sampleRate,
+          numChannels: 1,
+          device:
+              MeasurementInputDeviceService.toRecordConfigDevice(resolvedDevice),
+        ),
+        path: tempPath,
+      );
+    } catch (e) {
+      // Start failed partway through — clean up whatever did succeed before
+      // rethrowing, so no orphaned player/recorder state survives.
+      await stopLiveLevelCheck();
+      rethrow;
+    }
+
+    _liveLevelCheckActive = true;
+    _liveLevelCheckTempPath = tempPath;
+    _lastLiveLevelResolvedDevice = resolvedDevice;
+    _lastLiveLevelInputSelection = inputSelection;
+
+    final controller = StreamController<LiveLevelReading>.broadcast();
+    _liveLevelController = controller;
+
+    _recorder.onAmplitudeChanged(pollInterval).listen(
+      (amp) {
+        if (!_liveLevelCheckActive || controller.isClosed) return;
+        final reading = LiveLevelReading(
+          currentDbFs: amp.current,
+          status: classifyLiveLevel(amp.current, effectivePolicy),
+          at: DateTime.now(),
+        );
+        controller.add(reading);
+      },
+      onError: (Object _, StackTrace __) {
+        // Non-fatal: a metering glitch must not tear down the session or
+        // crash the UI — the next tick simply tries again.
+      },
+    );
+
+    return controller.stream;
+  }
+
+  /// Stops the live level-check session started by [startLiveLevelCheck]:
+  /// cancels the amplitude stream, stops player+recorder, restores the
+  /// player's loop mode to its default (off — every other playback path in
+  /// this controller expects LoopMode.off), and deletes the temp WAV file.
+  /// Safe to call when no session is active (no-op) and safe to call
+  /// multiple times. Every step is wrapped so one failure (e.g. the temp
+  /// file already gone) never skips the rest of cleanup — mirrors
+  /// [_safeStopRecorderAndPlayer]'s own swallow-and-continue shape.
+  Future<void> stopLiveLevelCheck() async {
+    if (!_liveLevelCheckActive &&
+        _liveLevelController == null &&
+        _liveLevelCheckTempPath == null) {
+      return;
+    }
+
+    await _liveLevelController?.close();
+    _liveLevelController = null;
+
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+    try {
+      await _player.stop();
+    } catch (_) {}
+    try {
+      await _player.setLoopMode(LoopMode.off);
+    } catch (_) {}
+
+    final tempPath = _liveLevelCheckTempPath;
+    if (tempPath != null) {
+      try {
+        final f = File(tempPath);
+        if (await f.exists()) await f.delete();
+      } catch (_) {}
+    }
+
+    _liveLevelCheckActive = false;
+    _liveLevelCheckTempPath = null;
+  }
+
+  /// Builds Input Level PASS evidence DIRECTLY from a sustained-GOOD live
+  /// level-check run — the fix for the double-verification bug where a live
+  /// PASS was being silently overwritten by an automatically re-triggered
+  /// legacy WAV check. The stable-GOOD window itself IS the verification;
+  /// this never runs a second real capture.
+  ///
+  /// Reuses the EXACT existing [MeasurementQualityEvaluation] /
+  /// [MeasurementQualityMetrics] / [MeasurementInputDeviceSnapshot] shapes
+  /// [runInputLevelCheck] already produces — not a parallel evidence system.
+  /// [MeasurementSetupReadinessBuilder] and every downstream consumer
+  /// (persistence, invalidation, display) treat this identically to a WAV
+  /// check's evidence, because it IS the same type.
+  ///
+  /// [statuses] is always exactly `{ready}` — this must only ever be called
+  /// after [LiveLevelStabilityTracker.isStableGood] is true, which by
+  /// construction means every tracked tick was already GOOD (never tooLow/
+  /// tooHigh). [clippedSampleCount]/[clippedSampleRatio] are always 0 and
+  /// [noiseFloorDbFs]/[signalToNoiseDb] are always null — this evidence
+  /// deliberately makes NO clipping or SNR claim (see live_level_check.dart's
+  /// header comment on why clipping cannot be proven from a live meter);
+  /// those remain the separate noise-floor evaluation's and the real WAV
+  /// analyzer's job respectively.
+  ///
+  /// Must be called with the SAME [inputSelection] the just-stopped live
+  /// session used — safe to call after [stopLiveLevelCheck] (this reads the
+  /// retained `_lastLiveLevel*` fields, not live session state).
+  MeasurementSetupCaptureResult buildLiveLevelPassEvidence({
+    required MeasurementInputDeviceSelection inputSelection,
+    required double representativeDbFs,
+    required double peakDbFs,
+    required Duration stableDuration,
+    DateTime? capturedAt,
+  }) {
+    if (_lastLiveLevelInputSelection == null) {
+      return MeasurementSetupCaptureResult.failure(
+          'No live level-check session has run yet.');
+    }
+
+    final now = capturedAt ?? DateTime.now();
+    final deviceSnapshot = MeasurementInputDeviceSnapshot(
+      deviceId: _lastLiveLevelResolvedDevice?.id,
+      label: _lastLiveLevelResolvedDevice?.label ?? inputSelection.labelSnapshot,
+      isSystemDefault: inputSelection.useSystemDefault,
+      platform: Platform.operatingSystem,
+      actualSampleRate: sampleRate,
+      actualChannelCount: 1,
+      capturedAt: now,
+    );
+
+    final metrics = MeasurementQualityMetrics(
+      peakDbFs: peakDbFs,
+      rmsDbFs: representativeDbFs,
+      clippedSampleCount: 0,
+      clippedSampleRatio: 0.0,
+      duration: stableDuration,
+      actualSampleRate: sampleRate,
+      actualChannelCount: 1,
+      inputDeviceSnapshot: deviceSnapshot,
+      capturedAt: now,
+      source: 'liveMeter',
+    );
+
+    return MeasurementSetupCaptureResult.success(
+      MeasurementQualityEvaluation(
+        statuses: const {MeasurementQualityStatus.ready},
+        metrics: metrics,
+      ),
+    );
+  }
+
   /// Overridable seam for tests: the real implementation wraps this
   /// controller's own [_recorder]. A test fake can override this getter to
   /// return a service backed by a fake [MeasurementInputDeviceApi] without
@@ -156,6 +411,10 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     SpeakerProfile? speakerProfile,
     bool bleWarmup = false,
   }) async {
+    // Exclusivity guard (Live Level Check item 5): a live session must never
+    // overlap with an actual measurement capture on the shared
+    // _recorder/_player instances.
+    await stopLiveLevelCheck();
     try {
       final hasPermission = await _recorder.hasPermission();
       if (!hasPermission) {
@@ -182,8 +441,20 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         if (bleWarmup) {
           // BLE A2DP: 재생 먼저 → 코덱 초기화 대기 → 녹음 시작.
           // 코덱이 깨어나는 동안 녹음하면 무음/팝이 섞이므로 반드시 이 순서.
+          //
+          // Closure #3 root cause (confirmed via real-hardware temporal
+          // trace on runInputLevelCheck + just_audio source):
+          // AudioPlayer.play()'s Future does NOT complete when playback
+          // starts — it completes only when playback FINISHES (or is
+          // paused/stopped/superseded). Awaiting it here previously blocked
+          // this whole branch until the tone had already fully played out,
+          // so the warmup delay and recorder.start() below only ran AFTER
+          // playback was already over — the recorder never overlapped with
+          // the tone at all. Fire-and-forget (unawaited) so control
+          // proceeds immediately, matching the intended "record while the
+          // tone plays" design.
           await _player.setFilePath(wavFile.path);
-          await _player.play();
+          unawaited(_player.play().catchError((_) {}));
           state = state.copyWith(message: 'BLE 오디오 초기화 중... ($_bleWarmupSec초)');
           await Future.delayed(Duration(seconds: warmup));
           await _recorder.start(
@@ -196,6 +467,10 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
           );
         } else {
           // 일반(USB/유선) 측정 — 기존 순서 그대로 보존: 녹음 먼저 시작 후 재생.
+          // See the bleWarmup branch above for why play() must not be
+          // awaited: doing so previously blocked until the tone fully
+          // finished, so the subsequent measurement-duration wait recorded a
+          // second, fully silent segment AFTER playback had already ended.
           await _recorder.start(
             const RecordConfig(
               encoder: AudioEncoder.wav,
@@ -205,7 +480,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
             path: recPath,
           );
           await _player.setFilePath(wavFile.path);
-          await _player.play();
+          unawaited(_player.play().catchError((_) {}));
         }
 
         state = state.copyWith(message: '측정 중... ($durationSec초)');
@@ -326,6 +601,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   Future<List<Map<String, double>>> _measureOnce({
     bool bleWarmup = false,
   }) async {
+    // Exclusivity guard (Live Level Check item 5).
+    await stopLiveLevelCheck();
     final warmup = bleWarmup ? _bleWarmupSec : 0;
     final wavFile = await _generatePinkNoise(totalSec: warmup + durationSec);
     final dir = await getTemporaryDirectory();
@@ -337,8 +614,11 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     try {
       if (bleWarmup) {
         // BLE A2DP: 재생 먼저 → 코덱 초기화 대기 → 녹음 시작.
+        // See startMeasurement()'s bleWarmup branch for why play() must not
+        // be awaited (just_audio's play() Future only completes when
+        // playback finishes, not when it starts).
         await _player.setFilePath(wavFile.path);
-        await _player.play();
+        unawaited(_player.play().catchError((_) {}));
         await Future.delayed(Duration(seconds: warmup));
         await _recorder.start(
           const RecordConfig(
@@ -357,7 +637,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
           path: recPath,
         );
         await _player.setFilePath(wavFile.path);
-        await _player.play();
+        unawaited(_player.play().catchError((_) {}));
       }
       await Future.delayed(const Duration(seconds: durationSec));
     } finally {
@@ -447,6 +727,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     MeasurementQualityPolicy? policy,
   }) async {
     final effectivePolicy = policy ?? MeasurementQualityPolicy.proProvisional();
+    // Exclusivity guard (Live Level Check item 5).
+    await stopLiveLevelCheck();
     try {
       final hasPermission = await inputDeviceService.hasPermission();
       if (!hasPermission) {
@@ -461,16 +743,14 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
           '${DateTime.now().millisecondsSinceEpoch}.wav';
 
       try {
-        await _recorder.start(
-          RecordConfig(
-            encoder: AudioEncoder.wav,
-            sampleRate: sampleRate,
-            numChannels: 1,
-            device: MeasurementInputDeviceService.toRecordConfigDevice(
-                resolvedDevice),
-          ),
-          path: recPath,
+        final config = RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: sampleRate,
+          numChannels: 1,
+          device: MeasurementInputDeviceService.toRecordConfigDevice(
+              resolvedDevice),
         );
+        await _recorder.start(config, path: recPath);
         await Future.delayed(effectivePolicy.silenceCaptureDuration);
       } finally {
         await _safeStopRecorderAndPlayer();
@@ -507,6 +787,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     double? priorNoiseFloorDbFs,
   }) async {
     final effectivePolicy = policy ?? MeasurementQualityPolicy.proProvisional();
+    // Exclusivity guard (Live Level Check item 5).
+    await stopLiveLevelCheck();
     try {
       final hasPermission = await inputDeviceService.hasPermission();
       if (!hasPermission) {
@@ -517,7 +799,14 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
           await inputDeviceService.resolveForRecording(inputSelection);
 
       final warmup = bleWarmup ? _bleWarmupSec : 0;
-      final totalSec = warmup + effectivePolicy.levelCheckDuration.inSeconds;
+      // Record for an extra settling margin beyond the nominal check
+      // duration on the BLE path only — see _levelCheckSettlingMargin's doc
+      // comment. The local/USB path is unaffected: its existing
+      // record-then-play ordering has no equivalent codec-negotiation delay.
+      final recordDuration = bleWarmup
+          ? effectivePolicy.levelCheckDuration + _levelCheckSettlingMargin
+          : effectivePolicy.levelCheckDuration;
+      final totalSec = warmup + recordDuration.inSeconds;
       final wavFile = signal == MeasurementLevelCheckSignal.mono
           ? await _generatePinkNoise(totalSec: totalSec)
           : await _generateStereoPinkNoise(
@@ -540,29 +829,55 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         if (bleWarmup) {
           // Same order as startMeasurement(): play first, wait for BLE A2DP
           // codec warmup, then start recording.
+          //
+          // Closure #3 root cause (confirmed via real-hardware temporal
+          // trace + just_audio source): AudioPlayer.play()'s Future does
+          // NOT complete when playback starts — it awaits an internal
+          // playCompleter that only completes when playback FINISHES (or is
+          // paused/stopped/superseded). Awaiting it here previously blocked
+          // this whole branch until the tone had already fully played out,
+          // so the warmup delay and recorder.start() below only ran AFTER
+          // playback was already over — the recorder never overlapped with
+          // the audible tone at all. Fire-and-forget (unawaited) so control
+          // proceeds immediately, matching the intended "record while the
+          // tone plays" design.
           await _player.setFilePath(wavFile.path);
-          await _player.play();
+          unawaited(_player.play().catchError((_) {}));
           await Future.delayed(Duration(seconds: warmup));
           await _recorder.start(config, path: recPath);
         } else {
           // Same order as startMeasurement(): record first, then play.
+          // See the bleWarmup branch above for why play() must not be
+          // awaited: doing so previously blocked until the tone fully
+          // finished, so the subsequent record-duration wait recorded a
+          // second, fully silent segment AFTER playback had already ended —
+          // diluting the analyzed window with ~50% silence.
           await _recorder.start(config, path: recPath);
           await _player.setFilePath(wavFile.path);
-          await _player.play();
+          unawaited(_player.play().catchError((_) {}));
         }
-        await Future.delayed(effectivePolicy.levelCheckDuration);
+        await Future.delayed(recordDuration);
       } finally {
         await _safeStopRecorderAndPlayer();
       }
 
-      return _evaluateSetupCapture(
+      final result = await _evaluateSetupCapture(
         recPath: recPath,
         policy: effectivePolicy,
         inputSelection: inputSelection,
         resolvedDevice: resolvedDevice,
         priorNoiseFloorDbFs: priorNoiseFloorDbFs,
         selfIsNoiseFloor: false,
+        // Discard the leading settling margin from the RECORDED samples —
+        // the tone played continuously through it, but on BLE it may still
+        // be silence/transient at the app's clock if real A2DP audio
+        // started later than the fixed _bleWarmupSec pre-roll assumed.
+        // Only the trailing, guaranteed-steady levelCheckDuration window is
+        // analyzed. No-op (0) on the local/USB path.
+        trimLeadingDuration:
+            bleWarmup ? _levelCheckSettlingMargin : Duration.zero,
       );
+      return result;
     } on MeasurementInputDeviceUnavailable catch (e) {
       return MeasurementSetupCaptureResult.failure(e.toString());
     } catch (e) {
@@ -573,6 +888,13 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
   /// Shared tail for both setup-check methods: reads the recorded file,
   /// parses its actual WAV metadata (never assumes byte offset 44), runs
   /// the PCM quality analyzer, and evaluates against [policy].
+  ///
+  /// [trimLeadingDuration] discards that much of the START of the recorded
+  /// samples before analysis — used by [runInputLevelCheck]'s BLE path to
+  /// exclude a settling window that may still be silence at the app's
+  /// clock even though the tone was already playing (see
+  /// [_levelCheckSettlingMargin]). Zero (the default) analyzes the full
+  /// capture unchanged, exactly as before this existed.
   Future<MeasurementSetupCaptureResult> _evaluateSetupCapture({
     required String recPath,
     required MeasurementQualityPolicy policy,
@@ -580,6 +902,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     required MeasurementInputDeviceDescriptor? resolvedDevice,
     required double? priorNoiseFloorDbFs,
     required bool selfIsNoiseFloor,
+    Duration trimLeadingDuration = Duration.zero,
   }) async {
     final Uint8List bytes;
     try {
@@ -595,7 +918,17 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
           'Malformed capture: ${wav.errors.join('; ')}');
     }
 
-    final samples = MeasurementWavParser.extractNormalizedSamples(bytes, wav);
+    var samples = MeasurementWavParser.extractNormalizedSamples(bytes, wav);
+    if (trimLeadingDuration > Duration.zero) {
+      // Mono only (both setup-check callers always record numChannels: 1),
+      // so one sample == one frame — no interleave math needed.
+      final trimSamples =
+          (trimLeadingDuration.inMilliseconds * wav.sampleRate! / 1000).round();
+      if (trimSamples > 0 && trimSamples < samples.length) {
+        samples = samples.sublist(trimSamples);
+      }
+    }
+
     final pcmResult = MeasurementPcmQualityAnalyzer.analyze(
       samples: samples,
       sampleRate: wav.sampleRate!,
@@ -626,6 +959,17 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
       noiseFloorDbFs: selfIsNoiseFloor ? pcm.rmsDbFs : priorNoiseFloorDbFs,
       inputDeviceSnapshot: deviceSnapshot,
       policy: policy,
+      // P0 root-cause fix: a noise-floor-only capture must never compute
+      // SNR against itself, nor apply signal-relative-to-expected-level
+      // checks (inputLevelTooLow/TooHigh) that assume a signal was
+      // actually expected — see MeasurementQualityEvaluationMode's doc
+      // comment. The real level-check path (selfIsNoiseFloor: false) stays
+      // at the default signalCapture mode — completely unaffected, every
+      // existing check (RMS bounds, SNR against a genuine prior background
+      // capture, clipping) runs exactly as before.
+      mode: selfIsNoiseFloor
+          ? MeasurementQualityEvaluationMode.noiseFloorCapture
+          : MeasurementQualityEvaluationMode.signalCapture,
     );
 
     return MeasurementSetupCaptureResult.success(evaluation);
@@ -842,6 +1186,8 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
     CalibrationCurve? calibrationCurve,
     bool bleWarmup = false,
   }) async {
+    // Exclusivity guard (Live Level Check item 5).
+    await stopLiveLevelCheck();
     try {
       final hasPermission = await _recorder.hasPermission();
       if (!hasPermission) {
@@ -867,8 +1213,11 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
         if (bleWarmup) {
           // Same BLE A2DP warm-up order as startMeasurement(): play first,
           // wait for codec init, then start recording.
+          // See startMeasurement()'s bleWarmup branch for why play() must
+          // not be awaited (just_audio's play() Future only completes when
+          // playback finishes, not when it starts).
           await _player.setFilePath(wavFile.path);
-          await _player.play();
+          unawaited(_player.play().catchError((_) {}));
           state = state.copyWith(message: 'BLE 오디오 초기화 중... ($_bleWarmupSec초)');
           await Future.delayed(Duration(seconds: warmup));
           await _recorder.start(
@@ -891,7 +1240,7 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
             path: recPath,
           );
           await _player.setFilePath(wavFile.path);
-          await _player.play();
+          unawaited(_player.play().catchError((_) {}));
         }
 
         state = state.copyWith(message: '측정 중... ($durationSec초)');
@@ -1080,6 +1429,20 @@ class MicMeasurementController extends StateNotifier<MicMeasurementState> {
 
   @override
   void dispose() {
+    // Live Level Check cleanup (item 5: dialog close/dispose gets the same
+    // cleanup as an explicit stop). dispose() is sync, so this can't await
+    // _recorder.stop()/_player.stop() — but disposing them immediately below
+    // already tears down any in-flight session, and the temp file delete is
+    // fire-and-forget best-effort (a leftover temp WAV is not a correctness
+    // issue, just disk clutter).
+    _liveLevelController?.close();
+    _liveLevelController = null;
+    _liveLevelCheckActive = false;
+    final leftoverTempPath = _liveLevelCheckTempPath;
+    _liveLevelCheckTempPath = null;
+    if (leftoverTempPath != null) {
+      unawaited(File(leftoverTempPath).delete().catchError((_) => File('')));
+    }
     _recorder.dispose();
     _player.dispose();
     super.dispose();

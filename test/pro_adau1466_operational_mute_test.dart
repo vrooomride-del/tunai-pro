@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tunai_pro/core/pro_adau1466_gain_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_mute_channel_registry.dart';
 import 'package:tunai_pro/core/pro_adau1466_operational_mute_executor.dart';
+import 'package:tunai_pro/core/pro_project.dart';
+import 'package:tunai_pro/core/pro_project_store.dart';
 import 'package:tunai_pro/core/pro_usbi_native_backend.dart';
 import 'package:tunai_pro/features/workbench/tabs/mute_tab.dart';
 import 'package:tunai_pro/features/workbench/workbench_shell.dart';
+
+const _kMuteTestProjectId = 'missing-project';
 
 class _RealQueueBackend implements ProUsbiNativeBackend {
   final List<List<int>?> responses;
@@ -35,22 +40,42 @@ class _RealQueueBackend implements ProUsbiNativeBackend {
   }
 }
 
-Widget _harness(_RealQueueBackend backend, {void Function(String)? onStop}) =>
-    ProviderScope(
-      child: MaterialApp(
-        home: Scaffold(
-          body: MuteTab(
-            projectId: 'missing-project',
-            usbiBackend: backend,
-            isWindowsPlatform: () => true,
-            deviceOpen: true,
-            onDspWriteStop: onStop,
-          ),
+/// P0-4 — MuteTab now gates its ADAU1466 controls on `project.dspTarget`,
+/// so this harness seeds a real ADAU1466 project into the store (previously
+/// the tab rendered the ADAU1466 controls unconditionally, needing no
+/// project at all).
+Future<Widget> _harness(_RealQueueBackend backend,
+    {void Function(String)? onStop}) async {
+  final container = ProviderContainer();
+  await container.read(proProjectStoreProvider.notifier).addProject(
+        ProProject(
+          id: _kMuteTestProjectId,
+          name: 'ADAU1466 Mute Test',
+          dspTarget: 'ADAU1466',
+          createdAt: DateTime.utc(2026, 1, 1),
+          updatedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+  return UncontrolledProviderScope(
+    container: container,
+    child: MaterialApp(
+      home: Scaffold(
+        body: MuteTab(
+          projectId: _kMuteTestProjectId,
+          usbiBackend: backend,
+          isWindowsPlatform: () => true,
+          deviceOpen: true,
+          onDspWriteStop: onStop,
         ),
       ),
-    );
+    ),
+  );
+}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   const expected = <String, (String, String, int, int)>{
     'WFL': ('Mute1_3', 'MuteNoSlewADAU145XAlg3mute', 0x060E, 1),
     'MID_L': ('Mute1', 'MuteNoSlewADAU145XAlg1mute', 0x0613, 1),
@@ -170,7 +195,7 @@ void main() {
   testWidgets('visible Mute tab contains six neutral-polarity controls',
       (tester) async {
     final backend = _RealQueueBackend([]);
-    await tester.pumpWidget(_harness(backend));
+    await tester.pumpWidget(await _harness(backend));
     expect(find.byKey(const Key('operational-adau1466-mute-controls')),
         findsOneWidget);
     for (final name in expected.keys) {
@@ -189,7 +214,7 @@ void main() {
       [0x01],
       [0x01]
     ]);
-    await tester.pumpWidget(_harness(backend));
+    await tester.pumpWidget(await _harness(backend));
     await tester.ensureVisible(find.byKey(const Key('mute-link-WFL+WFR')));
     await tester.tap(find.byKey(const Key('mute-link-WFL+WFR')));
     await tester.ensureVisible(find.byKey(const Key('mute-toggle-WFR')));
@@ -207,7 +232,7 @@ void main() {
   testWidgets('set all operations are sequential in registry order',
       (tester) async {
     final backend = _RealQueueBackend(List.generate(12, (_) => [0x01]));
-    await tester.pumpWidget(_harness(backend));
+    await tester.pumpWidget(await _harness(backend));
     await tester.ensureVisible(find.byKey(const Key('mute-all-checked')));
     await tester.tap(find.byKey(const Key('mute-all-checked')));
     await tester.pumpAndSettle();
@@ -232,7 +257,7 @@ void main() {
       [0x01], // MID_L batch rollback
       [0x01], // WFL batch rollback
     ]);
-    await tester.pumpWidget(_harness(backend));
+    await tester.pumpWidget(await _harness(backend));
     await tester.ensureVisible(find.byKey(const Key('mute-all-unchecked')));
     await tester.tap(find.byKey(const Key('mute-all-unchecked')));
     await tester.pumpAndSettle();
@@ -256,8 +281,8 @@ void main() {
       [0x01],
       [0x00],
     ]);
-    await tester
-        .pumpWidget(_harness(backend, onStop: (value) => warning = value));
+    await tester.pumpWidget(
+        await _harness(backend, onStop: (value) => warning = value));
     await tester.ensureVisible(find.byKey(const Key('mute-all-unchecked')));
     await tester.tap(find.byKey(const Key('mute-all-unchecked')));
     await tester.pumpAndSettle();
@@ -274,8 +299,8 @@ void main() {
       [0x01],
       [0x00],
     ]);
-    await tester
-        .pumpWidget(_harness(backend, onStop: (value) => warning = value));
+    await tester.pumpWidget(
+        await _harness(backend, onStop: (value) => warning = value));
     await tester.ensureVisible(find.byKey(const Key('mute-link-WFL+WFR')));
     await tester.tap(find.byKey(const Key('mute-link-WFL+WFR')));
     await tester.ensureVisible(find.byKey(const Key('mute-toggle-WFR')));
@@ -308,5 +333,86 @@ void main() {
     await tester.drag(find.byType(ListView).first, const Offset(0, -600));
     await tester.pump();
     expect(find.text('Mute'), findsOneWidget);
+  });
+
+  group('P0-4 — target isolation', () {
+    testWidgets(
+        'ADAU1701 project shows zero ADAU1466 controls/addresses, only the '
+        'unavailable notice', (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await container.read(proProjectStoreProvider.notifier).addProject(
+            ProProject(
+              id: 'adau1701-mute-proj',
+              name: 'ADAU1701 Mute Test',
+              dspTarget: 'ADAU1701',
+              createdAt: DateTime.utc(2026, 1, 1),
+              updatedAt: DateTime.utc(2026, 1, 1),
+            ),
+          );
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: MuteTab(projectId: 'adau1701-mute-proj'),
+          ),
+        ),
+      ));
+
+      expect(find.byKey(const Key('operational-adau1466-mute-controls')),
+          findsNothing,
+          reason: 'ADAU1466 controls must never render for an ADAU1701 '
+              'project');
+      expect(find.textContaining('ADAU1466'), findsNothing,
+          reason: 'no ADAU1466 label/address text must leak through');
+      expect(
+          find.textContaining('ADAU1701 Mute control is not hardware-verified'),
+          findsOneWidget);
+    });
+
+    testWidgets('ADAU1466 project still shows its real controls unchanged',
+        (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await container.read(proProjectStoreProvider.notifier).addProject(
+            ProProject(
+              id: 'adau1466-mute-proj',
+              name: 'ADAU1466 Mute Test',
+              dspTarget: 'ADAU1466',
+              createdAt: DateTime.utc(2026, 1, 1),
+              updatedAt: DateTime.utc(2026, 1, 1),
+            ),
+          );
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: MuteTab(projectId: 'adau1466-mute-proj'),
+          ),
+        ),
+      ));
+
+      expect(find.byKey(const Key('operational-adau1466-mute-controls')),
+          findsOneWidget);
+      expect(
+          find.textContaining('ADAU1701 Mute control is not hardware-verified'),
+          findsNothing);
+    });
+
+    testWidgets('unknown/no project resolves to the safe unavailable state',
+        (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: MuteTab(projectId: 'no-such-project'),
+          ),
+        ),
+      ));
+      expect(find.byKey(const Key('operational-adau1466-mute-controls')),
+          findsNothing);
+    });
   });
 }

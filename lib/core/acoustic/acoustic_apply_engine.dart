@@ -162,10 +162,16 @@ abstract final class AcousticApplyEngine {
   ///
   /// Returns a [TuningApplyResult] describing what was applied and the
   /// updated [PeqChannelState]. Pure and deterministic.
+  /// [maxSlotCount], when provided, caps automatic slot allocation to
+  /// indices `0..maxSlotCount-1` (e.g. a hardware target's write-verified
+  /// band count) — see [PeqChannelState.fillNextFreeSlot]. Pre-existing
+  /// bands beyond the cap are never modified or removed; candidates that
+  /// cannot find a free slot within the cap are recorded as skipped.
   static TuningApplyResult apply(
     CandidateSafetyResult safetyResult,
-    PeqChannelState channel,
-  ) {
+    PeqChannelState channel, {
+    int? maxSlotCount,
+  }) {
     // Safety gate: block if not permitted.
     if (!safetyResult.applyPermitted) {
       return TuningApplyResult(
@@ -213,6 +219,7 @@ abstract final class AcousticApplyEngine {
         frequencyHz: c.frequencyHz,
         gainDb: c.gainDb,
         q: c.q,
+        maxSlotCount: maxSlotCount,
       );
 
       if (ch.activeBandCount > before) {
@@ -229,7 +236,11 @@ abstract final class AcousticApplyEngine {
           candidateId: c.candidateId,
           featureId: c.featureId,
           applicationOrder: sel.applicationOrder,
-          reason: 'no free slot available in channel ${channel.channelId}.',
+          reason: maxSlotCount != null
+              ? 'no deployable slot available in channel '
+                  '${channel.channelId} within the write-verified '
+                  '$maxSlotCount-band limit.'
+              : 'no free slot available in channel ${channel.channelId}.',
         ));
       }
     }

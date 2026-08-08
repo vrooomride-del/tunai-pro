@@ -170,7 +170,15 @@ abstract final class RoomAutoPeq {
       selection,
       CandidateSafetyPolicy.adau1701Icp5(),
     );
-    final applyResult = AcousticApplyEngine.apply(safety, currentWooferChannel);
+    // Room Auto PEQ is ADAU1701-only (see module header) — new automatic
+    // candidates must never land on Band 9/10, which have no write-verified
+    // hardware evidence. Pre-existing project bands there are left untouched.
+    final applyResult = AcousticApplyEngine.apply(
+      safety,
+      currentWooferChannel,
+      maxSlotCount: HardwareDeviceProfiles.adau1701Icp5
+          .maxWriteVerifiedPeqBandCount(HardwareParamKind.peqGain),
+    );
 
     return RoomAutoPeqCandidate(
       side: side,

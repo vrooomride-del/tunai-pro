@@ -17,6 +17,8 @@ import '../../../core/adau1701_peq_response.dart';
 import '../../../core/transport/adau1701_ch0_band0_read_service.dart';
 import '../../../core/transport/adau1701_peq_band_decoder.dart';
 import '../../../core/transport/icp5_raw_state_read.dart';
+import '../../../core/transport/icp5_transports.dart'
+    show Icp5BluetoothTransport;
 import '../../../core/dsp/adau1701/readback/adau1701_state_decoder.dart';
 import '../../../core/dsp/adau1701/readback/adau1701_output_role.dart';
 import '../../../core/dsp/adau1701/readback/adau1701_peq_reference.dart';
@@ -81,7 +83,9 @@ class _DspReadResult {
 
   factory _DspReadResult.failure(_FailureKind kind, {String? detail}) =>
       _DspReadResult._(
-          status: _ReadStatus.failure, failureKind: kind, failureDetail: detail);
+          status: _ReadStatus.failure,
+          failureKind: kind,
+          failureDetail: detail);
 }
 
 // ── Graph data helpers ────────────────────────────────────────────────────────
@@ -139,7 +143,8 @@ typedef PayloadDiffEntry = ({int offset, int before, int after});
 List<PayloadDiffEntry> computePayloadDiff(
     List<int> baseline, List<int> current) {
   final diffs = <PayloadDiffEntry>[];
-  final len = baseline.length < current.length ? baseline.length : current.length;
+  final len =
+      baseline.length < current.length ? baseline.length : current.length;
   for (var i = 0; i < len; i++) {
     if (baseline[i] != current[i]) {
       diffs.add((offset: i, before: baseline[i], after: current[i]));
@@ -236,8 +241,7 @@ class Adau1701DspStateReadCard extends StatefulWidget {
       _Adau1701DspStateReadCardState();
 }
 
-class _Adau1701DspStateReadCardState
-    extends State<Adau1701DspStateReadCard> {
+class _Adau1701DspStateReadCardState extends State<Adau1701DspStateReadCard> {
   _DspReadResult? _result;
   bool _showExport = false;
   bool _copiedToClipboard = false;
@@ -273,8 +277,8 @@ class _Adau1701DspStateReadCardState
 
     if (!widget.transport.isConnected) {
       if (mounted) {
-        setState(() =>
-            _result = _DspReadResult.failure(_FailureKind.transportNotConnected));
+        setState(() => _result =
+            _DspReadResult.failure(_FailureKind.transportNotConnected));
       }
       return;
     }
@@ -286,49 +290,73 @@ class _Adau1701DspStateReadCardState
       return;
     }
 
+    // P0-2 — suspend the BLE heartbeat for the duration of this multi-
+    // exchange raw-state read, exactly like deploy_dialog.dart's proven
+    // mitigation: a heartbeat tick firing mid-sequence grabs _busy and the
+    // read fails with "Another ICP5 transaction is active." USB has no
+    // heartbeat timer, so this is a no-op there.
+    final bleTransport = widget.transport is Icp5BluetoothTransport
+        ? widget.transport as Icp5BluetoothTransport
+        : null;
+    bleTransport?.pauseHeartbeat();
+    if (bleTransport != null) {
+      const pollInterval = Duration(milliseconds: 50);
+      var waited = 0;
+      while (bleTransport.busy && waited < 3500) {
+        await Future.delayed(pollInterval);
+        waited += 50;
+      }
+    }
+
     final RawDspStateSnapshot snapshot;
     try {
-      snapshot = await widget.transport.readRawDspState();
-    } on TimeoutException catch (e) {
-      if (mounted) {
-        setState(() => _result = _DspReadResult.failure(
-            _FailureKind.rawStateReadTimeout,
-            detail: '$e'));
+      try {
+        snapshot = await widget.transport.readRawDspState();
+      } on TimeoutException catch (e) {
+        if (mounted) {
+          setState(() => _result = _DspReadResult.failure(
+              _FailureKind.rawStateReadTimeout,
+              detail: '$e'));
+        }
+        return;
+      } on FormatException catch (e) {
+        final msg = e.message.toLowerCase();
+        final kind = msg.contains('length')
+            ? _FailureKind.invalidPageLength
+            : msg.contains('payload') || msg.contains('513')
+                ? _FailureKind.payloadNot513Bytes
+                : _FailureKind.unknown;
+        if (mounted) {
+          setState(
+              () => _result = _DspReadResult.failure(kind, detail: e.message));
+        }
+        return;
+      } on StateError catch (e) {
+        final msg = e.message.toLowerCase();
+        final kind = msg.contains('timeout') || msg.contains('response')
+            ? _FailureKind.rawStateReadTimeout
+            : _FailureKind.unknown;
+        if (mounted) {
+          setState(
+              () => _result = _DspReadResult.failure(kind, detail: e.message));
+        }
+        return;
+      } on ArgumentError catch (e) {
+        if (mounted) {
+          setState(() => _result = _DspReadResult.failure(
+              _FailureKind.payloadNot513Bytes,
+              detail: '${e.message}'));
+        }
+        return;
+      } catch (e) {
+        if (mounted) {
+          setState(() => _result =
+              _DspReadResult.failure(_FailureKind.unknown, detail: '$e'));
+        }
+        return;
       }
-      return;
-    } on FormatException catch (e) {
-      final msg = e.message.toLowerCase();
-      final kind = msg.contains('length')
-          ? _FailureKind.invalidPageLength
-          : msg.contains('payload') || msg.contains('513')
-              ? _FailureKind.payloadNot513Bytes
-              : _FailureKind.unknown;
-      if (mounted) {
-        setState(() => _result = _DspReadResult.failure(kind, detail: e.message));
-      }
-      return;
-    } on StateError catch (e) {
-      final msg = e.message.toLowerCase();
-      final kind = msg.contains('timeout') || msg.contains('response')
-          ? _FailureKind.rawStateReadTimeout
-          : _FailureKind.unknown;
-      if (mounted) {
-        setState(() => _result = _DspReadResult.failure(kind, detail: e.message));
-      }
-      return;
-    } on ArgumentError catch (e) {
-      if (mounted) {
-        setState(() => _result = _DspReadResult.failure(
-            _FailureKind.payloadNot513Bytes,
-            detail: '${e.message}'));
-      }
-      return;
-    } catch (e) {
-      if (mounted) {
-        setState(
-            () => _result = _DspReadResult.failure(_FailureKind.unknown, detail: '$e'));
-      }
-      return;
+    } finally {
+      bleTransport?.resumeHeartbeat();
     }
 
     if (snapshot.payload.length != 513) {
@@ -345,8 +373,9 @@ class _Adau1701DspStateReadCardState
       stateSnapshot = Adau1701StateDecoder.decode(snapshot);
     } on FormatException catch (e) {
       if (mounted) {
-        setState(() => _result =
-            _DspReadResult.failure(_FailureKind.decoderFailure, detail: e.message));
+        setState(() => _result = _DspReadResult.failure(
+            _FailureKind.decoderFailure,
+            detail: e.message));
       }
       return;
     }
@@ -355,8 +384,9 @@ class _Adau1701DspStateReadCardState
     for (var ch = 0; ch < stateSnapshot.outputs.length; ch++) {
       final output = stateSnapshot.outputs[ch];
       final role = miuMaxOutputRoles[ch].shortLabel;
-      final layoutLabel =
-          output.isChannelLayoutProven ? 'hardware-confirmed' : 'candidate-offset';
+      final layoutLabel = output.isChannelLayoutProven
+          ? 'hardware-confirmed'
+          : 'candidate-offset';
       debugPrint('[DSP READBACK] Output${ch + 1} ($role) [$layoutLabel]');
       for (final band in output.peqBands) {
         final statusLabel = switch (band.verificationStatus) {
@@ -427,7 +457,8 @@ class _Adau1701DspStateReadCardState
       final rawG = payload[21];
       final g = rawG >= 0x80 ? rawG - 256 : rawG;
       final q10 = payload[23];
-      debugPrint('[DSP SCAN] Ch0 @ 19: ${f}Hz / ${(g / 10.0).toStringAsFixed(1)}dB'
+      debugPrint(
+          '[DSP SCAN] Ch0 @ 19: ${f}Hz / ${(g / 10.0).toStringAsFixed(1)}dB'
           ' / Q${(q10 / 10.0).toStringAsFixed(1)}  (expect 1800Hz/0.0dB/Q1.2)');
       hits.add(_ChannelScanHit(
         offset: 19,
@@ -489,7 +520,8 @@ class _Adau1701DspStateReadCardState
 
     if (!wooferFound) {
       debugPrint('[DSP SCAN] WOOFER Band1 (60Hz/+0.5dB/Q1.0) — NOT FOUND');
-      debugPrint('[DSP SCAN] → Use hex diff: CAPTURE BASELINE → change Woofer band'
+      debugPrint(
+          '[DSP SCAN] → Use hex diff: CAPTURE BASELINE → change Woofer band'
           ' in MiUMAX → READ → diff shows Ch2 offset');
     }
 
@@ -500,7 +532,8 @@ class _Adau1701DspStateReadCardState
           payload[i + 1] == 0x07 &&
           payload[i + 2] == 0x00 &&
           payload[i + 4] == 0x0C) {
-        debugPrint('[DSP SCAN] TWEETER duplicate @ offset $i  ← Ch1 (Tweeter R) candidate');
+        debugPrint(
+            '[DSP SCAN] TWEETER duplicate @ offset $i  ← Ch1 (Tweeter R) candidate');
         hits.add(_ChannelScanHit(
           offset: i,
           isWoofer: false,
@@ -564,7 +597,8 @@ class _Adau1701DspStateReadCardState
             Icon(
               Icons.memory_outlined,
               size: 13,
-              color: connected ? kProGreen.withValues(alpha: 0.8) : Colors.white24,
+              color:
+                  connected ? kProGreen.withValues(alpha: 0.8) : Colors.white24,
             ),
             const SizedBox(width: 8),
             Text('ADAU1701 LIVE DSP STATE', style: proTitle(size: 12)),
@@ -580,7 +614,6 @@ class _Adau1701DspStateReadCardState
             style: proSubtitle(size: 10),
           ),
           const SizedBox(height: 12),
-
           Row(children: [
             _ReadButton(
               canRead: _canRead,
@@ -631,7 +664,6 @@ class _Adau1701DspStateReadCardState
               ],
             ]),
           ],
-
           if (!connected && !_isReading) ...[
             const SizedBox(height: 8),
             Row(children: [
@@ -647,7 +679,6 @@ class _Adau1701DspStateReadCardState
               ),
             ]),
           ],
-
           if (_result != null && !_isReading) ...[
             const SizedBox(height: 14),
             const Divider(color: Color(0xFF1E2832), height: 1),
@@ -695,7 +726,8 @@ class _Adau1701DspStateReadCardState
 class _TransportStatusBadge extends StatelessWidget {
   final bool connected;
   final bool handshaked;
-  const _TransportStatusBadge({required this.connected, required this.handshaked});
+  const _TransportStatusBadge(
+      {required this.connected, required this.handshaked});
 
   @override
   Widget build(BuildContext context) {
@@ -715,7 +747,10 @@ class _TransportStatusBadge extends StatelessWidget {
       ),
       child: Text(label,
           style: TextStyle(
-              fontSize: 9, color: color, fontWeight: FontWeight.w600, letterSpacing: 0.7)),
+              fontSize: 9,
+              color: color,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.7)),
     );
   }
 }
@@ -724,7 +759,8 @@ class _ReadButton extends StatelessWidget {
   final bool canRead;
   final bool isReading;
   final VoidCallback? onTap;
-  const _ReadButton({required this.canRead, required this.isReading, required this.onTap});
+  const _ReadButton(
+      {required this.canRead, required this.isReading, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -734,26 +770,31 @@ class _ReadButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: canRead ? kProAccent.withValues(alpha: 0.08) : kProSurface,
-          border: Border.all(color: canRead ? kProAccent.withValues(alpha: 0.45) : kProBorder),
+          border: Border.all(
+              color: canRead ? kProAccent.withValues(alpha: 0.45) : kProBorder),
           borderRadius: BorderRadius.circular(4),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           if (isReading) ...[
             SizedBox(
-              width: 11, height: 11,
+              width: 11,
+              height: 11,
               child: CircularProgressIndicator(
-                strokeWidth: 1.5, color: kProAccent.withValues(alpha: 0.7)),
+                  strokeWidth: 1.5, color: kProAccent.withValues(alpha: 0.7)),
             ),
             const SizedBox(width: 8),
           ] else ...[
-            Icon(Icons.download_outlined, size: 13, color: canRead ? kProAccent : Colors.white24),
+            Icon(Icons.download_outlined,
+                size: 13, color: canRead ? kProAccent : Colors.white24),
             const SizedBox(width: 8),
           ],
           Text(
             isReading ? 'Reading DSP state…' : 'READ CURRENT DSP STATE',
             style: TextStyle(
-              fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.5,
-              color: canRead ? kProAccent : Colors.white24),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+                color: canRead ? kProAccent : Colors.white24),
           ),
         ]),
       ),
@@ -766,8 +807,11 @@ class _ExportButton extends StatelessWidget {
   final bool copied;
   final VoidCallback onToggle;
   final VoidCallback onCopy;
-  const _ExportButton({required this.showExport, required this.copied,
-      required this.onToggle, required this.onCopy});
+  const _ExportButton(
+      {required this.showExport,
+      required this.copied,
+      required this.onToggle,
+      required this.onCopy});
 
   @override
   Widget build(BuildContext context) {
@@ -777,15 +821,22 @@ class _ExportButton extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-              border: Border.all(color: kProBorder), borderRadius: BorderRadius.circular(4)),
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(4)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(showExport ? Icons.visibility_off_outlined : Icons.data_object_outlined,
-                size: 12, color: Colors.white38),
+            Icon(
+                showExport
+                    ? Icons.visibility_off_outlined
+                    : Icons.data_object_outlined,
+                size: 12,
+                color: Colors.white38),
             const SizedBox(width: 6),
             Text(showExport ? 'HIDE HEX DUMP' : 'EXPORT RAW DSP STATE',
                 style: const TextStyle(
-                    fontSize: 10, fontWeight: FontWeight.w600,
-                    letterSpacing: 0.4, color: Colors.white38)),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                    color: Colors.white38)),
           ]),
         ),
       ),
@@ -796,14 +847,20 @@ class _ExportButton extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
-              color: copied ? kProGreen.withValues(alpha: 0.08) : Colors.transparent,
-              border: Border.all(color: copied ? kProGreen.withValues(alpha: 0.35) : kProBorder),
+              color: copied
+                  ? kProGreen.withValues(alpha: 0.08)
+                  : Colors.transparent,
+              border: Border.all(
+                  color:
+                      copied ? kProGreen.withValues(alpha: 0.35) : kProBorder),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(copied ? 'COPIED' : 'COPY',
                 style: TextStyle(
-                    fontSize: 10, fontWeight: FontWeight.w600,
-                    letterSpacing: 0.4, color: copied ? kProGreen : Colors.white38)),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                    color: copied ? kProGreen : Colors.white38)),
           ),
         ),
       ],
@@ -823,8 +880,10 @@ class _JsonCopyButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: copied ? kProGreen.withValues(alpha: 0.08) : Colors.transparent,
-          border: Border.all(color: copied ? kProGreen.withValues(alpha: 0.35) : kProBorder),
+          color:
+              copied ? kProGreen.withValues(alpha: 0.08) : Colors.transparent,
+          border: Border.all(
+              color: copied ? kProGreen.withValues(alpha: 0.35) : kProBorder),
           borderRadius: BorderRadius.circular(4),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -833,8 +892,10 @@ class _JsonCopyButton extends StatelessWidget {
           const SizedBox(width: 5),
           Text(copied ? 'JSON COPIED' : 'COPY JSON',
               style: TextStyle(
-                  fontSize: 10, fontWeight: FontWeight.w600,
-                  letterSpacing: 0.4, color: copied ? kProGreen : Colors.white38)),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.4,
+                  color: copied ? kProGreen : Colors.white38)),
         ]),
       ),
     );
@@ -881,7 +942,10 @@ class _SuccessDisplay extends StatelessWidget {
           ),
           child: const Text('LIVE DSP STATE',
               style: TextStyle(
-                  fontSize: 9, color: kProGreen, fontWeight: FontWeight.w600, letterSpacing: 0.7)),
+                  fontSize: 9,
+                  color: kProGreen,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.7)),
         ),
         const SizedBox(width: 8),
         Text('captured ${ts.toLocal().toString().substring(11, 19)}',
@@ -892,7 +956,8 @@ class _SuccessDisplay extends StatelessWidget {
       // Output selector — scrollable to fit role labels
       SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        child: _OutputSelectorRow(selectedOutput: selectedOutput, onSelected: onOutputSelected),
+        child: _OutputSelectorRow(
+            selectedOutput: selectedOutput, onSelected: onOutputSelected),
       ),
       const SizedBox(height: 10),
 
@@ -925,15 +990,15 @@ class _SuccessDisplay extends StatelessWidget {
         Text('$roleLabel  ·  PEQ Comparison',
             style: proTitle(size: 11, color: Colors.white70)),
         const SizedBox(height: 4),
-        if (!selectedComparison.hasComparableReference)
-          _GainQPendingNote(),
+        if (!selectedComparison.hasComparableReference) _GainQPendingNote(),
         const SizedBox(height: 6),
         _ComparisonTable(comparisons: selectedComparison.bandComparisons!),
         const SizedBox(height: 14),
       ],
 
       // Full band table (raw readback values + confidence badges)
-      Text('$roleLabel  ·  EQ (All Bands)', style: proTitle(size: 11, color: Colors.white70)),
+      Text('$roleLabel  ·  EQ (All Bands)',
+          style: proTitle(size: 11, color: Colors.white70)),
       const SizedBox(height: 8),
       _BandHeaderRow(),
       const SizedBox(height: 4),
@@ -950,7 +1015,8 @@ class _SuccessDisplay extends StatelessWidget {
         const SizedBox(height: 14),
         const Divider(color: Color(0xFF1E2832), height: 1),
         const SizedBox(height: 10),
-        Text('RAW HEX DUMP  (513 bytes)', style: proSubtitle(size: 9, color: Colors.white38)),
+        Text('RAW HEX DUMP  (513 bytes)',
+            style: proSubtitle(size: 9, color: Colors.white38)),
         const SizedBox(height: 6),
         Container(
           padding: const EdgeInsets.all(10),
@@ -964,7 +1030,10 @@ class _SuccessDisplay extends StatelessWidget {
             child: Text(
               stateSnapshot.rawSnapshot.rawHexDump(),
               style: const TextStyle(
-                fontSize: 9, color: Colors.white54, fontFamily: 'monospace', height: 1.6),
+                  fontSize: 9,
+                  color: Colors.white54,
+                  fontFamily: 'monospace',
+                  height: 1.6),
             ),
           ),
         ),
@@ -989,9 +1058,24 @@ class _MatchScoreSection extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('DSP MATCH SCORE',
-            style: const TextStyle(
-                fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.8, color: Colors.white38)),
+        const Text('MATCH VS MIUMAX ENGINEERING REFERENCE',
+            style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: Colors.white38)),
+        const SizedBox(height: 4),
+        // P0-D — this compares live readback against a FIXED MiUMAX
+        // factory-default reference, never this project's actual current
+        // tuning. A low score here means "differs from the MiUMAX
+        // baseline" (expected once you've customized PEQ), not "DSP
+        // readback failed" — Full DSP Readback above already proves the
+        // hardware read succeeded regardless of this score.
+        Text(
+          'Fixed engineering baseline, not this project\'s current tuning — '
+          'a low score is expected once PEQ has been customized.',
+          style: proSubtitle(size: 9, color: Colors.white30),
+        ),
         const SizedBox(height: 8),
         for (final out in comparison.outputs) ...[
           _OutputScoreRow(outputResult: out),
@@ -1018,7 +1102,10 @@ class _OutputScoreRow extends StatelessWidget {
         SizedBox(
           width: 80,
           child: Text(role.shortLabel,
-              style: const TextStyle(fontSize: 10, color: Colors.white54, fontWeight: FontWeight.w600)),
+              style: const TextStyle(
+                  fontSize: 10,
+                  color: Colors.white54,
+                  fontWeight: FontWeight.w600)),
         ),
         Expanded(
           child: Text('Gain/Q pending capture',
@@ -1030,14 +1117,21 @@ class _OutputScoreRow extends StatelessWidget {
     final matched = outputResult.matchCount;
     final total = outputResult.totalComparable;
     final pct = outputResult.matchScorePercent;
-    final scoreColor = pct >= 90 ? kProGreen : pct >= 60 ? kProAmber : kProRed;
+    final scoreColor = pct >= 90
+        ? kProGreen
+        : pct >= 60
+            ? kProAmber
+            : kProRed;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         SizedBox(
           width: 80,
           child: Text(role.shortLabel,
-              style: TextStyle(fontSize: 10, color: scoreColor, fontWeight: FontWeight.w600)),
+              style: TextStyle(
+                  fontSize: 10,
+                  color: scoreColor,
+                  fontWeight: FontWeight.w600)),
         ),
         Expanded(
           child: ClipRRect(
@@ -1052,11 +1146,15 @@ class _OutputScoreRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Text('$matched/$total  ${pct.toStringAsFixed(0)}%',
-            style: TextStyle(fontSize: 10, color: scoreColor, fontWeight: FontWeight.w600,
+            style: TextStyle(
+                fontSize: 10,
+                color: scoreColor,
+                fontWeight: FontWeight.w600,
                 fontFeatures: const [FontFeature.tabularFigures()])),
         if (layoutUnconfirmed) ...[
           const SizedBox(width: 4),
-          Icon(Icons.warning_amber_outlined, size: 10, color: kProAmber.withValues(alpha: 0.7)),
+          Icon(Icons.warning_amber_outlined,
+              size: 10, color: kProAmber.withValues(alpha: 0.7)),
         ],
       ]),
     ]);
@@ -1069,7 +1167,8 @@ class _OutputSelectorRow extends StatelessWidget {
   static const _outputCount = 4;
   final int selectedOutput;
   final ValueChanged<int> onSelected;
-  const _OutputSelectorRow({required this.selectedOutput, required this.onSelected});
+  const _OutputSelectorRow(
+      {required this.selectedOutput, required this.onSelected});
 
   @override
   Widget build(BuildContext context) {
@@ -1095,8 +1194,11 @@ class _OutputTab extends StatelessWidget {
   final bool selected;
   final bool isProven;
   final VoidCallback onTap;
-  const _OutputTab({required this.label, required this.selected,
-      required this.isProven, required this.onTap});
+  const _OutputTab(
+      {required this.label,
+      required this.selected,
+      required this.isProven,
+      required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1106,13 +1208,17 @@ class _OutputTab extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: selected ? activeColor.withValues(alpha: 0.10) : Colors.transparent,
+          color: selected
+              ? activeColor.withValues(alpha: 0.10)
+              : Colors.transparent,
           border: Border.all(color: selected ? activeColor : kProBorder),
           borderRadius: BorderRadius.circular(3),
         ),
         child: Text(label,
             style: TextStyle(
-                fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.4,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
                 color: selected ? activeColor : Colors.white38)),
       ),
     );
@@ -1163,11 +1269,15 @@ class _LiveGraphSection extends StatelessWidget {
         graphBands = liveBands;
         overlayCurves = refBands.isNotEmpty
             ? [
-                PeqGraphCurve(label: 'Readback', bands: liveBands, color: kProAccent),
-                PeqGraphCurve(label: 'MiUMAX', bands: refBands, color: kProAmber),
+                PeqGraphCurve(
+                    label: 'Readback', bands: liveBands, color: kProAccent),
+                PeqGraphCurve(
+                    label: 'MiUMAX', bands: refBands, color: kProAmber),
               ]
             : null;
-        graphWidgetMode = overlayCurves != null ? PeqGraphMode.difference : PeqGraphMode.single;
+        graphWidgetMode = overlayCurves != null
+            ? PeqGraphMode.difference
+            : PeqGraphMode.single;
     }
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1182,10 +1292,12 @@ class _LiveGraphSection extends StatelessWidget {
           ),
         ],
       ]),
-      if (!hasComparableReference && graphMode == _GraphDisplayMode.referenceOnly)
+      if (!hasComparableReference &&
+          graphMode == _GraphDisplayMode.referenceOnly)
         Padding(
           padding: const EdgeInsets.only(top: 6),
-          child: Text('Reference curve: frequency positions only · Gain/Q pending',
+          child: Text(
+              'Reference curve: frequency positions only · Gain/Q pending',
               style: proSubtitle(size: 9, color: Colors.white30)),
         ),
       const SizedBox(height: 8),
@@ -1205,7 +1317,8 @@ class _GraphModeButton extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _GraphModeButton({required this.label, required this.selected, required this.onTap});
+  const _GraphModeButton(
+      {required this.label, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1214,14 +1327,19 @@ class _GraphModeButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: selected ? kProAccent.withValues(alpha: 0.10) : Colors.transparent,
+          color: selected
+              ? kProAccent.withValues(alpha: 0.10)
+              : Colors.transparent,
           border: Border.all(
-              color: selected ? kProAccent.withValues(alpha: 0.45) : kProBorder),
+              color:
+                  selected ? kProAccent.withValues(alpha: 0.45) : kProBorder),
           borderRadius: BorderRadius.circular(3),
         ),
         child: Text(label,
             style: TextStyle(
-                fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.3,
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
                 color: selected ? kProAccent : Colors.white30)),
       ),
     );
@@ -1247,13 +1365,15 @@ class _ChannelLayoutWarningBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Row(children: [
-        Icon(Icons.warning_amber_outlined, size: 12, color: kProAmber.withValues(alpha: 0.8)),
+        Icon(Icons.warning_amber_outlined,
+            size: 12, color: kProAmber.withValues(alpha: 0.8)),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
             'Ch$outputIndex layout candidate · offset $base–${base + 59} unconfirmed · '
             'readback values may not reflect this output\'s actual DSP state.',
-            style: proSubtitle(size: 9, color: kProAmber.withValues(alpha: 0.75)),
+            style:
+                proSubtitle(size: 9, color: kProAmber.withValues(alpha: 0.75)),
           ),
         ),
       ]),
@@ -1267,9 +1387,11 @@ class _GainQPendingNote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(children: [
-      const Icon(Icons.hourglass_empty_outlined, size: 11, color: Colors.white30),
+      const Icon(Icons.hourglass_empty_outlined,
+          size: 11, color: Colors.white30),
       const SizedBox(width: 6),
-      Text('Reference Gain/Q: pending hardware capture · frequency positions only',
+      Text(
+          'Reference Gain/Q: pending hardware capture · frequency positions only',
           style: proSubtitle(size: 9, color: Colors.white30)),
     ]);
   }
@@ -1292,7 +1414,8 @@ class _PendingCaptureSection extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Row(children: [
-        const Icon(Icons.hourglass_empty_outlined, size: 12, color: Colors.white30),
+        const Icon(Icons.hourglass_empty_outlined,
+            size: 12, color: Colors.white30),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -1360,7 +1483,9 @@ class _ComparisonRow extends StatelessWidget {
     final isMatch = result.isMatch;
     final matchColor = isMatch ? kProGreen : kProRed;
     final refOpacity =
-        result.reference.confidence == DataConfidence.hardwareConfirmed ? 1.0 : 0.65;
+        result.reference.confidence == DataConfidence.hardwareConfirmed
+            ? 1.0
+            : 0.65;
 
     TextStyle numStyle(Color c, {double opacity = 1.0}) => TextStyle(
           fontSize: 11,
@@ -1382,7 +1507,10 @@ class _ComparisonRow extends StatelessWidget {
               style: numStyle(Colors.white, opacity: refOpacity))),
       SizedBox(
           width: 50,
-          child: Text(unknown ? '—' : '${result.reference.gainDb.toStringAsFixed(1)} dB',
+          child: Text(
+              unknown
+                  ? '—'
+                  : '${result.reference.gainDb.toStringAsFixed(1)} dB',
               style: numStyle(Colors.white, opacity: refOpacity))),
       SizedBox(
           width: 40,
@@ -1410,7 +1538,8 @@ class _ComparisonRow extends StatelessWidget {
                 : result.freqDiffHz == 0
                     ? '—'
                     : '${result.freqDiffHz > 0 ? '+' : ''}${result.freqDiffHz} Hz',
-            style: numStyle(unknown ? Colors.white30 : diffColor(result.freqDiffHz)),
+            style: numStyle(
+                unknown ? Colors.white30 : diffColor(result.freqDiffHz)),
           )),
       SizedBox(
           width: 48,
@@ -1420,7 +1549,8 @@ class _ComparisonRow extends StatelessWidget {
                 : result.gainDiffDb.abs() <= 0.049
                     ? '—'
                     : '${result.gainDiffDb > 0 ? '+' : ''}${result.gainDiffDb.toStringAsFixed(1)} dB',
-            style: numStyle(unknown ? Colors.white30 : diffColor(result.gainDiffDb)),
+            style: numStyle(
+                unknown ? Colors.white30 : diffColor(result.gainDiffDb)),
           )),
       SizedBox(
           width: 36,
@@ -1453,11 +1583,24 @@ class _BandHeaderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(children: [
-      SizedBox(width: 50, child: Text('Band', style: proSubtitle(size: 9, color: Colors.white38))),
-      SizedBox(width: 70, child: Text('Freq', style: proSubtitle(size: 9, color: Colors.white38))),
-      SizedBox(width: 58, child: Text('Gain', style: proSubtitle(size: 9, color: Colors.white38))),
-      SizedBox(width: 44, child: Text('Q', style: proSubtitle(size: 9, color: Colors.white38))),
-      Expanded(child: Text('Confidence', style: proSubtitle(size: 9, color: Colors.white38))),
+      SizedBox(
+          width: 50,
+          child:
+              Text('Band', style: proSubtitle(size: 9, color: Colors.white38))),
+      SizedBox(
+          width: 70,
+          child:
+              Text('Freq', style: proSubtitle(size: 9, color: Colors.white38))),
+      SizedBox(
+          width: 58,
+          child:
+              Text('Gain', style: proSubtitle(size: 9, color: Colors.white38))),
+      SizedBox(
+          width: 44,
+          child: Text('Q', style: proSubtitle(size: 9, color: Colors.white38))),
+      Expanded(
+          child: Text('Confidence',
+              style: proSubtitle(size: 9, color: Colors.white38))),
     ]);
   }
 }
@@ -1470,26 +1613,45 @@ class _BandRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final (statusColor, statusLabel) = switch (band.verificationStatus) {
       PeqBandVerificationStatus.verified => (kProGreen, 'Hardware Confirmed'),
-      PeqBandVerificationStatus.mappingCandidate => (kProAmber, 'Candidate Mapping'),
-      PeqBandVerificationStatus.channelLayoutCandidate => (const Color(0xFF9E9E9E), 'Unknown'),
+      PeqBandVerificationStatus.mappingCandidate => (
+          kProAmber,
+          'Candidate Mapping'
+        ),
+      PeqBandVerificationStatus.channelLayoutCandidate => (
+          const Color(0xFF9E9E9E),
+          'Unknown'
+        ),
     };
     final valueColor = Colors.white.withValues(
-        alpha: band.verificationStatus == PeqBandVerificationStatus.verified ? 1.0 : 0.70);
+        alpha: band.verificationStatus == PeqBandVerificationStatus.verified
+            ? 1.0
+            : 0.70);
 
     return Row(children: [
-      SizedBox(width: 50,
-          child: Text('Band ${band.bandIndex + 1}', style: TextStyle(fontSize: 11, color: valueColor))),
-      SizedBox(width: 70,
+      SizedBox(
+          width: 50,
+          child: Text('Band ${band.bandIndex + 1}',
+              style: TextStyle(fontSize: 11, color: valueColor))),
+      SizedBox(
+          width: 70,
           child: Text('${band.frequencyHz} Hz',
-              style: TextStyle(fontSize: 11, color: valueColor,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: valueColor,
                   fontFeatures: const [FontFeature.tabularFigures()]))),
-      SizedBox(width: 58,
+      SizedBox(
+          width: 58,
           child: Text('${band.gainDb.toStringAsFixed(1)} dB',
-              style: TextStyle(fontSize: 11, color: valueColor,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: valueColor,
                   fontFeatures: const [FontFeature.tabularFigures()]))),
-      SizedBox(width: 44,
+      SizedBox(
+          width: 44,
           child: Text(band.q.toStringAsFixed(2),
-              style: TextStyle(fontSize: 11, color: valueColor,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: valueColor,
                   fontFeatures: const [FontFeature.tabularFigures()]))),
       Expanded(
         child: Row(children: [
@@ -1501,12 +1663,16 @@ class _BandRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(3),
             ),
             child: Text(statusLabel,
-                style: TextStyle(fontSize: 9, color: statusColor,
-                    fontWeight: FontWeight.w600, letterSpacing: 0.4)),
+                style: TextStyle(
+                    fontSize: 9,
+                    color: statusColor,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4)),
           ),
           if (!band.withinVerifiedRanges) ...[
             const SizedBox(width: 4),
-            const Icon(Icons.warning_amber_outlined, size: 10, color: Colors.orange),
+            const Icon(Icons.warning_amber_outlined,
+                size: 10, color: Colors.orange),
           ],
         ]),
       ),
@@ -1526,7 +1692,8 @@ class _FailureDisplay extends StatelessWidget {
         const Icon(Icons.error_outline, size: 12, color: kProRed),
         const SizedBox(width: 6),
         Text(kind.label,
-            style: const TextStyle(fontSize: 11, color: kProRed, fontWeight: FontWeight.w600)),
+            style: const TextStyle(
+                fontSize: 11, color: kProRed, fontWeight: FontWeight.w600)),
       ]),
       if (result.failureDetail != null) ...[
         const SizedBox(height: 4),
@@ -1551,9 +1718,12 @@ class _BaselineButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: hasBaseline ? kProGreen.withValues(alpha: 0.08) : Colors.transparent,
+          color: hasBaseline
+              ? kProGreen.withValues(alpha: 0.08)
+              : Colors.transparent,
           border: Border.all(
-              color: hasBaseline ? kProGreen.withValues(alpha: 0.40) : kProBorder),
+              color:
+                  hasBaseline ? kProGreen.withValues(alpha: 0.40) : kProBorder),
           borderRadius: BorderRadius.circular(4),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1566,8 +1736,10 @@ class _BaselineButton extends StatelessWidget {
           Text(
             hasBaseline ? 'BASELINE SET' : 'CAPTURE BASELINE',
             style: TextStyle(
-                fontSize: 10, fontWeight: FontWeight.w600,
-                letterSpacing: 0.4, color: color),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
+                color: color),
           ),
         ]),
       ),
@@ -1591,8 +1763,10 @@ class _ClearBaselineButton extends StatelessWidget {
         ),
         child: const Text('CLEAR',
             style: TextStyle(
-                fontSize: 10, fontWeight: FontWeight.w600,
-                letterSpacing: 0.4, color: Colors.white30)),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
+                color: Colors.white30)),
       ),
     );
   }
@@ -1632,8 +1806,9 @@ class _ChannelScanSection extends StatelessWidget {
                 : kProAmber.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(3),
             border: Border.all(
-              color:
-                  wooferFound ? kProGreen.withValues(alpha: 0.4) : kProAmber.withValues(alpha: 0.4),
+              color: wooferFound
+                  ? kProGreen.withValues(alpha: 0.4)
+                  : kProAmber.withValues(alpha: 0.4),
             ),
           ),
           child: Text(
@@ -1657,7 +1832,8 @@ class _ChannelScanSection extends StatelessWidget {
           padding: const EdgeInsets.only(left: 18),
           child: Text(
             '→ Update candidateChannelStride or _kDspChBases with offset ${wooferHit.offset}',
-            style: proSubtitle(size: 9, color: kProGreen.withValues(alpha: 0.8)),
+            style:
+                proSubtitle(size: 9, color: kProGreen.withValues(alpha: 0.8)),
           ),
         ),
       ] else if (wooferPartial != null) ...[
@@ -1671,7 +1847,8 @@ class _ChannelScanSection extends StatelessWidget {
           padding: const EdgeInsets.only(left: 18),
           child: Text(
             'Band2/Band3 mismatch — offset may be wrong or band stride differs',
-            style: proSubtitle(size: 9, color: kProAmber.withValues(alpha: 0.8)),
+            style:
+                proSubtitle(size: 9, color: kProAmber.withValues(alpha: 0.8)),
           ),
         ),
       ] else ...[
@@ -1825,8 +2002,8 @@ class _DiffRow extends StatelessWidget {
     return Row(children: [
       SizedBox(
         width: 88,
-        child: Text('${hex3(entry.offset)} (${entry.offset})',
-            style: monoStyle),
+        child:
+            Text('${hex3(entry.offset)} (${entry.offset})', style: monoStyle),
       ),
       SizedBox(
         width: 52,
@@ -1835,12 +2012,13 @@ class _DiffRow extends StatelessWidget {
       SizedBox(
         width: 52,
         child: Text(hex2(entry.after),
-            style: monoStyle.copyWith(color: kProAmber, fontWeight: FontWeight.w600)),
+            style: monoStyle.copyWith(
+                color: kProAmber, fontWeight: FontWeight.w600)),
       ),
       SizedBox(
         width: 260,
-        child: Text(annotation,
-            style: TextStyle(fontSize: 10, color: labelColor)),
+        child:
+            Text(annotation, style: TextStyle(fontSize: 10, color: labelColor)),
       ),
     ]);
   }

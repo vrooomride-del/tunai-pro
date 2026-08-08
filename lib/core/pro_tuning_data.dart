@@ -265,14 +265,29 @@ class PeqChannelState {
   /// the normalized channel. If every slot is already in use the channel is
   /// returned normalized but otherwise unchanged. Used instead of appending so
   /// the fixed 10-slot invariant is never exceeded.
+  ///
+  /// [maxSlotCount], when provided, restricts the search to slot indices
+  /// `0..maxSlotCount-1` (e.g. a hardware target's write-verified band
+  /// count). Slots at or beyond the cap are never selected, but are also
+  /// never touched or cleared — pre-existing bands there are preserved.
+  /// Omitting it (the default) searches every slot, unchanged from prior
+  /// behavior.
   PeqChannelState fillNextFreeSlot({
     required PeqBandType type,
     required double frequencyHz,
     required double gainDb,
     required double q,
+    int? maxSlotCount,
   }) {
     final norm = normalized();
-    final idx = norm.bands.indexWhere((b) => !b.enabled);
+    var idx = -1;
+    for (var i = 0; i < norm.bands.length; i++) {
+      if (maxSlotCount != null && i >= maxSlotCount) break;
+      if (!norm.bands[i].enabled) {
+        idx = i;
+        break;
+      }
+    }
     if (idx < 0) return norm;
     final updated = [...norm.bands];
     updated[idx] = norm.bands[idx].copyWith(

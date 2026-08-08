@@ -29,6 +29,22 @@ class ExportTab extends ConsumerStatefulWidget {
 class _ExportTabState extends ConsumerState<ExportTab> {
   bool _generating = false;
 
+  // P0-5 — guards the one-time TARGET auto-sync below so it fires at most
+  // once per project, and re-fires if the tab is reused for a different
+  // project (the same State can persist across a project switch since
+  // WorkbenchShell keeps tabs mounted in an IndexedStack).
+  String? _targetSyncedForProjectId;
+
+  /// Maps a project's real `dspTarget` string to the matching
+  /// [DspTargetPlatform], when a real hardware profile for it exists.
+  /// Returns null for an unrecognized target — never guesses.
+  DspTargetPlatform? _platformForDspTarget(String? dspTarget) =>
+      switch (dspTarget) {
+        'ADAU1701' => DspTargetPlatform.adau1701,
+        'ADAU1466' => DspTargetPlatform.adau1466,
+        _ => null,
+      };
+
   ProProject? get _project => ref
       .read(proProjectStoreProvider)
       .projects
@@ -76,13 +92,42 @@ class _ExportTabState extends ConsumerState<ExportTab> {
 
   @override
   Widget build(BuildContext context) {
-    final project = ref.watch(proProjectStoreProvider)
+    final project = ref
+        .watch(proProjectStoreProvider)
         .projects
         .where((p) => p.id == widget.projectId)
         .firstOrNull;
-    final exportState = project?.exportState ?? ExportProjectState.createDefault();
-    final protection = project?.protectionState ?? ProtectionProjectState.createDefault();
+    final exportState =
+        project?.exportState ?? ExportProjectState.createDefault();
+    final protection =
+        project?.protectionState ?? ProtectionProjectState.createDefault();
     final activePkg = exportState.activePackage;
+
+    // P0-5 — a project's Export TARGET must never default to "Simulation
+    // Only" while its real dspTarget is a known hardware platform: that
+    // reads as "this project has no real hardware target" when it does.
+    // Sync ONCE per project, only while the user has never explicitly
+    // chosen a target (selectedTarget is still the untouched default) — an
+    // explicit later choice (including switching back to Simulation Only)
+    // is never overridden.
+    if (project != null &&
+        _targetSyncedForProjectId != project.id &&
+        exportState.selectedTarget == DspTargetPlatform.simulationOnly) {
+      final inferred = _platformForDspTarget(project.dspTarget);
+      if (inferred != null) {
+        _targetSyncedForProjectId = project.id;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final current = _project;
+          if (current == null ||
+              current.exportState.selectedTarget !=
+                  DspTargetPlatform.simulationOnly) {
+            return;
+          }
+          _setTarget(inferred);
+        });
+      }
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
@@ -99,7 +144,8 @@ class _ExportTabState extends ConsumerState<ExportTab> {
                 style: proLabel(size: 9, color: Colors.white38, spacing: 0.5)),
         ]),
         const SizedBox(height: 4),
-        Text('Draft export packages for DSP implementation. '
+        Text(
+            'Draft export packages for DSP implementation. '
             'Hardware write is not enabled yet.',
             style: proSubtitle()),
         const SizedBox(height: 20),
@@ -107,22 +153,26 @@ class _ExportTabState extends ConsumerState<ExportTab> {
         // Target selector
         _SelectorSection(
           label: 'DSP TARGET',
-          children: DspTargetPlatform.values.map((t) => _Chip(
-            label: t.label,
-            selected: exportState.selectedTarget == t,
-            onTap: () => _setTarget(t),
-          )).toList(),
+          children: DspTargetPlatform.values
+              .map((t) => _Chip(
+                    label: t.label,
+                    selected: exportState.selectedTarget == t,
+                    onTap: () => _setTarget(t),
+                  ))
+              .toList(),
         ),
         const SizedBox(height: 12),
 
         // Format selector
         _SelectorSection(
           label: 'EXPORT FORMAT',
-          children: ExportFormat.values.map((f) => _Chip(
-            label: f.label,
-            selected: exportState.selectedFormat == f,
-            onTap: () => _setFormat(f),
-          )).toList(),
+          children: ExportFormat.values
+              .map((f) => _Chip(
+                    label: f.label,
+                    selected: exportState.selectedFormat == f,
+                    onTap: () => _setFormat(f),
+                  ))
+              .toList(),
         ),
         const SizedBox(height: 20),
 
@@ -196,8 +246,8 @@ class _ExportTabState extends ConsumerState<ExportTab> {
             Text('PARAMETER BLOCKS (${activePkg.blockCount})',
                 style: proLabel(size: 9, spacing: 2)),
             const SizedBox(height: 8),
-            ...activePkg.parameterBlocks.map(
-                (b) => _ParameterBlockCard(block: b)),
+            ...activePkg.parameterBlocks
+                .map((b) => _ParameterBlockCard(block: b)),
             const SizedBox(height: 16),
           ],
 
@@ -211,8 +261,13 @@ class _ExportTabState extends ConsumerState<ExportTab> {
           ],
 
           // Phase P: Verified Address Registry
+          // Closure #3 §5: the registry snapshot (DspAddressRegistry.createDefault())
+          // currently only contains ADAU1466 Master Volume L/R entries. Filtering
+          // by the package's own targetPlatform prevents those from leaking into
+          // an ADAU1701 (or any non-ADAU1466) export's display.
           _VerifiedAddressRegistryPanel(
             registryJson: activePkg.addressRegistrySnapshotJson,
+            targetPlatform: activePkg.targetPlatform,
           ),
           const SizedBox(height: 16),
 
@@ -266,7 +321,8 @@ class _ExportTabState extends ConsumerState<ExportTab> {
             child: Row(children: [
               const Icon(Icons.info_outline, color: Colors.white24, size: 13),
               const SizedBox(width: 10),
-              Text('Generate an export draft to preview the DSP parameter structure.',
+              Text(
+                  'Generate an export draft to preview the DSP parameter structure.',
                   style: proSubtitle()),
             ]),
           ),
@@ -284,41 +340,43 @@ class _SelectorSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(label, style: proLabel(size: 9, spacing: 2)),
-      const SizedBox(height: 8),
-      Wrap(spacing: 8, runSpacing: 6, children: children),
-    ],
-  );
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: proLabel(size: 9, spacing: 2)),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, runSpacing: 6, children: children),
+        ],
+      );
 }
 
 class _Chip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _Chip({required this.label, required this.selected, required this.onTap});
+  const _Chip(
+      {required this.label, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: selected ? kProAccent.withValues(alpha: 0.1) : Colors.transparent,
-        border: Border.all(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
             color: selected
-                ? kProAccent.withValues(alpha: 0.5)
-                : kProBorder),
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: Text(label,
-          style: TextStyle(
-              color: selected ? kProAccent : Colors.white38,
-              fontSize: 10,
-              fontWeight: selected ? FontWeight.w500 : FontWeight.normal)),
-    ),
-  );
+                ? kProAccent.withValues(alpha: 0.1)
+                : Colors.transparent,
+            border: Border.all(
+                color:
+                    selected ? kProAccent.withValues(alpha: 0.5) : kProBorder),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: selected ? kProAccent : Colors.white38,
+                  fontSize: 10,
+                  fontWeight: selected ? FontWeight.w500 : FontWeight.normal)),
+        ),
+      );
 }
 
 // ── Protection Gate Summary ───────────────────────────────────────────────────
@@ -328,47 +386,49 @@ class _ProtectionGateSummary extends StatelessWidget {
   const _ProtectionGateSummary({required this.protection});
 
   Color _statusColor() => switch (protection.verificationStatus) {
-    VerificationStatus.passed             => kProGreen,
-    VerificationStatus.passedWithWarnings => kProAmber,
-    VerificationStatus.failed             => kProRed,
-    VerificationStatus.notReady           => const Color(0xFF6B7280),
-  };
+        VerificationStatus.passed => kProGreen,
+        VerificationStatus.passedWithWarnings => kProAmber,
+        VerificationStatus.failed => kProRed,
+        VerificationStatus.notReady => const Color(0xFF6B7280),
+      };
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('PROTECTION GATE', style: proLabel(size: 9, spacing: 2)),
-      const SizedBox(height: 10),
-      Wrap(spacing: 10, runSpacing: 8, children: [
-        ProStatChip(
-          label: 'STATUS',
-          value: protection.verificationStatus.label,
-          valueColor: _statusColor(),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
         ),
-        ProStatChip(
-          label: 'EXPORT',
-          value: protection.exportLocked ? 'Locked' : 'Allowed',
-          valueColor: protection.exportLocked ? kProRed : kProGreen,
-        ),
-        ProStatChip(
-          label: 'WARNINGS',
-          value: '${protection.warningCount}',
-          valueColor: protection.warningCount > 0 ? kProAmber : Colors.white38,
-        ),
-        ProStatChip(
-          label: 'CRITICAL',
-          value: '${protection.criticalCount}',
-          valueColor: protection.criticalCount > 0 ? kProRed : Colors.white38,
-        ),
-      ]),
-    ]),
-  );
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('PROTECTION GATE', style: proLabel(size: 9, spacing: 2)),
+          const SizedBox(height: 10),
+          Wrap(spacing: 10, runSpacing: 8, children: [
+            ProStatChip(
+              label: 'STATUS',
+              value: protection.verificationStatus.label,
+              valueColor: _statusColor(),
+            ),
+            ProStatChip(
+              label: 'EXPORT',
+              value: protection.exportLocked ? 'Locked' : 'Allowed',
+              valueColor: protection.exportLocked ? kProRed : kProGreen,
+            ),
+            ProStatChip(
+              label: 'WARNINGS',
+              value: '${protection.warningCount}',
+              valueColor:
+                  protection.warningCount > 0 ? kProAmber : Colors.white38,
+            ),
+            ProStatChip(
+              label: 'CRITICAL',
+              value: '${protection.criticalCount}',
+              valueColor:
+                  protection.criticalCount > 0 ? kProRed : Colors.white38,
+            ),
+          ]),
+        ]),
+      );
 }
 
 // ── Package Summary ───────────────────────────────────────────────────────────
@@ -378,82 +438,81 @@ class _PackageSummary extends StatelessWidget {
   const _PackageSummary({required this.pkg});
 
   Color _statusColor() => switch (pkg.status) {
-    ExportStatus.draftReady => kProGreen,
-    ExportStatus.blocked    => kProRed,
-    ExportStatus.exported   => kProAccent,
-    ExportStatus.notReady   => Colors.white38,
-    ExportStatus.stale      => Colors.amber,
-  };
+        ExportStatus.draftReady => kProGreen,
+        ExportStatus.blocked => kProRed,
+        ExportStatus.exported => kProAccent,
+        ExportStatus.notReady => Colors.white38,
+        ExportStatus.stale => Colors.amber,
+      };
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(
-          color: pkg.isBlocked
-              ? kProRed.withValues(alpha: 0.3)
-              : pkg.isDraftReady
-                  ? kProGreen.withValues(alpha: 0.2)
-                  : kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Text('ACTIVE PACKAGE', style: proLabel(size: 9, spacing: 2)),
-        const Spacer(),
-        ProStatusPill(label: pkg.status.label, color: _statusColor()),
-      ]),
-      const SizedBox(height: 10),
-
-      if (pkg.isBlocked && pkg.blockedReason != null) ...[
-        Row(children: [
-          const Icon(Icons.block_outlined, color: kProRed, size: 13),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(pkg.blockedReason!,
-                style: proSubtitle(size: 10, color: kProRed.withValues(alpha: 0.8))),
-          ),
-        ]),
-        const SizedBox(height: 10),
-      ],
-
-      Wrap(spacing: 10, runSpacing: 8, children: [
-        ProStatChip(label: 'TARGET', value: pkg.targetPlatform.label),
-        ProStatChip(label: 'FORMAT', value: pkg.format.label),
-        ProStatChip(label: 'BLOCKS', value: '${pkg.blockCount}'),
-        ProStatChip(label: 'CHANNELS', value: '${pkg.channelMaps.length}'),
-        ProStatChip(
-          label: 'WARNINGS',
-          value: '${pkg.warningCount}',
-          valueColor: pkg.warningCount > 0 ? kProAmber : null,
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(
+              color: pkg.isBlocked
+                  ? kProRed.withValues(alpha: 0.3)
+                  : pkg.isDraftReady
+                      ? kProGreen.withValues(alpha: 0.2)
+                      : kProBorder),
+          borderRadius: BorderRadius.circular(4),
         ),
-      ]),
-
-      const SizedBox(height: 8),
-      Text(
-        'Created: ${_fmt(pkg.createdAt)}  ·  '
-        'Tuning rev ${pkg.tuningRevision}  ·  '
-        'Protection rev ${pkg.protectionRevision}',
-        style: proLabel(size: 9, color: Colors.white24, spacing: 0.2),
-      ),
-
-      if (pkg.warnings.isNotEmpty) ...[
-        const SizedBox(height: 10),
-        Text('WARNINGS', style: proLabel(size: 9, spacing: 1.5)),
-        const SizedBox(height: 6),
-        ...pkg.warnings.map((w) => Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Icon(Icons.warning_amber_outlined,
-                color: kProAmber, size: 12),
-            const SizedBox(width: 6),
-            Expanded(child: Text(w, style: proSubtitle(size: 10))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('ACTIVE PACKAGE', style: proLabel(size: 9, spacing: 2)),
+            const Spacer(),
+            ProStatusPill(label: pkg.status.label, color: _statusColor()),
           ]),
-        )),
-      ],
-    ]),
-  );
+          const SizedBox(height: 10),
+          if (pkg.isBlocked && pkg.blockedReason != null) ...[
+            Row(children: [
+              const Icon(Icons.block_outlined, color: kProRed, size: 13),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(pkg.blockedReason!,
+                    style: proSubtitle(
+                        size: 10, color: kProRed.withValues(alpha: 0.8))),
+              ),
+            ]),
+            const SizedBox(height: 10),
+          ],
+          Wrap(spacing: 10, runSpacing: 8, children: [
+            ProStatChip(label: 'TARGET', value: pkg.targetPlatform.label),
+            ProStatChip(label: 'FORMAT', value: pkg.format.label),
+            ProStatChip(label: 'BLOCKS', value: '${pkg.blockCount}'),
+            ProStatChip(label: 'CHANNELS', value: '${pkg.channelMaps.length}'),
+            ProStatChip(
+              label: 'WARNINGS',
+              value: '${pkg.warningCount}',
+              valueColor: pkg.warningCount > 0 ? kProAmber : null,
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+            'Created: ${_fmt(pkg.createdAt)}  ·  '
+            'Tuning rev ${pkg.tuningRevision}  ·  '
+            'Protection rev ${pkg.protectionRevision}',
+            style: proLabel(size: 9, color: Colors.white24, spacing: 0.2),
+          ),
+          if (pkg.warnings.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text('WARNINGS', style: proLabel(size: 9, spacing: 1.5)),
+            const SizedBox(height: 6),
+            ...pkg.warnings.map((w) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.warning_amber_outlined,
+                            color: kProAmber, size: 12),
+                        const SizedBox(width: 6),
+                        Expanded(child: Text(w, style: proSubtitle(size: 10))),
+                      ]),
+                )),
+          ],
+        ]),
+      );
 
   String _fmt(DateTime dt) =>
       '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} '
@@ -468,42 +527,48 @@ class _ChannelMapCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: maps.map((m) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(children: [
-          SizedBox(
-            width: 80,
-            child: Text(m.channelId,
-                style: proValue(size: 10, color: kProAccent)),
-          ),
-          SizedBox(
-            width: 80,
-            child: Text(m.logicalName, style: proSubtitle(size: 10)),
-          ),
-          SizedBox(
-            width: 70,
-            child: Text(m.role.toUpperCase(),
-                style: proLabel(size: 8, color: Colors.white38, spacing: 0.5)),
-          ),
-          Text(m.side,
-              style: proLabel(size: 8, color: Colors.white24, spacing: 0.3)),
-          if (m.outputIndex != null) ...[
-            const SizedBox(width: 12),
-            Text('out ${m.outputIndex}',
-                style: proLabel(size: 8, color: Colors.white24, spacing: 0.2)),
-          ],
-        ]),
-      )).toList(),
-    ),
-  );
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: maps
+              .map((m) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(children: [
+                      SizedBox(
+                        width: 80,
+                        child: Text(m.channelId,
+                            style: proValue(size: 10, color: kProAccent)),
+                      ),
+                      SizedBox(
+                        width: 80,
+                        child:
+                            Text(m.logicalName, style: proSubtitle(size: 10)),
+                      ),
+                      SizedBox(
+                        width: 70,
+                        child: Text(m.role.toUpperCase(),
+                            style: proLabel(
+                                size: 8, color: Colors.white38, spacing: 0.5)),
+                      ),
+                      Text(m.side,
+                          style: proLabel(
+                              size: 8, color: Colors.white24, spacing: 0.3)),
+                      if (m.outputIndex != null) ...[
+                        const SizedBox(width: 12),
+                        Text('out ${m.outputIndex}',
+                            style: proLabel(
+                                size: 8, color: Colors.white24, spacing: 0.2)),
+                      ],
+                    ]),
+                  ))
+              .toList(),
+        ),
+      );
 }
 
 // ── Parameter Block Card ──────────────────────────────────────────────────────
@@ -513,56 +578,59 @@ class _ParameterBlockCard extends StatelessWidget {
   const _ParameterBlockCard({required this.block});
 
   Color _typeColor() => switch (block.type) {
-    ExportBlockType.peq        => kProAccent,
-    ExportBlockType.crossover  => const Color(0xFFB47FFF),
-    ExportBlockType.gain       => kProGreen,
-    ExportBlockType.delay      => kProAmber,
-    ExportBlockType.phase      => const Color(0xFF4DD9E8),
-    ExportBlockType.protection => kProRed,
-  };
+        ExportBlockType.peq => kProAccent,
+        ExportBlockType.crossover => const Color(0xFFB47FFF),
+        ExportBlockType.gain => kProGreen,
+        ExportBlockType.delay => kProAmber,
+        ExportBlockType.phase => const Color(0xFF4DD9E8),
+        ExportBlockType.protection => kProRed,
+      };
 
   @override
   Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 6),
-    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Row(children: [
-      Container(
-        width: 3,
-        height: 32,
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         decoration: BoxDecoration(
-          color: _typeColor().withValues(alpha: 0.6),
-          borderRadius: BorderRadius.circular(2),
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
         ),
-      ),
-      const SizedBox(width: 10),
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Text(block.title, style: proTitle(size: 11)),
-            const SizedBox(width: 8),
-            ProStatusPill(label: block.type.label, color: _typeColor()),
-            if (block.channelId.isNotEmpty && block.channelId != 'system') ...[
-              const SizedBox(width: 6),
-              Text('ch: ${block.channelId}',
-                  style: proLabel(size: 8, color: Colors.white24, spacing: 0.3)),
-            ],
-          ]),
-          const SizedBox(height: 3),
-          Text(block.summary, style: proSubtitle(size: 10)),
-          if (block.warning != null) ...[
-            const SizedBox(height: 4),
-            Text('⚠ ${block.warning}',
-                style: proSubtitle(size: 9, color: kProAmber)),
-          ],
+        child: Row(children: [
+          Container(
+            width: 3,
+            height: 32,
+            decoration: BoxDecoration(
+              color: _typeColor().withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Text(block.title, style: proTitle(size: 11)),
+                const SizedBox(width: 8),
+                ProStatusPill(label: block.type.label, color: _typeColor()),
+                if (block.channelId.isNotEmpty &&
+                    block.channelId != 'system') ...[
+                  const SizedBox(width: 6),
+                  Text('ch: ${block.channelId}',
+                      style: proLabel(
+                          size: 8, color: Colors.white24, spacing: 0.3)),
+                ],
+              ]),
+              const SizedBox(height: 3),
+              Text(block.summary, style: proSubtitle(size: 10)),
+              if (block.warning != null) ...[
+                const SizedBox(height: 4),
+                Text('⚠ ${block.warning}',
+                    style: proSubtitle(size: 9, color: kProAmber)),
+              ],
+            ]),
+          ),
         ]),
-      ),
-    ]),
-  );
+      );
 }
 
 // ── JSON Preview Card ─────────────────────────────────────────────────────────
@@ -615,8 +683,7 @@ class _JsonPreviewCardState extends State<_JsonPreviewCard> {
             child: Text(
               _expanded ? 'Collapse' : 'Show full',
               style: TextStyle(
-                  color: kProAccent.withValues(alpha: 0.7),
-                  fontSize: 10),
+                  color: kProAccent.withValues(alpha: 0.7), fontSize: 10),
             ),
           ),
         ]),
@@ -654,54 +721,55 @@ class _TargetProfilePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('DSP TARGET PROFILE', style: proLabel(size: 9, spacing: 2)),
-      const SizedBox(height: 10),
-
-      Wrap(spacing: 10, runSpacing: 8, children: [
-        ProStatChip(label: 'TARGET', value: profile.displayName),
-        ProStatChip(label: 'PRECISION', value: profile.precision.label),
-        ProStatChip(label: 'MAX CHANNELS', value: '${profile.maxChannels}'),
-        ProStatChip(
-            label: 'MAX PEQ/CH', value: '${profile.maxPeqBandsPerChannel}'),
-        ProStatChip(label: 'SAMPLE RATES', value: profile.sampleRateLabel),
-      ]),
-      const SizedBox(height: 12),
-
-      Text('CAPABILITIES', style: proLabel(size: 9, spacing: 1.5)),
-      const SizedBox(height: 6),
-      Wrap(spacing: 6, runSpacing: 6,
-        children: profile.capabilities.map((c) => ProStatusPill(
-          label: c.type.label,
-          color: c.supported ? kProGreen : Colors.white24,
-        )).toList(),
-      ),
-
-      if (profile.warning != null) ...[
-        const SizedBox(height: 10),
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Icon(Icons.warning_amber_outlined, color: kProAmber, size: 12),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(profile.warning!,
-                style: proSubtitle(size: 9, color: kProAmber)),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('DSP TARGET PROFILE', style: proLabel(size: 9, spacing: 2)),
+          const SizedBox(height: 10),
+          Wrap(spacing: 10, runSpacing: 8, children: [
+            ProStatChip(label: 'TARGET', value: profile.displayName),
+            ProStatChip(label: 'PRECISION', value: profile.precision.label),
+            ProStatChip(label: 'MAX CHANNELS', value: '${profile.maxChannels}'),
+            ProStatChip(
+                label: 'MAX PEQ/CH', value: '${profile.maxPeqBandsPerChannel}'),
+            ProStatChip(label: 'SAMPLE RATES', value: profile.sampleRateLabel),
+          ]),
+          const SizedBox(height: 12),
+          Text('CAPABILITIES', style: proLabel(size: 9, spacing: 1.5)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: profile.capabilities
+                .map((c) => ProStatusPill(
+                      label: c.type.label,
+                      color: c.supported ? kProGreen : Colors.white24,
+                    ))
+                .toList(),
           ),
+          if (profile.warning != null) ...[
+            const SizedBox(height: 10),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.warning_amber_outlined,
+                  color: kProAmber, size: 12),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(profile.warning!,
+                    style: proSubtitle(size: 9, color: kProAmber)),
+              ),
+            ]),
+          ],
+          if (profile.notes != null) ...[
+            const SizedBox(height: 6),
+            Text(profile.notes!,
+                style: proLabel(size: 9, color: Colors.white24, spacing: 0.2)),
+          ],
         ]),
-      ],
-
-      if (profile.notes != null) ...[
-        const SizedBox(height: 6),
-        Text(profile.notes!,
-            style: proLabel(size: 9, color: Colors.white24, spacing: 0.2)),
-      ],
-    ]),
-  );
+      );
 }
 
 // ── Phase I: Implementation Draft Panel ──────────────────────────────────────
@@ -751,7 +819,9 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
           ProStatChip(label: 'BIQUAD STAGES', value: '${draft.stageCount}'),
           if (calcCount > 0)
             ProStatChip(
-                label: 'CALCULATED', value: '$calcCount', valueColor: kProGreen),
+                label: 'CALCULATED',
+                value: '$calcCount',
+                valueColor: kProGreen),
           if (phCount > 0)
             ProStatChip(
                 label: 'PLACEHOLDER', value: '$phCount', valueColor: kProAmber),
@@ -775,8 +845,7 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
               'Floating-point draft only. Not hardware-ready. '
               'Not ADAU fixed-point. No hardware address.',
               style: TextStyle(
-                  fontSize: 9, color: kProAmber,
-                  fontFamily: 'monospace'),
+                  fontSize: 9, color: kProAmber, fontFamily: 'monospace'),
             ),
           ),
         ]),
@@ -784,15 +853,19 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
         if (draft.warnings.isNotEmpty) ...[
           const SizedBox(height: 8),
           ...draft.warnings.map((w) => Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Icon(Icons.info_outline, color: Colors.white24, size: 11),
-              const SizedBox(width: 6),
-              Expanded(
-                  child: Text(w, style: proSubtitle(size: 9,
-                      color: Colors.white38))),
-            ]),
-          )),
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline,
+                          color: Colors.white24, size: 11),
+                      const SizedBox(width: 6),
+                      Expanded(
+                          child: Text(w,
+                              style:
+                                  proSubtitle(size: 9, color: Colors.white38))),
+                    ]),
+              )),
         ],
 
         if (draft.biquadStages.isNotEmpty) ...[
@@ -818,9 +891,8 @@ class _ImplementationDraftPanelState extends State<_ImplementationDraftPanel> {
     );
   }
 
-  bool _hasXoCascadeStages(DspImplementationDraft draft) =>
-      draft.biquadStages.any((s) =>
-          s.title.contains('HPF') || s.title.contains('LPF'));
+  bool _hasXoCascadeStages(DspImplementationDraft draft) => draft.biquadStages
+      .any((s) => s.title.contains('HPF') || s.title.contains('LPF'));
 }
 
 class _XoCascadeSummary extends StatelessWidget {
@@ -832,13 +904,15 @@ class _XoCascadeSummary extends StatelessWidget {
     final xoStages = draft.biquadStages
         .where((s) => s.title.contains('HPF') || s.title.contains('LPF'))
         .toList();
-    final calcXo =
-        xoStages.where((s) =>
-            s.coefficients.status == BiquadDraftStatus.calculatedDraft).length;
-    final verifyXo =
-        xoStages.where((s) =>
+    final calcXo = xoStages
+        .where(
+            (s) => s.coefficients.status == BiquadDraftStatus.calculatedDraft)
+        .length;
+    final verifyXo = xoStages
+        .where((s) =>
             s.coefficients.status == BiquadDraftStatus.requiresVerification ||
-            s.coefficients.status == BiquadDraftStatus.placeholder).length;
+            s.coefficients.status == BiquadDraftStatus.placeholder)
+        .length;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
@@ -888,11 +962,11 @@ class _BiquadStageRowState extends State<_BiquadStageRow> {
   bool _expanded = false;
 
   Color _statusColor(BiquadDraftStatus s) => switch (s) {
-    BiquadDraftStatus.calculatedDraft      => kProGreen,
-    BiquadDraftStatus.placeholder          => kProAmber,
-    BiquadDraftStatus.requiresVerification => kProRed,
-    BiquadDraftStatus.notRequired          => Colors.white24,
-  };
+        BiquadDraftStatus.calculatedDraft => kProGreen,
+        BiquadDraftStatus.placeholder => kProAmber,
+        BiquadDraftStatus.requiresVerification => kProRed,
+        BiquadDraftStatus.notRequired => Colors.white24,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -916,14 +990,15 @@ class _BiquadStageRowState extends State<_BiquadStageRow> {
             padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
             child: Row(children: [
               Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text(widget.stage.title, style: proTitle(size: 10)),
-                  const SizedBox(height: 2),
-                  Text(widget.stage.filterSummary,
-                      style: proLabel(size: 9,
-                          color: Colors.white38, spacing: 0.2)),
-                ]),
+                      Text(widget.stage.title, style: proTitle(size: 10)),
+                      const SizedBox(height: 2),
+                      Text(widget.stage.filterSummary,
+                          style: proLabel(
+                              size: 9, color: Colors.white38, spacing: 0.2)),
+                    ]),
               ),
               const SizedBox(width: 8),
               ProStatusPill(
@@ -933,9 +1008,7 @@ class _BiquadStageRowState extends State<_BiquadStageRow> {
               if (isCalculated) ...[
                 const SizedBox(width: 6),
                 Icon(
-                  _expanded
-                      ? Icons.expand_less
-                      : Icons.expand_more,
+                  _expanded ? Icons.expand_less : Icons.expand_more,
                   color: Colors.white24,
                   size: 14,
                 ),
@@ -943,13 +1016,12 @@ class _BiquadStageRowState extends State<_BiquadStageRow> {
             ]),
           ),
         ),
-
         if (_expanded && isCalculated) ...[
           const Divider(height: 1, thickness: 1, color: Color(0xFF2A2A2A)),
           Padding(
             padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               _CoeffRow('b0', c.b0),
               _CoeffRow('b1', c.b1),
               _CoeffRow('b2', c.b2),
@@ -981,36 +1053,43 @@ class _CoeffRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 1.5),
-    child: Row(children: [
-      SizedBox(
-        width: 24,
-        child: Text(name,
-            style: proLabel(size: 9,
-                color: Colors.white38, spacing: 0.5)),
-      ),
-      Text(
-        value.toStringAsFixed(8),
-        style: const TextStyle(
-            fontSize: 10,
-            color: Colors.white70,
-            fontFamily: 'monospace'),
-      ),
-    ]),
-  );
+        padding: const EdgeInsets.symmetric(vertical: 1.5),
+        child: Row(children: [
+          SizedBox(
+            width: 24,
+            child: Text(name,
+                style: proLabel(size: 9, color: Colors.white38, spacing: 0.5)),
+          ),
+          Text(
+            value.toStringAsFixed(8),
+            style: const TextStyle(
+                fontSize: 10, color: Colors.white70, fontFamily: 'monospace'),
+          ),
+        ]),
+      );
 }
 
 // ── Phase P: Verified Address Registry Panel ──────────────────────────────────
 
 class _VerifiedAddressRegistryPanel extends StatelessWidget {
   final Map<String, dynamic>? registryJson;
-  const _VerifiedAddressRegistryPanel({required this.registryJson});
+  final DspTargetPlatform targetPlatform;
+  const _VerifiedAddressRegistryPanel({
+    required this.registryJson,
+    required this.targetPlatform,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final registry = registryJson != null
+    final fullRegistry = registryJson != null
         ? DspAddressRegistry.fromJson(registryJson!)
         : DspAddressRegistry.createDefault();
+    // Target isolation: only show entries verified for the export's own
+    // target platform. Never invent or guess entries for a target that has
+    // none — an empty list is the correct, safe state.
+    final registry = fullRegistry.copyWith(
+      addresses: fullRegistry.addressesForPlatform(targetPlatform),
+    );
 
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -1021,12 +1100,14 @@ class _VerifiedAddressRegistryPanel extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          const Icon(Icons.verified_outlined, color: Color(0xFF4A9EFF), size: 13),
+          const Icon(Icons.verified_outlined,
+              color: Color(0xFF4A9EFF), size: 13),
           const SizedBox(width: 8),
-          Text('VERIFIED ADDRESS REGISTRY', style: proLabel(size: 9, spacing: 2)),
+          Text('VERIFIED ADDRESS REGISTRY',
+              style: proLabel(size: 9, spacing: 2)),
           const Spacer(),
-          _InfoChip('${registry.verifiedCount} verified',
-              const Color(0xFF4A9EFF)),
+          _InfoChip(
+              '${registry.verifiedCount} verified', const Color(0xFF4A9EFF)),
         ]),
         const SizedBox(height: 10),
         ...registry.addresses.map((addr) => _AddressRow(addr: addr)),
@@ -1053,7 +1134,8 @@ class _AddressRow extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(children: [
         Container(
-          width: 6, height: 6,
+          width: 6,
+          height: 6,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: isVerified ? const Color(0xFF4A9EFF) : Colors.white24,
@@ -1074,8 +1156,7 @@ class _AddressRow extends StatelessWidget {
                 fontFamily: 'monospace',
                 fontWeight: FontWeight.w600)),
         const SizedBox(width: 8),
-        Text(addr.source.label,
-            style: proSubtitle(size: 9)),
+        Text(addr.source.label, style: proSubtitle(size: 9)),
         const SizedBox(width: 8),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
@@ -1092,7 +1173,8 @@ class _AddressRow extends StatelessWidget {
           child: Text(addr.verificationStatus.label,
               style: TextStyle(
                   fontSize: 9,
-                  color: isVerified ? const Color(0xFF4A9EFF) : Colors.white38)),
+                  color:
+                      isVerified ? const Color(0xFF4A9EFF) : Colors.white38)),
         ),
       ]),
     );
@@ -1140,12 +1222,16 @@ class _SigmaMappingPanel extends StatelessWidget {
         if (mappingRef.warnings.isNotEmpty) ...[
           const SizedBox(height: 8),
           ...mappingRef.warnings.map((w) => Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('⚠ ', style: TextStyle(fontSize: 9, color: Color(0xFFFBBF24))),
-              Expanded(child: Text(w, style: proSubtitle(size: 9))),
-            ]),
-          )),
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('⚠ ',
+                          style:
+                              TextStyle(fontSize: 9, color: Color(0xFFFBBF24))),
+                      Expanded(child: Text(w, style: proSubtitle(size: 9))),
+                    ]),
+              )),
         ],
       ]),
     );
@@ -1158,8 +1244,10 @@ class _MappingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isVerified = mapping.mappingStatus == SigmaMappingStatus.mappedVerified;
-    final needsCapture = mapping.mappingStatus == SigmaMappingStatus.requiresCapture;
+    final isVerified =
+        mapping.mappingStatus == SigmaMappingStatus.mappedVerified;
+    final needsCapture =
+        mapping.mappingStatus == SigmaMappingStatus.requiresCapture;
     final statusColor = isVerified
         ? const Color(0xFF4A9EFF)
         : needsCapture
@@ -1193,7 +1281,11 @@ class _MappingRow extends StatelessWidget {
             borderRadius: BorderRadius.circular(3),
           ),
           child: Text(
-            isVerified ? 'Verified' : needsCapture ? 'Capture needed' : 'Unverified',
+            isVerified
+                ? 'Verified'
+                : needsCapture
+                    ? 'Capture needed'
+                    : 'Unverified',
             style: TextStyle(fontSize: 9, color: statusColor),
           ),
         ),
@@ -1247,7 +1339,8 @@ class _FixedPointDraftPanel extends StatelessWidget {
           _InfoChip('$draftCount converted (draft)', const Color(0xFFA78BFA)),
           if (verifyCount > 0) ...[
             const SizedBox(width: 6),
-            _InfoChip('$verifyCount need verification', const Color(0xFFFBBF24)),
+            _InfoChip(
+                '$verifyCount need verification', const Color(0xFFFBBF24)),
           ],
         ]),
         const SizedBox(height: 8),
@@ -1285,12 +1378,12 @@ class _AddressCoveragePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final registry = createTunaiAdau1466ThreeWayRegistry();
-    final muteCount    = registry.countByKind(DspParameterKind.mute);
-    final gainCount    = registry.countByKind(DspParameterKind.gain);
-    final delayCount   = registry.countByKind(DspParameterKind.delay);
-    final xoCount      = registry.countByKind(DspParameterKind.crossover);
+    final muteCount = registry.countByKind(DspParameterKind.mute);
+    final gainCount = registry.countByKind(DspParameterKind.gain);
+    final delayCount = registry.countByKind(DspParameterKind.delay);
+    final xoCount = registry.countByKind(DspParameterKind.crossover);
     final safeloadCount = registry.countByKind(DspParameterKind.safeload);
-    final masterCount  = registry.countByKind(DspParameterKind.masterVolume);
+    final masterCount = registry.countByKind(DspParameterKind.masterVolume);
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -1301,7 +1394,8 @@ class _AddressCoveragePanel extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Icon(Icons.map_outlined, color: kProAccent.withValues(alpha: 0.7), size: 14),
+          Icon(Icons.map_outlined,
+              color: kProAccent.withValues(alpha: 0.7), size: 14),
           const SizedBox(width: 6),
           Text('ADDRESS MAP COVERAGE', style: proLabel(size: 9, spacing: 2)),
           const Spacer(),
@@ -1331,15 +1425,19 @@ class _AddressCoveragePanel extends StatelessWidget {
           const SizedBox(width: 12),
           _CovStat('Verified', '${registry.verifiedCount}', Colors.greenAccent),
           const SizedBox(width: 12),
-          _CovStat('Export Confirmed', '${registry.exportConfirmedCount + registry.peqRowCount}',
+          _CovStat(
+              'Export Confirmed',
+              '${registry.exportConfirmedCount + registry.peqRowCount}',
               Colors.orange),
           const SizedBox(width: 12),
-          _CovStat('Needs Validation', '${registry.needsLiveValidationCount}', Colors.red),
+          _CovStat('Needs Validation', '${registry.needsLiveValidationCount}',
+              Colors.red),
         ]),
         const SizedBox(height: 10),
 
         // Group breakdown
-        Text('GROUP COVERAGE', style: proLabel(size: 8, spacing: 1.5, color: Colors.white38)),
+        Text('GROUP COVERAGE',
+            style: proLabel(size: 8, spacing: 1.5, color: Colors.white38)),
         const SizedBox(height: 6),
         Wrap(spacing: 8, runSpacing: 6, children: [
           _GroupBadge('Master Volume', '$masterCount / 6',
@@ -1349,7 +1447,8 @@ class _AddressCoveragePanel extends StatelessWidget {
           _GroupBadge('Delay', '$delayCount', Colors.orange),
           _GroupBadge('XO (HPF+LPF)', '$xoCount', Colors.orange),
           _GroupBadge('SafeLoad', '$safeloadCount', Colors.orange),
-          _GroupBadge('PEQ Coefficients', '${registry.peqRowCount}', Colors.orange),
+          _GroupBadge(
+              'PEQ Coefficients', '${registry.peqRowCount}', Colors.orange),
         ]),
         const SizedBox(height: 10),
 
@@ -1381,12 +1480,14 @@ class _CovStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color)),
-      Text(label, style: proSubtitle(size: 9)),
-    ],
-  );
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(value,
+              style: TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w600, color: color)),
+          Text(label, style: proSubtitle(size: 9)),
+        ],
+      );
 }
 
 class _GroupBadge extends StatelessWidget {
@@ -1397,18 +1498,21 @@ class _GroupBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.08),
-      border: Border.all(color: color.withValues(alpha: 0.3)),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Text(label, style: const TextStyle(fontSize: 9, color: Colors.white70)),
-      const SizedBox(width: 4),
-      Text(count, style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.w600)),
-    ]),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(label,
+              style: const TextStyle(fontSize: 9, color: Colors.white70)),
+          const SizedBox(width: 4),
+          Text(count,
+              style: TextStyle(
+                  fontSize: 9, color: color, fontWeight: FontWeight.w600)),
+        ]),
+      );
 }
 
 class _InfoChip extends StatelessWidget {
@@ -1418,13 +1522,12 @@ class _InfoChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.1),
-      border: Border.all(color: color.withValues(alpha: 0.3)),
-      borderRadius: BorderRadius.circular(3),
-    ),
-    child: Text(label,
-        style: TextStyle(fontSize: 9, color: color)),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Text(label, style: TextStyle(fontSize: 9, color: color)),
+      );
 }

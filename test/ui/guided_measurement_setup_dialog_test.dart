@@ -30,9 +30,23 @@ class _FakeInputDeviceApi implements MeasurementInputDeviceApi {
       devices;
 }
 
+/// Final QA closure #3 §4 — a device API whose enumeration call throws
+/// (simulating a transient CoreAudio/USB re-enumeration hiccup) while
+/// permission itself is fine — must surface as an enumeration error, never
+/// as a permission banner.
+class _EnumerationFailsInputDeviceApi implements MeasurementInputDeviceApi {
+  @override
+  Future<bool> hasPermission({bool request = true}) async => true;
+
+  @override
+  Future<List<MeasurementInputDeviceDescriptor>> listInputDevices() async {
+    throw StateError('transient enumeration failure');
+  }
+}
+
 class _PartialFakeMicController extends mic.MicMeasurementController {
   _PartialFakeMicController(super.ref, this._fakeApi);
-  final _FakeInputDeviceApi _fakeApi;
+  final MeasurementInputDeviceApi _fakeApi;
 
   @override
   MeasurementInputDeviceService get inputDeviceService =>
@@ -55,7 +69,7 @@ ProProject _project({MeasurementInputDeviceSelection? inputDevice}) =>
 
 Future<ProviderContainer> _seed(
   ProProject project, {
-  _FakeInputDeviceApi? fakeApi,
+  MeasurementInputDeviceApi? fakeApi,
 }) async {
   final container = ProviderContainer(overrides: [
     mic.micMeasurementProvider.overrideWith((ref) =>
@@ -229,6 +243,59 @@ void main() {
 
       expect(find.textContaining('마이크 접근 권한'), findsOneWidget);
       expect(find.text('Allow'), findsOneWidget);
+      // Final QA closure #3 §4 — must never claim devices weren't found
+      // when the real fact is a permission denial.
+      expect(find.textContaining('찾을 수 없습니다'), findsNothing);
+    });
+
+    testWidgets(
+        'permission granted + device enumeration succeeds -> no permission '
+        'banner at all', (tester) async {
+      final container = await _seed(
+        _project(),
+        fakeApi: _FakeInputDeviceApi(permissionGranted: true),
+      );
+      addTearDown(container.dispose);
+      await _pump(tester, container);
+
+      expect(find.textContaining('마이크 접근 권한'), findsNothing);
+    });
+
+    testWidgets(
+        'permission granted but enumeration THROWS -> enumeration error '
+        'shown, permission banner NOT shown (they are different facts)',
+        (tester) async {
+      final container = await _seed(
+        _project(),
+        fakeApi: _EnumerationFailsInputDeviceApi(),
+      );
+      addTearDown(container.dispose);
+      await _pump(tester, container);
+
+      expect(find.textContaining('마이크 접근 권한'), findsNothing,
+          reason: 'permission was granted — this must never show');
+      expect(find.textContaining('장치 목록을 가져오지 못했습니다'), findsOneWidget);
+    });
+
+    testWidgets(
+        'a previously-selected device missing from a SUCCESSFUL enumeration '
+        '(e.g. UMIK momentarily unplugged) shows the device-specific '
+        'message, not the permission banner', (tester) async {
+      final container = await _seed(
+        _project(
+          inputDevice: MeasurementInputDeviceSelection.specificDevice(
+            deviceId: 'umik-1',
+            labelSnapshot: 'UMIK-1',
+            selectedAt: DateTime.utc(2026, 1, 1),
+          ),
+        ),
+        fakeApi: _FakeInputDeviceApi(permissionGranted: true, devices: const []),
+      );
+      addTearDown(container.dispose);
+      await _pump(tester, container);
+
+      expect(find.textContaining('마이크 접근 권한'), findsNothing);
+      expect(find.text('선택한 입력 장치를 찾을 수 없습니다.'), findsOneWidget);
     });
   });
 
@@ -308,8 +375,9 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('Play Test Signal & Measure button is present and enabled',
-        (tester) async {
+    testWidgets(
+        '"입력 레벨 확인 완료" is never shown before any live confirmation has '
+        'happened — no false positive on initial render', (tester) async {
       final container = await _seed(
         _project(),
         fakeApi: _FakeInputDeviceApi(
@@ -323,6 +391,56 @@ void main() {
       await _pump(tester, container);
 
       await tester.tap(find.text('USB Mic'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('입력 레벨 확인 완료'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        '측정 레벨 맞추기 (live level check) button is present and enabled '
+        'on the beginner screen', (tester) async {
+      final container = await _seed(
+        _project(),
+        fakeApi: _FakeInputDeviceApi(
+          permissionGranted: true,
+          devices: const [
+            MeasurementInputDeviceDescriptor(id: 'dev1', label: 'USB Mic'),
+          ],
+        ),
+      );
+      addTearDown(container.dispose);
+      await _pump(tester, container);
+
+      await tester.tap(find.text('USB Mic'));
+      await tester.pumpAndSettle();
+
+      final button = tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, '측정 레벨 맞추기'));
+      expect(button.onPressed, isNotNull);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'Play Test Signal & Measure (manual, fixed 3s) button is present '
+        'and enabled once Expert Details is expanded', (tester) async {
+      final container = await _seed(
+        _project(),
+        fakeApi: _FakeInputDeviceApi(
+          permissionGranted: true,
+          devices: const [
+            MeasurementInputDeviceDescriptor(id: 'dev1', label: 'USB Mic'),
+          ],
+        ),
+      );
+      addTearDown(container.dispose);
+      await _pump(tester, container);
+
+      await tester.tap(find.text('USB Mic'));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Expert Details'));
+      await tester.tap(find.text('Expert Details'));
       await tester.pumpAndSettle();
 
       final button = tester.widget<OutlinedButton>(

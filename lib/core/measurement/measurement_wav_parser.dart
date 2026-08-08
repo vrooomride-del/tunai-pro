@@ -15,16 +15,34 @@ library;
 import 'dart:typed_data';
 
 /// PCM audio format tag value inside a WAV fmt chunk (WAVE_FORMAT_PCM).
-/// Any other value is rejected — this parser never mis-decodes a non-PCM
-/// stream (e.g. IEEE float, ADPCM) as if it were PCM.
 const int kWavFormatTagPcm = 1;
+
+/// WAVE_FORMAT_EXTENSIBLE — used instead of [kWavFormatTagPcm] whenever the
+/// writer attaches channel-layout metadata (channelMask), which macOS
+/// CoreAudio's WAV writer does routinely for USB audio interfaces/mics that
+/// report a specific channel layout (observed in production with UMIK-1)
+/// even though the underlying samples are still plain linear PCM. The real
+/// format lives in the extension's SubFormat GUID, not this tag — this
+/// parser never assumes PCM just because the tag is 65534; it reads and
+/// checks the GUID (see [_pcmSubFormatGuid]).
+const int kWavFormatTagExtensible = 0xFFFE;
 
 /// Only 16-bit PCM is supported this phase — matches the format this
 /// codebase's recorder already requests (`AudioEncoder.wav`, effectively
 /// PCM16 on every supported platform for that encoder). A different bit
 /// depth is rejected with a specific error rather than silently
-/// misinterpreted as PCM16.
+/// misinterpreted as PCM16. Applies identically whether the fmt chunk used
+/// the classic PCM tag or WAVE_FORMAT_EXTENSIBLE with a PCM SubFormat.
 const int kSupportedBitsPerSample = 16;
+
+/// KSDATAFORMAT_SUBTYPE_PCM — the SubFormat GUID a WAVE_FORMAT_EXTENSIBLE
+/// fmt chunk must carry for this parser to treat it as PCM. Any other
+/// SubFormat (e.g. KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) is rejected — this
+/// parser never mis-decodes a non-PCM stream as if it were PCM.
+const List<int> _pcmSubFormatGuid = [
+  0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, //
+  0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+];
 
 class MeasurementWavParseResult {
   final bool isSuccess;
@@ -109,6 +127,37 @@ abstract final class MeasurementWavParser {
         channelCount = view.getUint16(chunkDataStart + 2, Endian.little);
         sampleRate = view.getUint32(chunkDataStart + 4, Endian.little);
         bitsPerSample = view.getUint16(chunkDataStart + 14, Endian.little);
+
+        if (audioFormatTag == kWavFormatTagExtensible) {
+          // WAVE_FORMAT_EXTENSIBLE — the real format lives in the
+          // extension's SubFormat GUID, not this tag. Layout after the
+          // 16-byte base fields: cbSize(2) + validBitsPerSample(2) +
+          // channelMask(4) + SubFormat GUID(16) = 24 more bytes, cbSize
+          // itself must be >= 22 for the GUID to be present at all.
+          if (chunkDataStart + 18 > bytes.length) {
+            return MeasurementWavParseResult.failure([
+              'Truncated WAVE_FORMAT_EXTENSIBLE fmt chunk (missing cbSize).'
+            ], warnings: warnings);
+          }
+          final cbSize = view.getUint16(chunkDataStart + 16, Endian.little);
+          if (cbSize < 22 || chunkDataStart + 18 + cbSize > bytes.length) {
+            return MeasurementWavParseResult.failure([
+              'Malformed WAVE_FORMAT_EXTENSIBLE fmt chunk — cbSize=$cbSize '
+                  'does not carry a SubFormat GUID.'
+            ], warnings: warnings);
+          }
+          final guidOffset = chunkDataStart + 24;
+          final guid = bytes.sublist(guidOffset, guidOffset + 16);
+          if (!_bytesEqual(guid, _pcmSubFormatGuid)) {
+            return MeasurementWavParseResult.failure([
+              'Unsupported WAVE_FORMAT_EXTENSIBLE SubFormat — only the PCM '
+                  'SubFormat GUID is supported.'
+            ], warnings: warnings);
+          }
+          // SubFormat confirmed PCM — falls through to the same PCM /
+          // bit-depth validation below and the same PCM16 decode path in
+          // extractNormalizedSamples as a classic tag-1 file.
+        }
       } else if (chunkId == 'data') {
         if (chunkDataStart + declaredSize > bytes.length) {
           return MeasurementWavParseResult.failure([
@@ -144,10 +193,14 @@ abstract final class MeasurementWavParser {
       return MeasurementWavParseResult.failure(['No data chunk found.'],
           warnings: warnings);
     }
-    if (audioFormatTag != kWavFormatTagPcm) {
+    // audioFormatTag == kWavFormatTagExtensible only survives to this point
+    // if the SubFormat GUID was already confirmed PCM above — any other
+    // SubFormat already returned failure inside the chunk-walk loop.
+    if (audioFormatTag != kWavFormatTagPcm &&
+        audioFormatTag != kWavFormatTagExtensible) {
       return MeasurementWavParseResult.failure([
-        'Unsupported audio format tag $audioFormatTag — only PCM (1) is '
-            'supported.'
+        'Unsupported audio format tag $audioFormatTag — only PCM (1) or '
+            'WAVE_FORMAT_EXTENSIBLE with a PCM SubFormat is supported.'
       ], warnings: warnings);
     }
     if (bitsPerSample != kSupportedBitsPerSample) {
@@ -222,5 +275,13 @@ abstract final class MeasurementWavParser {
   static String _ascii(Uint8List bytes, int offset, int length) {
     if (offset + length > bytes.length) return '';
     return String.fromCharCodes(bytes.sublist(offset, offset + length));
+  }
+
+  static bool _bytesEqual(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }

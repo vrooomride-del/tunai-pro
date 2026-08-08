@@ -6,6 +6,8 @@ import '../../../core/deploy/pro_hardware_write_approval.dart';
 import '../../../core/deploy/pro_hardware_write_executor.dart';
 import '../../../core/deploy/pro_hardware_write_plan.dart';
 import '../../../core/pro_export_data.dart';
+import '../../../core/transport/icp5_transports.dart'
+    show Icp5BluetoothTransport;
 import '../../../shared/pro_widgets.dart';
 import 'deploy_result_summary.dart';
 import 'deploy_step_ladder.dart';
@@ -91,6 +93,30 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
       _applying = true;
       _progress = null;
     });
+
+    // P0-2 — suspend the BLE heartbeat for the duration of the (possibly
+    // long, many-operation) write loop, exactly like deploy_dialog.dart's
+    // proven mitigation: a heartbeat tick firing between two operations
+    // grabs _busy and cascades "Another ICP5 transaction is active" NACKs
+    // across the remaining writes/readbacks. This path (HardwareApplyFlow
+    // -> HardwareWriteExecutor) previously had no such suspension at all —
+    // only the older deploy_dialog.dart flow did. USB has no heartbeat
+    // timer, so this is a no-op there. No new transaction guard, no
+    // delay-based race masking: this reuses the existing pause/resume
+    // contract unchanged.
+    final rawTransport = _context.transport;
+    final bleTransport =
+        rawTransport is Icp5BluetoothTransport ? rawTransport : null;
+    bleTransport?.pauseHeartbeat();
+    if (bleTransport != null) {
+      const pollInterval = Duration(milliseconds: 50);
+      var waited = 0;
+      while (bleTransport.busy && waited < 3500) {
+        await Future.delayed(pollInterval);
+        waited += 50;
+      }
+    }
+
     try {
       final result = await HardwareWriteExecutor(_context.writePort).execute(
         approval,
@@ -103,6 +129,7 @@ class _HardwareApplyFlowState extends State<HardwareApplyFlow> {
         widget.onResult?.call(result);
       }
     } finally {
+      bleTransport?.resumeHeartbeat();
       if (mounted) setState(() => _applying = false);
     }
   }

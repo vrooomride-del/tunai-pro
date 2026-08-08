@@ -204,6 +204,198 @@ void main() {
       expect(eval.statuses,
           isNot(contains(MeasurementQualityStatus.signalToNoiseTooLow)));
     });
+
+    group(
+        'mode: noiseFloorCapture (P0 root-cause fix + sibling semantics fix) '
+        '— a noise-floor-only capture must never self-compare SNR, nor '
+        'apply signal-relative-to-expected-level checks', () {
+      test(
+          'passing the capture\'s own RMS as noiseFloorDbFs (self-compare, '
+          'as measureNoiseFloor() does) with mode: noiseFloorCapture never '
+          'raises signalToNoiseTooLow — this reproduces the exact '
+          'real-hardware bug (SNR self-compare = 0dB, always below the '
+          '20dB minimum, unconditionally blocking every background check)',
+          () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -37.1),
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          noiseFloorDbFs: -37.1, // self-compare, exactly like selfIsNoiseFloor
+          policy: policy,
+          mode: MeasurementQualityEvaluationMode.noiseFloorCapture,
+        );
+        expect(eval.statuses,
+            isNot(contains(MeasurementQualityStatus.signalToNoiseTooLow)));
+        expect(eval.metrics.signalToNoiseDb, isNull,
+            reason: 'a self-compared 0dB is a meaningless placeholder, not '
+                'a real SNR value — must stay null, never a fabricated 0.');
+      });
+
+      test('the SAME self-compared inputs WOULD have raised the bug at the '
+          'default signalCapture mode — proves mode is what fixes this, '
+          'not some other change', () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -37.1),
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          noiseFloorDbFs: -37.1,
+          policy: policy,
+          // mode defaults to signalCapture here.
+        );
+        expect(eval.statuses,
+            contains(MeasurementQualityStatus.signalToNoiseTooLow),
+            reason: 'sanity check: proves this really was the bug — a '
+                'self-compared 0dB SNR is always < the 20dB minimum.');
+      });
+
+      test('noiseFloorTooHigh is still correctly raised regardless of mode '
+          '— the fix does not touch the noise-floor threshold check at all',
+          () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -37.1),
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          noiseFloorDbFs: -37.1,
+          policy: policy,
+          mode: MeasurementQualityEvaluationMode.noiseFloorCapture,
+        );
+        expect(eval.statuses,
+            contains(MeasurementQualityStatus.noiseFloorTooHigh));
+        expect(eval.metrics.noiseFloorDbFs, -37.1,
+            reason: 'the noise floor VALUE must still be reported for '
+                'display, even though SNR is not computed from it.');
+      });
+
+      test(
+          'sibling fix — noise -55 dBFS (genuinely quiet, under the -50 '
+          'maximumNoiseFloorDbFs limit): NO inputLevelTooLow, NO SNR '
+          'blocker, fully ready. Before the sibling fix this was '
+          'structurally unreachable: minimumSignalRmsDbFs (-40) and '
+          'maximumNoiseFloorDbFs (-50) don\'t overlap, so a genuinely quiet '
+          'background always tripped inputLevelTooLow.', () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -55),
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          noiseFloorDbFs: -55,
+          policy: policy,
+          mode: MeasurementQualityEvaluationMode.noiseFloorCapture,
+        );
+        expect(eval.isReady, isTrue);
+        expect(eval.statuses, {MeasurementQualityStatus.ready});
+      });
+
+      test('noise floor exactly at the -50 dBFS boundary -> zero '
+          'signal-level blockers of any kind', () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -50),
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          noiseFloorDbFs: -50,
+          policy: policy,
+          mode: MeasurementQualityEvaluationMode.noiseFloorCapture,
+        );
+        expect(
+            eval.statuses
+                .contains(MeasurementQualityStatus.inputLevelTooLow),
+            isFalse);
+        expect(
+            eval.statuses
+                .contains(MeasurementQualityStatus.inputLevelTooHigh),
+            isFalse);
+      });
+
+      test(
+          'mode: noiseFloorCapture never adds signalToNoiseTooLow '
+          'regardless of how quiet the self-compared floor is — the fix is '
+          'unconditional, not just for this one reported -37.1 dBFS case',
+          () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -60),
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          noiseFloorDbFs: -60,
+          policy: policy,
+          mode: MeasurementQualityEvaluationMode.noiseFloorCapture,
+        );
+        expect(eval.statuses,
+            isNot(contains(MeasurementQualityStatus.signalToNoiseTooLow)));
+        expect(eval.metrics.signalToNoiseDb, isNull);
+        expect(
+            eval.statuses
+                .contains(MeasurementQualityStatus.inputLevelTooLow),
+            isFalse,
+            reason: 'sibling fix: -60 dBFS would trip inputLevelTooLow at '
+                'the default signalCapture mode, but must not in '
+                'noiseFloorCapture mode.');
+      });
+
+      test(
+          'clipping IS still checked in noiseFloorCapture mode — a raw '
+          'hardware/gain artifact independent of whether a signal was '
+          'expected, not a signal-relative-level check', () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -55, clippedSampleCount: 999),
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          noiseFloorDbFs: -55,
+          policy: policy,
+          mode: MeasurementQualityEvaluationMode.noiseFloorCapture,
+        );
+        expect(eval.statuses, contains(MeasurementQualityStatus.clipping));
+      });
+
+      test('a REAL (non-self) SNR comparison — e.g. the legacy WAV level '
+          'check comparing its signal against a genuinely prior, separate '
+          'background capture — is completely unaffected: SNR is still '
+          'computed and can still legitimately fail', () {
+        // rms -20 (a real signal), noise floor -25 (a real, PRIOR, separate
+        // background capture) -> SNR 5dB, below the 20dB minimum. This is
+        // the wavCapture / legacy manual-check path — mode is left at its
+        // default (signalCapture), exactly as _evaluateSetupCapture calls
+        // it when selfIsNoiseFloor is false.
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -20),
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          noiseFloorDbFs: -25,
+          policy: policy,
+        );
+        expect(eval.statuses,
+            contains(MeasurementQualityStatus.signalToNoiseTooLow));
+        expect(eval.metrics.signalToNoiseDb, closeTo(5.0, 1e-9));
+      });
+
+      test(
+          'a normal SIGNAL capture (default signalCapture mode) still '
+          'raises inputLevelTooLow when appropriate — the sibling fix only '
+          'suppresses this for noiseFloorCapture mode', () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -55), // well below minimumSignalRmsDbFs (-40)
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          policy: policy,
+        );
+        expect(
+            eval.statuses.contains(MeasurementQualityStatus.inputLevelTooLow),
+            isTrue);
+      });
+
+      test(
+          'a normal SIGNAL capture (default signalCapture mode) still '
+          'raises inputLevelTooHigh when appropriate', () {
+        final eval = MeasurementQualityEvaluator.evaluate(
+          pcm: _pcm(rmsDbFs: -1), // above maximumSignalRmsDbFs (-6)
+          actualSampleRate: policy.expectedSampleRate,
+          actualChannelCount: policy.expectedChannelCount,
+          policy: policy,
+        );
+        expect(
+            eval.statuses
+                .contains(MeasurementQualityStatus.inputLevelTooHigh),
+            isTrue);
+      });
+    });
   });
 
   group('multiple simultaneous problems', () {

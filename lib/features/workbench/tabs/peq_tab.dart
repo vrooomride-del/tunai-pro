@@ -24,18 +24,27 @@ class PeqTab extends ConsumerStatefulWidget {
   final bool Function()? isWindowsPlatform;
   final bool deviceOpen;
   final bool dspWritesDisabled;
-  const PeqTab({super.key, required this.projectId, this.usbiBackend,
-    this.isWindowsPlatform, this.deviceOpen = false,
-    this.dspWritesDisabled = false});
+  const PeqTab(
+      {super.key,
+      required this.projectId,
+      this.usbiBackend,
+      this.isWindowsPlatform,
+      this.deviceOpen = false,
+      this.dspWritesDisabled = false});
 
   @override
   ConsumerState<PeqTab> createState() => _PeqTabState();
 }
 
 class _PeqTabState extends ConsumerState<PeqTab> {
-  TuningProjectState get _tuning => ref.read(proProjectStoreProvider)
-      .projects.where((p) => p.id == widget.projectId).firstOrNull
-      ?.tuningState ?? TuningProjectState.createDefault();
+  TuningProjectState get _tuning =>
+      ref
+          .read(proProjectStoreProvider)
+          .projects
+          .where((p) => p.id == widget.projectId)
+          .firstOrNull
+          ?.tuningState ??
+      TuningProjectState.createDefault();
 
   PeqChannelState _peqForChannel(String channelId) {
     final tuning = _tuning;
@@ -47,18 +56,21 @@ class _PeqTabState extends ConsumerState<PeqTab> {
 
   Future<void> _savePeqChannel(PeqChannelState updated) async {
     final tuning = _tuning;
-    final exists = tuning.peqChannels.any((c) => c.channelId == updated.channelId);
+    final exists =
+        tuning.peqChannels.any((c) => c.channelId == updated.channelId);
     final newChannels = exists
-        ? tuning.peqChannels.map((c) => c.channelId == updated.channelId ? updated : c).toList()
+        ? tuning.peqChannels
+            .map((c) => c.channelId == updated.channelId ? updated : c)
+            .toList()
         : [...tuning.peqChannels, updated];
     await ref.read(proProjectStoreProvider.notifier).updateTuningState(
-      widget.projectId,
-      tuning.copyWith(
-        peqChannels: newChannels,
-        hasManualChanges: true,
-        tuningRevision: tuning.tuningRevision + 1,
-      ),
-    );
+          widget.projectId,
+          tuning.copyWith(
+            peqChannels: newChannels,
+            hasManualChanges: true,
+            tuningRevision: tuning.tuningRevision + 1,
+          ),
+        );
   }
 
   // Fixed 10-slot PEQ: bands are addressed by slot index (0-9), never
@@ -96,10 +108,9 @@ class _PeqTabState extends ConsumerState<PeqTab> {
   /// Maps DriverChannel + per-channel PEQ state onto the presentation-only
   /// ChannelSelectorItem — no domain type crosses into ChannelSelectorSidebar
   /// itself.
-  ChannelSelectorItem _channelItem(
-      DriverChannel d, TuningProjectState tuning) {
-    final peqCh = tuning.peqChannels.firstWhere(
-        (c) => c.channelId == d.id, orElse: () => PeqChannelState.empty(d.id));
+  ChannelSelectorItem _channelItem(DriverChannel d, TuningProjectState tuning) {
+    final peqCh = tuning.peqChannels.firstWhere((c) => c.channelId == d.id,
+        orElse: () => PeqChannelState.empty(d.id));
     final badges = [
       if (peqCh.enabledBandCount > 0)
         '${peqCh.enabledBandCount} / ${PeqChannelState.bandCount} enabled',
@@ -120,7 +131,8 @@ class _PeqTabState extends ConsumerState<PeqTab> {
   @override
   Widget build(BuildContext context) {
     final store = ref.watch(proProjectStoreProvider);
-    final project = store.projects.where((p) => p.id == widget.projectId).firstOrNull;
+    final project =
+        store.projects.where((p) => p.id == widget.projectId).firstOrNull;
     final drivers = project?.acousticState.driverChannels ?? [];
     final tuning = project?.tuningState ?? TuningProjectState.createDefault();
     final hardwareAudit = Adau1466PeqHardwareMappingPanel(
@@ -136,7 +148,9 @@ class _PeqTabState extends ConsumerState<PeqTab> {
         child: Column(children: [
           hardwareAudit,
           const SizedBox(height: 14),
-          const _EmptyState(message: 'No driver channels configured yet. Import measurements first.'),
+          const _EmptyState(
+              message:
+                  'No driver channels configured yet. Import measurements first.'),
         ]),
       );
     }
@@ -151,11 +165,14 @@ class _PeqTabState extends ConsumerState<PeqTab> {
       // the shared provider after this frame (never mutate during build).
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          ref.read(channelCompareProvider.notifier).validateAgainstDrivers(driverIds);
+          ref
+              .read(channelCompareProvider.notifier)
+              .validateAgainstDrivers(driverIds);
         }
       });
     }
-    final selectedDriver = drivers.firstWhere((d) => d.id == selectedId, orElse: () => drivers.first);
+    final selectedDriver = drivers.firstWhere((d) => d.id == selectedId,
+        orElse: () => drivers.first);
     // Fixed 10-slot model: always present exactly Band 1 .. Band 10.
     final peqCh = tuning.peqChannels
         .firstWhere(
@@ -166,8 +183,9 @@ class _PeqTabState extends ConsumerState<PeqTab> {
 
     // ── v3-2 Channel Compare — role+side pairing, never DAC index ─────────
     final pairId = pairChannelIdFor(selectedId, drivers);
-    final pairDriver =
-        pairId == null ? null : drivers.where((d) => d.id == pairId).firstOrNull;
+    final pairDriver = pairId == null
+        ? null
+        : drivers.where((d) => d.id == pairId).firstOrNull;
     final compareActive = compareState.compareEnabled &&
         pairId != null &&
         compareState.compareChannelIds.contains(pairId);
@@ -179,8 +197,10 @@ class _PeqTabState extends ConsumerState<PeqTab> {
               orElse: () => PeqChannelState.fixed(pairId))
           .normalized();
       overlayCurves = [
-        PeqGraphCurve(label: selectedDriver.name, bands: _toResponseBands(peqCh)),
-        PeqGraphCurve(label: pairDriver!.name, bands: _toResponseBands(pairPeq)),
+        PeqGraphCurve(
+            label: selectedDriver.name, bands: _toResponseBands(peqCh)),
+        PeqGraphCurve(
+            label: pairDriver!.name, bands: _toResponseBands(pairPeq)),
       ];
     }
 
@@ -199,15 +219,18 @@ class _PeqTabState extends ConsumerState<PeqTab> {
       Expanded(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             // Header
             Row(children: [
-              Icon(Icons.tune_outlined, color: kProAccent.withValues(alpha: 0.6), size: 16),
+              Icon(Icons.tune_outlined,
+                  color: kProAccent.withValues(alpha: 0.6), size: 16),
               const SizedBox(width: 8),
               Text('PEQ Editor', style: proTitle(size: 15)),
             ]),
             const SizedBox(height: 3),
-            Text('Parametric correction per driver channel. Use the Optimizer tab for automated target matching.',
+            Text(
+                'Parametric correction per driver channel. Use the Optimizer tab for automated target matching.',
                 style: proSubtitle()),
             const SizedBox(height: 16),
             hardwareAudit,
@@ -283,6 +306,14 @@ class _PeqTabState extends ConsumerState<PeqTab> {
                   index: e.key,
                   band: e.value,
                   onUpdate: (b) => _updateBandAt(selectedId, e.key, b),
+                  // P0-6 — ADAU1701's write-capability registry only
+                  // captureProven-verifies Band 1-8 (index 0-7); Band 9-10
+                  // are structurally unavailable for hardware deploy (see
+                  // HardwareDeviceProfiles.adau1701Icp5). Surface that here,
+                  // before Deploy, rather than letting the user discover it
+                  // only when Deploy blocks the operations.
+                  hardwareNotVerified:
+                      project?.dspTarget == 'ADAU1701' && e.key >= 8,
                 )),
           ]),
         ),
@@ -297,29 +328,31 @@ class _ChannelHeader extends StatelessWidget {
   final PeqChannelState peqCh;
   final VoidCallback onBypass;
   final VoidCallback onReset;
-  const _ChannelHeader({required this.peqCh,
-      required this.onBypass, required this.onReset});
+  const _ChannelHeader(
+      {required this.peqCh, required this.onBypass, required this.onReset});
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-    decoration: BoxDecoration(
-      color: kProSurface,
-      border: Border.all(color: kProBorder),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Row(children: [
-      Expanded(child: Text('PEQ Controls', style: proLabel(size: 9, spacing: 1.5))),
-      _ToggleBtn(
-        label: peqCh.bypassed ? 'BYPASSED' : 'ACTIVE',
-        active: !peqCh.bypassed,
-        color: peqCh.bypassed ? kProAmber : kProGreen,
-        onTap: onBypass,
-      ),
-      const SizedBox(width: 8),
-      _SmallBtn(label: 'Reset', onTap: onReset, color: kProRed),
-    ]),
-  );
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: BoxDecoration(
+          color: kProSurface,
+          border: Border.all(color: kProBorder),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(children: [
+          Expanded(
+              child:
+                  Text('PEQ Controls', style: proLabel(size: 9, spacing: 1.5))),
+          _ToggleBtn(
+            label: peqCh.bypassed ? 'BYPASSED' : 'ACTIVE',
+            active: !peqCh.bypassed,
+            color: peqCh.bypassed ? kProAmber : kProGreen,
+            onTap: onBypass,
+          ),
+          const SizedBox(width: 8),
+          _SmallBtn(label: 'Reset', onTap: onReset, color: kProRed),
+        ]),
+      );
 }
 
 /// v3-2 Channel Compare — displayed only when the selected channel has a
@@ -376,11 +409,14 @@ class _CompareSection extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Text(pairLabel,
-                    style: proValue(size: 11,
+                    style: proValue(
+                        size: 11,
                         color: checked ? Colors.white : Colors.white54)),
               ]),
             ),
-            if (checked && overlayCurves != null && overlayCurves!.length == 2) ...[
+            if (checked &&
+                overlayCurves != null &&
+                overlayCurves!.length == 2) ...[
               const SizedBox(height: 8),
               _ChannelMatchReadout(curves: overlayCurves!),
             ],
@@ -429,8 +465,12 @@ class _BandCard extends ConsumerStatefulWidget {
   final int index;
   final PeqBand band;
   final ValueChanged<PeqBand> onUpdate;
-  const _BandCard({required this.index, required this.band,
-      required this.onUpdate});
+  final bool hardwareNotVerified;
+  const _BandCard(
+      {required this.index,
+      required this.band,
+      required this.onUpdate,
+      this.hardwareNotVerified = false});
 
   @override
   ConsumerState<_BandCard> createState() => _BandCardState();
@@ -444,9 +484,11 @@ class _BandCardState extends ConsumerState<_BandCard> {
   @override
   void initState() {
     super.initState();
-    _freqCtrl = TextEditingController(text: widget.band.frequencyHz.toStringAsFixed(0));
-    _gainCtrl = TextEditingController(text: widget.band.gainDb.toStringAsFixed(1));
-    _qCtrl    = TextEditingController(text: widget.band.q.toStringAsFixed(2));
+    _freqCtrl =
+        TextEditingController(text: widget.band.frequencyHz.toStringAsFixed(0));
+    _gainCtrl =
+        TextEditingController(text: widget.band.gainDb.toStringAsFixed(1));
+    _qCtrl = TextEditingController(text: widget.band.q.toStringAsFixed(2));
   }
 
   @override
@@ -474,7 +516,7 @@ class _BandCardState extends ConsumerState<_BandCard> {
   void _commit() {
     final freq = double.tryParse(_freqCtrl.text) ?? widget.band.frequencyHz;
     final gain = double.tryParse(_gainCtrl.text) ?? widget.band.gainDb;
-    final q    = double.tryParse(_qCtrl.text)    ?? widget.band.q;
+    final q = double.tryParse(_qCtrl.text) ?? widget.band.q;
     widget.onUpdate(widget.band.copyWith(
       frequencyHz: freq.clamp(20, 20000),
       gainDb: gain.clamp(-30, 30),
@@ -483,11 +525,11 @@ class _BandCardState extends ConsumerState<_BandCard> {
   }
 
   Color _statusColor(PeqBandStatus s) => switch (s) {
-    PeqBandStatus.active    => kProGreen,
-    PeqBandStatus.bypassed  => kProAmber,
-    PeqBandStatus.suggested => kProAccent,
-    PeqBandStatus.locked    => kProRed,
-  };
+        PeqBandStatus.active => kProGreen,
+        PeqBandStatus.bypassed => kProAmber,
+        PeqBandStatus.suggested => kProAccent,
+        PeqBandStatus.locked => kProRed,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -501,53 +543,85 @@ class _BandCardState extends ConsumerState<_BandCard> {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Text('Band ${widget.index + 1}',
-              style: proLabel(size: 9, color: Colors.white38, spacing: 1)),
-          const SizedBox(width: 8),
-          // Type selector
-          _CompactDropdown<PeqBandType>(
-            value: band.type,
-            items: PeqBandType.values,
-            label: (t) => t.label,
-            onChanged: (t) => widget.onUpdate(band.copyWith(type: t)),
-          ),
-          const SizedBox(width: 8),
-          ProStatusPill(
-              label: band.status.label, color: _statusColor(band.status)),
-          const Spacer(),
-          // Enable / bypass this fixed slot (no removal — slots are permanent).
-          GestureDetector(
-            onTap: () => widget.onUpdate(band.copyWith(
-              enabled: !band.enabled,
-              status:
-                  !band.enabled ? PeqBandStatus.active : PeqBandStatus.bypassed,
-            )),
-            child: Icon(
-              band.enabled ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-              color: band.enabled ? kProGreen : Colors.white24,
-              size: 14,
+        // P0-C — Wrap (not Row+Spacer) so a narrow workbench width or the
+        // added NOT HW-VERIFIED badge wraps to a second line instead of
+        // overflowing off the right edge. No functional/state change —
+        // same children, same order, just layout-flexible.
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            Text('Band ${widget.index + 1}',
+                style: proLabel(size: 9, color: Colors.white38, spacing: 1)),
+            if (widget.hardwareNotVerified)
+              Tooltip(
+                message: 'ADAU1701 PEQ Band 9-10 are not hardware verified. '
+                    'Supported deploy range is Band 1-8.',
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: kProAmber.withValues(alpha: 0.12),
+                    border: Border.all(color: kProAmber.withValues(alpha: 0.4)),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text('NOT HW-VERIFIED',
+                      style: proLabel(size: 7, color: kProAmber, spacing: 0.5)),
+                ),
+              ),
+            // Type selector
+            _CompactDropdown<PeqBandType>(
+              value: band.type,
+              items: PeqBandType.values,
+              label: (t) => t.label,
+              onChanged: (t) => widget.onUpdate(band.copyWith(type: t)),
             ),
-          ),
-        ]),
+            ProStatusPill(
+                label: band.status.label, color: _statusColor(band.status)),
+            // Enable / bypass this fixed slot (no removal — slots are
+            // permanent).
+            GestureDetector(
+              onTap: () => widget.onUpdate(band.copyWith(
+                enabled: !band.enabled,
+                status: !band.enabled
+                    ? PeqBandStatus.active
+                    : PeqBandStatus.bypassed,
+              )),
+              child: Icon(
+                band.enabled
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                color: band.enabled ? kProGreen : Colors.white24,
+                size: 14,
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 10),
-        Row(children: [
-          _FieldBox(label: 'Hz', controller: _freqCtrl,
-              onSubmit: _commit, width: 80),
-          if (band.type.hasGain) ...[
-            const SizedBox(width: 8),
-            _FieldBox(label: 'dB', controller: _gainCtrl,
-                onSubmit: _commit, width: 72),
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            _FieldBox(
+                label: 'Hz',
+                controller: _freqCtrl,
+                onSubmit: _commit,
+                width: 80),
+            if (band.type.hasGain)
+              _FieldBox(
+                  label: 'dB',
+                  controller: _gainCtrl,
+                  onSubmit: _commit,
+                  width: 72),
+            if (band.type.hasQ)
+              _FieldBox(
+                  label: 'Q', controller: _qCtrl, onSubmit: _commit, width: 64),
+            Text(band.freqLabel,
+                style: proValue(size: 10, color: Colors.white38)),
           ],
-          if (band.type.hasQ) ...[
-            const SizedBox(width: 8),
-            _FieldBox(label: 'Q', controller: _qCtrl,
-                onSubmit: _commit, width: 64),
-          ],
-          const Spacer(),
-          Text(band.freqLabel,
-              style: proValue(size: 10, color: Colors.white38)),
-        ]),
+        ),
       ]),
     );
   }
@@ -560,22 +634,29 @@ class _CompactDropdown<T> extends StatelessWidget {
   final List<T> items;
   final String Function(T) label;
   final ValueChanged<T> onChanged;
-  const _CompactDropdown({required this.value, required this.items,
-      required this.label, required this.onChanged});
+  const _CompactDropdown(
+      {required this.value,
+      required this.items,
+      required this.label,
+      required this.onChanged});
 
   @override
   Widget build(BuildContext context) => DropdownButton<T>(
-    value: value,
-    dropdownColor: kProPanel,
-    underline: const SizedBox(),
-    isDense: true,
-    style: proTitle(size: 11),
-    iconEnabledColor: Colors.white24,
-    iconSize: 14,
-    items: items.map((i) => DropdownMenuItem(value: i,
-        child: Text(label(i), style: proTitle(size: 11)))).toList(),
-    onChanged: (v) { if (v != null) onChanged(v); },
-  );
+        value: value,
+        dropdownColor: kProPanel,
+        underline: const SizedBox(),
+        isDense: true,
+        style: proTitle(size: 11),
+        iconEnabledColor: Colors.white24,
+        iconSize: 14,
+        items: items
+            .map((i) => DropdownMenuItem(
+                value: i, child: Text(label(i), style: proTitle(size: 11))))
+            .toList(),
+        onChanged: (v) {
+          if (v != null) onChanged(v);
+        },
+      );
 }
 
 class _FieldBox extends StatelessWidget {
@@ -583,37 +664,42 @@ class _FieldBox extends StatelessWidget {
   final TextEditingController controller;
   final VoidCallback onSubmit;
   final double width;
-  const _FieldBox({required this.label, required this.controller,
-      required this.onSubmit, required this.width});
+  const _FieldBox(
+      {required this.label,
+      required this.controller,
+      required this.onSubmit,
+      required this.width});
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    width: width,
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: proLabel(size: 8, spacing: 0.5)),
-      const SizedBox(height: 3),
-      Container(
-        height: 28,
-        decoration: BoxDecoration(
-          color: kProBg,
-          border: Border.all(color: kProBorder),
-          borderRadius: BorderRadius.circular(3),
-        ),
-        child: TextField(
-          controller: controller,
-          onSubmitted: (_) => onSubmit(),
-          onEditingComplete: onSubmit,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-          style: proTitle(size: 11),
-          decoration: const InputDecoration(
-            isDense: true,
-            contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            border: InputBorder.none,
+        width: width,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: proLabel(size: 8, spacing: 0.5)),
+          const SizedBox(height: 3),
+          Container(
+            height: 28,
+            decoration: BoxDecoration(
+              color: kProBg,
+              border: Border.all(color: kProBorder),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: TextField(
+              controller: controller,
+              onSubmitted: (_) => onSubmit(),
+              onEditingComplete: onSubmit,
+              keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true, signed: true),
+              style: proTitle(size: 11),
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                border: InputBorder.none,
+              ),
+            ),
           ),
-        ),
-      ),
-    ]),
-  );
+        ]),
+      );
 }
 
 class _ToggleBtn extends StatelessWidget {
@@ -621,43 +707,51 @@ class _ToggleBtn extends StatelessWidget {
   final bool active;
   final Color color;
   final VoidCallback onTap;
-  const _ToggleBtn({required this.label, required this.active,
-      required this.color, required this.onTap});
+  const _ToggleBtn(
+      {required this.label,
+      required this.active,
+      required this.color,
+      required this.onTap});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-        borderRadius: BorderRadius.circular(3),
-        color: active ? color.withValues(alpha: 0.08) : Colors.transparent,
-      ),
-      child: Text(label,
-          style: TextStyle(color: color, fontSize: 9, letterSpacing: 1, fontWeight: FontWeight.w500)),
-    ),
-  );
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            border: Border.all(color: color.withValues(alpha: 0.5)),
+            borderRadius: BorderRadius.circular(3),
+            color: active ? color.withValues(alpha: 0.08) : Colors.transparent,
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: color,
+                  fontSize: 9,
+                  letterSpacing: 1,
+                  fontWeight: FontWeight.w500)),
+        ),
+      );
 }
 
 class _SmallBtn extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   final Color color;
-  const _SmallBtn({required this.label, required this.onTap, this.color = kProAccent});
+  const _SmallBtn(
+      {required this.label, required this.onTap, this.color = kProAccent});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: Text(label, style: TextStyle(color: color, fontSize: 10)),
-    ),
-  );
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            border: Border.all(color: color.withValues(alpha: 0.4)),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(label, style: TextStyle(color: color, fontSize: 10)),
+        ),
+      );
 }
 
 class _EmptyState extends StatelessWidget {
@@ -666,10 +760,11 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-    child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.tune_outlined, color: Colors.white12, size: 28),
-      const SizedBox(height: 12),
-      Text(message, style: proSubtitle(size: 11), textAlign: TextAlign.center),
-    ]),
-  );
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.tune_outlined, color: Colors.white12, size: 28),
+          const SizedBox(height: 12),
+          Text(message,
+              style: proSubtitle(size: 11), textAlign: TextAlign.center),
+        ]),
+      );
 }

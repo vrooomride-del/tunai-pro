@@ -86,6 +86,38 @@ void main() {
     });
 
     test(
+        'unplug then reconnect: a call while absent throws, a later call '
+        'once the SAME device id reappears in enumeration resolves to it '
+        'again — no stale caching in either direction', () async {
+      final api = _FakeApi()
+        ..devices = const [
+          MeasurementInputDeviceDescriptor(id: 'umik-1', label: 'UMIK-1'),
+        ];
+      final service = MeasurementInputDeviceService(api);
+      final selection = MeasurementInputDeviceSelection.specificDevice(
+          deviceId: 'umik-1', labelSnapshot: 'UMIK-1', selectedAt: DateTime.now());
+
+      // Present: resolves normally.
+      final first = await service.resolveForRecording(selection);
+      expect(first?.id, 'umik-1');
+
+      // Unplugged: the very next call must fail-closed, not reuse the
+      // earlier successful resolution.
+      api.devices = const [];
+      expect(() => service.resolveForRecording(selection),
+          throwsA(isA<MeasurementInputDeviceUnavailable>()));
+
+      // Reconnected: the next call after that must resolve to the exact
+      // same device again, proving nothing latched onto a "known bad"
+      // state either.
+      api.devices = const [
+        MeasurementInputDeviceDescriptor(id: 'umik-1', label: 'UMIK-1'),
+      ];
+      final third = await service.resolveForRecording(selection);
+      expect(third?.id, 'umik-1');
+    });
+
+    test(
         'resolveForRecording resolves system default to null without '
         'requiring any devices to be present', () async {
       final api = _FakeApi()..devices = const [];

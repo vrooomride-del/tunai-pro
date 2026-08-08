@@ -745,6 +745,83 @@ void main() {
       await transport.close();
     });
 
+    test(
+        'P0-2 — pauseHeartbeat() suppresses even a manually-triggered '
+        'heartbeat, not just a busy-at-that-instant one', () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 50));
+      await transport.discover();
+      await transport.open();
+      final writesAfterOpen = connection.writes.length;
+
+      transport.pauseHeartbeat();
+      await transport.triggerHeartbeatForTest();
+
+      expect(connection.writes.length, writesAfterOpen,
+          reason: 'a paused heartbeat must not send a frame at all, even '
+              'when the transport is otherwise idle (_busy == false)');
+      await transport.close();
+    });
+
+    test(
+        'P0-2 — a heartbeat attempt between two deploy-loop writes never '
+        'adds a frame while paused, so it cannot steal _busy from the next '
+        'queued write (the exact race behind "Another ICP5 transaction is '
+        'active")', () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 200));
+      await transport.discover();
+      await transport.open();
+
+      transport.pauseHeartbeat();
+      // Simulate a deploy-loop write, exactly the shape a heartbeat tick
+      // would previously have raced against between operations.
+      await transport.writeCapturedMasterVolume(1.0);
+      final writesAfterFirstOp = connection.writes.length;
+
+      // A heartbeat attempt mid-"deploy" must still be suppressed — it must
+      // not add a frame, and therefore cannot grab _busy out from under the
+      // next queued write.
+      await transport.triggerHeartbeatForTest();
+      expect(connection.writes.length, writesAfterFirstOp,
+          reason: 'the paused heartbeat must not add a frame between '
+              'deploy-loop operations');
+      expect(transport.busy, isFalse,
+          reason: '_busy must not be left held by a suppressed heartbeat');
+      await transport.close();
+    });
+
+    test('P0-2 — resumeHeartbeat() re-arms the timer once a deploy ends',
+        () async {
+      late _FakeGattConnection connection;
+      connection = _FakeGattConnection((conn, call, _) {
+        conn.notify(identityRx);
+      });
+      final transport = Icp5BluetoothTransport(
+          driver: _FakeGattDriver(connection),
+          readTimeout: const Duration(milliseconds: 50));
+      await transport.discover();
+      await transport.open();
+
+      transport.pauseHeartbeat();
+      expect(transport.heartbeatActive, isFalse);
+
+      transport.resumeHeartbeat();
+      expect(transport.heartbeatActive, isTrue,
+          reason: 'resumeHeartbeat() must re-arm the timer after a deploy');
+      await transport.close();
+    });
+
     test('Icp5UsbTransport is unaffected — heartbeat is BLE-only', () {
       // heartbeatActive is not a member of Icp5UsbTransport; it exists only on
       // Icp5BluetoothTransport. Confirm the class boundary is intact.
